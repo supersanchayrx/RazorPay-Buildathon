@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bench — Razorpay Agentic Payments Test Bench</title>
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/bench.css">
+</head>
+<body class="bench">
+<div class="bench-shell">
+  <header class="bench-header">
+    <div>
+      <h1 class="bench-header__title">Bench</h1>
+      <p class="bench-header__subtitle">Razorpay agentic-payments test console</p>
+    </div>
+    <div class="bench-header__actions">
+      <span id="export-disabled-note" class="muted" style="font-size:0.8rem;" hidden></span>
+      <button id="export-md-btn" class="btn" type="button">Export report</button>
+      <button id="export-json-btn" class="btn" type="button">Export raw JSON</button>
+      <a class="btn" href="index.html">View Store</a>
+    </div>
+  </header>
+
+  <div id="blocking-panel-mount"></div>
+
+  <main id="bench-main" hidden>
+    <section class="bench-section" aria-labelledby="ledger-heading">
+      <div class="bench-section__heading">
+        <h2 id="ledger-heading">Claim ledger</h2>
+        <span class="muted">What the probes have proven, disproven, or blocked so far</span>
+      </div>
+      <table class="ledger" aria-label="Claim ledger">
+        <thead>
+          <tr class="ledger-head-row">
+            <th scope="col">Claim</th>
+            <th scope="col">Text</th>
+            <th scope="col">State</th>
+            <th scope="col">Fed by</th>
+          </tr>
+        </thead>
+        <tbody id="ledger"></tbody>
+      </table>
+    </section>
+
+    <section class="bench-section" aria-labelledby="probes-heading">
+      <div class="bench-section__heading">
+        <h2 id="probes-heading">Probes</h2>
+        <div class="probe-controls">
+          <button id="run-all-btn" class="btn btn--primary" type="button">Run all</button>
+          <button id="run-unrun-btn" class="btn" type="button">Run unrun</button>
+          <label class="muted mono" for="verdict-filter" style="font-size: 0.8rem;">Filter</label>
+          <select id="verdict-filter">
+            <option value="">All verdicts</option>
+            <option value="reachable">Reachable</option>
+            <option value="gated">Gated</option>
+            <option value="deprecated">Deprecated</option>
+            <option value="error">Error</option>
+            <option value="unknown">Unknown</option>
+            <option value="unrun">Not yet run</option>
+          </select>
+        </div>
+      </div>
+      <p id="run-progress" class="run-progress mono" aria-live="polite"></p>
+      <div id="probe-groups"></div>
+    </section>
+
+    <section class="bench-section" aria-labelledby="events-heading" id="event-log-section">
+      <div class="bench-section__heading">
+        <h2 id="events-heading">Event log</h2>
+        <span class="muted">Webhook deliveries, polled every 4 seconds while this tab is visible</span>
+      </div>
+      <div id="event-log"></div>
+    </section>
+  </main>
+</div>
+
+<script type="module" src="js/bench.js"></script>
+</body>
+</html>

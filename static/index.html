@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ordinary Goods Co.</title>
+<link rel="stylesheet" href="css/reset.css">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/store.css">
+</head>
+<body class="store">
+
+<div id="blocking-panel-mount"></div>
+
+<div id="store-main" hidden>
+  <div class="store-warning">
+    <p class="store-warning__text">
+      <strong>Test mode simulates payment approval.</strong> No UPI PIN is requested and cancellation resolves as success. A checkout that completes here has not demonstrated anything about live rails.
+    </p>
+  </div>
+
+  <header class="store-header">
+    <span class="store-header__name">Ordinary Goods Co.</span>
+    <span class="store-header__tag">Chai, mailed to you</span>
+  </header>
+
+  <main class="store-main">
+    <div class="product-image">Product photo</div>
+
+    <div class="buy-card">
+      <h1 class="product-name">Masala Chai Concentrate — 250ml</h1>
+      <p class="product-price">
+        <span id="product-price-amount"></span>
+        <span class="product-price__indicative" id="product-price-note">Indicative price — confirmed at checkout</span>
+      </p>
+      <p class="product-description">
+        Slow-brewed with Assam CTC, whole spices, and jaggery. Concentrate — dilute 1:1 with hot milk or water. Ships in 3–5 business days.
+      </p>
+
+      <button id="buy-btn" class="btn btn-buy" type="button">Buy now</button>
+      <div id="checkout-mount"></div>
+      <div id="result-panel-mount"></div>
+
+      <button id="payment-link-btn" class="btn btn-fallback" type="button">Can't complete this? Send a payment link</button>
+      <div id="payment-link-mount"></div>
+    </div>
+  </main>
+
+  <div class="helper-panel" id="helper-panel">
+    <div class="helper-card">
+      <button class="helper-card__dismiss" id="helper-dismiss" type="button" aria-label="Dismiss test-mode helper">×</button>
+      <h3>Test-mode credentials</h3>
+      <dl>
+        <dt>UPI (success)</dt><dd>success@razorpay</dd>
+        <dt>UPI (failure)</dt><dd>failure@razorpay</dd>
+        <dt>Card</dt><dd>4111 1111 1111 1111 — any future expiry, any CVV</dd>
+      </dl>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/store.js"></script>
+</body>
+</html>
