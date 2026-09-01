@@ -15,7 +15,7 @@ var Claims = []Claim{
 	{
 		ID:       "C2",
 		Text:     "The Orders API mandate token (max_amount, expire_at, frequency) is reachable self-serve",
-		ProbeIDs: []string{"P4"},
+		ProbeIDs: []string{"P4", "P13"},
 	},
 	{
 		ID:       "C3",
@@ -36,6 +36,11 @@ var Claims = []Claim{
 		ID:       "C6",
 		Text:     "UPI Reserve Pay is reachable self-serve",
 		ProbeIDs: []string{"P10"},
+	},
+	{
+		ID:       "C7",
+		Text:     "An account's enabled payment methods are discoverable self-serve",
+		ProbeIDs: []string{"P14"},
 	},
 }
 
