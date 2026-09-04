@@ -19,7 +19,7 @@ Test account, last full run.
 | Claim | State | Evidence |
 |---|---|---|
 | C1 orders + checkout | `supported` | P1, P2 → 200 |
-| C2 mandate tokens (`max_amount`, `expire_at`, `frequency`) | `refuted` | P4 → 200, but P13 fetched the order back and `token`, `customer_id` and `method` had all been silently discarded |
+| C2 mandate tokens (`max_amount`, `expire_at`, `frequency`) | `supported` for order creation, `untested` beyond it | P4 → 200 and P13 confirms the token is stored, enriched and rendered on the checkout preferences document — but authorising a payment against it was never attempted |
 | C3 server-to-server UPI without PCI-DSS | **untestable here** | P5 → 400; but `/methods` reports `upi: false`, so the test is confounded |
 | C4 IIN lookup | `refuted` | P7 → 400 on a registered route, and cards *are* enabled, so this is not a method gate |
 | C5 payment links | `supported`, proven end-to-end | P8 → 200, link opened and payment captured |
@@ -60,9 +60,35 @@ with those values`** with no `error` envelope at all. That is *not* what
 envelope, which means the request cleared the gateway, reached the application,
 and was refused there.
 
-So those paths are **registered routes that this account cannot reach**, not
-typos. C3 and C4 are stronger than first written, and "I may have had the
-address wrong" is ruled out.
+The two messages come from two different layers, and knowing which is which is
+what makes the inference work. `no Route matched with those values` is the stock
+response of Kong, the API gateway sitting at the edge; it means the path was not
+in the gateway's route table. `The requested URL was not found on the server.`
+is the stock 404 text of a Python web framework, wrapped here in Razorpay's own
+error envelope; it means a service *behind* the gateway received the request and
+had no handler for it.
+
+**Misspelled-sibling control**, to rule out "the path shape is just slightly
+wrong":
+
+| Request | Status | Layer that answered |
+|---|---|---|
+| `/iins/411111` | 400 | application ("URL was not found on the server") |
+| `/iins/999999` | 400 | application — same message for a nonsense IIN |
+| `/iinz/411111` | 404 | gateway (`no Route matched`) |
+| `/iins` | 404 | gateway (`no Route matched`) |
+| `/orders/zzz/nope` | 404 | gateway (`no Route matched`) |
+
+One letter changed, and it stops reaching the application entirely. So
+`/v1/iins/{iin}` is a **specifically registered route** — that exact spelling,
+that exact arity — and there is no catch-all swallowing arbitrary paths. Someone
+configured that route on purpose. C4's reading holds.
+
+The auth question is closed too. `/iins/411111` **with no Authorization header
+returns 401** "Please provide your api key for authentication purposes", so the
+endpoint does want merchant credentials and the wrong-auth-scheme explanation is
+dead. With Basic auth it passes authentication and *then* the application says
+it has no such URL.
 
 What remains genuinely unresolved is *why* the application refuses: withheld
 from this merchant, or removed while the gateway route lingers. Both mean
@@ -78,16 +104,14 @@ An earlier version of this file claimed the reserve-pay result was stronger
 evidence. A result matching a prediction is exactly the one to attack hardest,
 since nobody questions an answer they like.
 
-**C2 is the weakest claim here, not the strongest.** P4 sent an order with a
-`token` object attached and got a 200. That is consistent with two very
-different worlds:
+### The bound that looked dropped and was not
 
-1. Razorpay honoured the mandate fields, or
-2. Razorpay ignored the fields it did not care about and created an ordinary
-   order.
+**This section previously reported that Razorpay silently discarded a spending
+cap. That was wrong, and it was the headline finding. Here is the correction.**
 
-Both produce the same 200. **P13 settled it: world 2.** Fetching the order back
-returns
+P4 sends an order carrying a `token` object (`max_amount`, `expire_at`,
+`frequency`), a `customer_id` and `method: "upi"`, and gets a 200. Fetching that
+order back through `GET /orders/{id}` returns
 
 ```json
 { "id": "order_TWT4hqPOoe24gD", "entity": "order", "amount": 50000,
@@ -95,14 +119,57 @@ returns
   "attempts": 0, "notes": [], "offer_id": null, "description": null }
 ```
 
-No `token`. No `customer_id`. No `method`. Three fields were sent, three were
-discarded, and the response was `200 OK`. It is an ordinary order.
+No `token`, no `customer_id`, no `method` — which read as an obvious silent
+field drop, and was written up as one.
 
-**The general lesson, which matters more than C2 itself: a 200 from this API
-does not mean your request was honoured.** Unrecognised or unpermitted fields
-are dropped in silence rather than rejected. Anything the agent sends beyond the
-basics must be verified by reading the created object back — never inferred from
-the status code. This is what `Probe.MustEcho` now enforces automatically.
+**It was not.** The checkout preferences document, asked about the same order,
+returns:
+
+```json
+"order": {
+  "amount": 50000, "currency": "INR", "method": "upi",
+  "token": { "max_amount": 1000000, "frequency": "monthly",
+             "start_time": 1788199188, "end_time": 1804096787,
+             "recurring_type": "before" }
+}
+```
+
+The cap is there, at the value sent. `expire_at` was stored as `end_time`, and
+`recurring_type: "before"` was **added by Razorpay** — a field never sent, so
+this is not the request being echoed back, it is a processed, enriched, stored
+mandate.
+
+Control, to rule out boilerplate: the plain order from P1, created with no token
+at all, has an order block with **no `token` and no `method`**. The fields
+appear only on the orders that carried them.
+
+So `GET /orders/{id}` simply does not render the mandate. The Orders API is not
+the surface that consumes it; checkout is.
+
+**What actually survives, and it is still worth something.** The verification
+step produced a confident false negative. Reading the object back from the
+obvious endpoint said the bound was gone, and the bound was there. So the rule
+is narrower than first written:
+
+> A bound must be verified — **on the surface that consumes it.** A read-back
+> that shows nothing is not proof of absence; it may just be the wrong window
+> onto the same object.
+
+Note which way this fails. The naive echo-check does not wave a nonexistent
+bound through; it does the opposite, refusing to proceed on a bound that really
+exists. That is a **false refusal**, which is the failure mode worth counting
+(and the one Track 02 asks to be measured). An over-eager verifier is safer than
+a credulous one, but it is not free.
+
+`Probe.MustEcho` still does the job — it just has to name fields on the right
+endpoint. P13 now asks the preferences document, not the Orders API, and the
+comment on it records why.
+
+**Still genuinely unknown:** whether a payment can be *authorised* against that
+mandate. Creating the order is the cheap half, and with `upi: false` on this
+account the expensive half cannot be attempted at all. C2 is `supported` for
+order creation and `untested` for anything past it — do not let the first stand
+in for the second.
 
 Separately, and still true: a test account is routinely more permissive than a
 live one, so even a genuine success would not have proved live parity.
@@ -145,18 +212,181 @@ Consequences:
 
 - **`upi: false` explains C3, C6 and the whole UPI story.** Those endpoints
   refuse because UPI is not enabled for this merchant — not because of PCI-DSS.
-  So C3 as written cannot be tested on this account at all; answering it needs
-  an account with UPI switched on. Recording it as `refuted` would be wrong.
+  So C3 as written cannot be tested on this account at all; recording it as
+  `refuted` would be wrong. **Next action: turn UPI on in the dashboard**
+  (Settings → Payment Methods) and re-run, rather than reasoning further from
+  the outside. Every UPI result currently on record is confounded by that one
+  switch, which makes flipping it the highest-value thing left to do.
 - **It does not explain C4.** Cards are enabled, yet IIN lookup is refused, so
   that is a genuine product-level gap rather than a method gate.
-- **`nach: true` is a live lead for C2.** Mandates via NACH appear enabled even
-  though UPI Autopay cannot be.
-- **`upi: false` alongside `upi_intent: true` is contradictory** on its face and
-  should not be trusted without a second source.
+- **`nach: true` is evidence for the argument, not a target for the build.**
+  Mandates via NACH are enabled even though UPI Autopay is not — so the
+  approve-once-then-operate-inside-an-envelope shape exists on a second,
+  independent rail. Cite it as corroboration. Do **not** build on it: NACH is a
+  slow bank-debit rail with its own registration ceremony, designed for monthly
+  subscriptions, and it cannot complete a purchase in the moment, which is
+  exactly the thing the agent has to demonstrate.
+- **`upi: false` alongside `upi_intent: true` is probably not a contradiction.**
+  Working hypothesis: the first is the older collect flow, where the customer
+  types a UPI address and approves a request, which was retired; the second is
+  the handoff-to-a-phone-app flow. Two different products, so two different
+  answers. Unconfirmed — but "these are separate things" is a better first guess
+  than "the document is unreliable", and the earlier note distrusting both was
+  too quick.
 
-It still reports only *methods*, not products — nothing here mentions recurring,
-s2s, or IIN. So the honest statement is: the agent can discover which payment
-methods are enabled, and must be told about everything else.
+It still reports only *methods*, not products — nothing here mentions s2s or
+IIN. It does carry `recurring`, keyed by bank rather than by card number:
+`recurring.card.credit` (Visa, MasterCard, RuPay), `recurring.card.debit`
+(51 banks), and `recurring.emandate` — **298 banks, each with its `auth_types`**
+(aadhaar, debitcard, netbanking). That is most of what the dead IIN endpoint was
+supposed to supply, for bank mandates.
+
+It does not rescue cards. `recurring.card.debit` is keyed by bank code, and the
+only way to learn a card's bank is the IIN lookup, which is refused — and
+`issuer` came back `null` on the one card object we have. So bank mandate
+decisioning is possible today and card mandate decisioning is not.
+
+### An API acceptance is not an entitlement check
+
+The most reusable lesson here, and it cost several wrong conclusions to learn.
+
+Razorpay's write path and its execution path are separate systems that do not
+consult each other. An order can be accepted, stored, enriched with
+server-side fields, and labelled correctly in the dashboard for a feature the
+account cannot actually run. Nothing reports the gap until a human opens a
+checkout.
+
+Demonstrated on Magic Checkout. `POST /orders` with `line_items` returns 200,
+Razorpay adds `cod_fee` and `shipping_fee` (fields only 1cc orders carry), the
+cart reads back intact from the preferences document, and the dashboard labels
+the order **"Order Type: Magic Checkout"**. Five signals, all green.
+
+The modal then ignores all of it. Controlled comparison, three runs, fresh order
+each time:
+
+| Run | Methods shown | Phone | Email | Address |
+|---|---|---|---|---|
+| Standard, card only | cards only | yes | no | no |
+| Standard (control) | cards, netbanking, wallet | yes | no | no |
+| `one_click_checkout: true` | cards, netbanking, wallet | yes | no | no |
+
+Identical. No address step, no coupon field, no line items rendered, and **zero
+1cc network requests** from checkout.js.
+
+The card-only run is what makes this conclusive rather than suggestive. It
+passed `method: {card: true, netbanking: false, wallet: false}` in the same
+options object — and that *worked*, the other blocks disappeared. So checkout.js
+reads the options fine. `one_click_checkout` is received and discarded.
+
+`magic: true` in the preferences document therefore reports availability, not
+entitlement — the same trap as `upi_intent: true` beside `upi_type: {collect: 0,
+intent: 0}`. The root cause for both is almost certainly `activated: false`.
+
+**Rule: the only trustworthy test is one that exercises the surface a human
+touches.** Reading the object back is not enough. It gave a false negative on
+the mandate token and a false positive on Magic Checkout — wrong in both
+directions, from the same mistake.
+
+### Razorpay collects a phone number and nothing else
+
+Neither surface asks for an email. Not the checkout modal — on wallet, on
+netbanking, or with cards forced as the only option — and not a payment link,
+with or without a `customer` block supplied at creation. Every one of those was
+tested directly.
+
+Where email is missing Razorpay writes **`void@razorpay.com`**: a sentinel that
+is well formed, passes any validation you would write, and is identical for
+every payer. Group customers by email and they all become one person.
+
+The cause is a **dashboard setting**: Account & Settings → Checkout Features →
+"Collect email from customers". It was off. Turning it on to Mandatory changed
+the behaviour immediately:
+
+```
+00:36  netbanking  void@razorpay.com                   <- setting off
+00:36  wallet      void@razorpay.com                   <- setting off
+00:47  wallet      hithisemailtestisworking@gmail.com  <- setting on
+```
+
+Eleven minutes apart, wallet on both sides, so the setting is the variable and
+not the payment method. The older `yhag@gmail.com` came in through a card
+attempt while the setting was on.
+
+Two earlier explanations in this file were wrong and are recorded so they are
+not re-derived: that payment links collect email and the modal does not
+(inferred from which payments happened to have one, refuted by a fresh link),
+and that A/B bucketing was responsible (plausible, and there really is
+per-request bucketing — see below — but it was not the cause here). Method rule
+7 already said to check the dashboard before reasoning about entitlement. It
+would have saved both.
+
+### The setting is invisible to the API
+
+Enabling mandatory email visibly reduced the methods offered in the modal. The
+capability documents did not move at all:
+
+| | before | after |
+|---|---|---|
+| `optional` | `[]` | `[]` |
+| `methods.card` | true | true |
+| `methods.netbanking` | 40 banks | 40 banks |
+| `methods.wallet` | 3 | 3 |
+
+So the filtering happens at render time, and **`/methods` and `/preferences`
+describe what the account can do, not what a payer will be offered.** An agent
+reading them gets a superset — every method listed there may not appear, and
+nothing in the response says which.
+
+That matters directly for any payment-path decision built on the capability
+handshake: it is the right input, but it is an upper bound, not a prediction.
+
+### Checkout is not deterministic — Razorpay A/B tests it per request
+
+The preferences document carries an `experiments` block of **362 flags**. Three
+identical unauthenticated calls, seconds apart, same key, no order id, returned
+**five different values**:
+
+```
+truecaller_sdk                  [True, False, True]
+disable_zero_sr_instruments     [True, False, True]
+truecaller_1cc_for_non_prefill  ['control', 'test', 'test']
+razorpaywallet_balance_ab_exp   ['variant_2', 'variant_1', 'variant_2']
+shallow_offers_api_decomp       ['variant_on', 'control', 'control']
+```
+
+Bucketing is per request, not per account. And one of the 362 is
+**`email_less_checkout`** — which explains the whole email puzzle: a payment
+link on 31 Aug asked for an email and the payer typed one; a functionally
+identical link two days later did not ask. Nothing changed on the account.
+
+**This is the most important methodological finding in the file**, because it
+sets the evidence bar for everything else. A single observation of checkout
+behaviour is one sample from a distribution, not a fact about the account. The
+"payment links collect email" claim was three-for-three and still wrong.
+
+It also weakens conclusions drawn from small N — including the Magic Checkout
+one above. That verdict rests on stronger evidence than field observations
+(zero 1cc network requests, and `method` filtering demonstrably working from the
+same options object), but three browser runs is three samples, and that is worth
+stating rather than glossing.
+
+For an agent the consequence is direct: **the checkout contract is not stable.**
+Which fields are collected, and therefore which customer data comes back, varies
+between sessions. Anything that requires a field must collect it before handing
+off, never assume Razorpay will ask.
+
+**`contact` is real and present on all eight payments, from every surface.** It
+is the only identity field Razorpay reliably hands over. Two consequences worth
+designing around:
+
+- Formats differ by endpoint — payments store `+917484818651`, the customer
+  object stores `9123460780`. Normalise to E.164 before joining anything.
+- If the agent needs an email, **the agent has to collect it.** Razorpay will
+  not, on any surface tested here, and a `customer` block sent at creation is a
+  suggestion the payer can override.
+
+Better still, put your own identifier in `notes` — those round-trip reliably on
+every entity, verified repeatedly.
 
 ### The failure taxonomy
 
@@ -177,28 +407,49 @@ For the agent, the important field is **`error_reason`** — a stable slug —
 **not** `error_description`, which is prose written for humans and free to
 change wording at any time. Branch on the slug; show the description.
 
-**`error_source` is the retry signal.** `business` means a policy refusal that
-will fail identically forever, so the agent must switch method rather than
-retry. A `bank` or `gateway` source would be the transient case worth retrying.
-Any retry logic that ignores this field will hammer a wall.
+**`error_source` alone is not the retry signal**, and an earlier version of this
+file said it was. Source tells you *whose problem it is*. Reason tells you *what
+to do about it*. The same source points in opposite directions:
+
+| `error_source` | `error_reason` | Correct action |
+|---|---|---|
+| `business` | `international_transaction_not_allowed` | switch method — never retry |
+| `business` | validation failure | fix our own request; do not switch, do not retry |
+| `customer` | wrong OTP / wrong PIN | same method, ask the human again |
+| `bank`, `gateway` | transient | retry the same method after a delay |
+
+So it is a small grid, not a single-field lookup. Still simple, and it will not
+tell the agent to switch payment method when the real fault is a malformed
+request of our own making.
+
+Two cautions on that table. Only `business` (on the failed payment) and
+`internal` (on the IIN refusal) have actually been *observed* here — the rest
+comes from documentation and is unverified against this account, so the corpus
+is one row deep and the grid is a design sketch until more failures are
+collected. And the literal value for a bank-side failure is reportedly
+`issuer_bank`, not `bank`; branching on the short string would silently match
+nothing. Confirm the exact spelling before relying on it.
 
 Note Razorpay is explicitly telling the caller what to do next — "Try another
 payment method" — and, via `/methods`, exactly which ones are available. Those
 two responses compose into the agent's fallback strategy.
 
-Two incidental findings from the same payment object:
+**IIN data arrives too late to be useful.** The failed card object included
+`token_iin: "400005665"`. So Razorpay does hold card intelligence and will hand
+it over — *after* the payment has already been attempted and failed, not before,
+when an agent would need it to choose. That reframes C4 from "the data is
+unavailable" to "the data is available for reporting, not for deciding," which
+is a fair summary of a lot of payments tooling.
 
-- The captured ₹500 wallet payment carried `fee: 1298, tax: 198` — about 2.6%
-  all-in. Worth knowing before the agent quotes anyone a price.
-- The failed card object included `token_iin: "400005665"`. **IIN data is
-  available after the fact on the payment**, even though the pre-flight IIN
-  lookup endpoint is not. That reframes C4: the data exists, but only once it is
-  too late to route on it.
+Fee figures from the same object are deliberately not quoted here: test mode
+fabricates them, and a made-up number in a findings document is worse than no
+number.
 
-**Alternate auth has not been tried.** Some Razorpay endpoints expect only the
-key id, and this client always sends Basic auth with both halves. If a probe
-returns "URL not found", retrying it without the secret is worth one attempt
-before concluding the surface is absent.
+**Auth scheme is not the explanation for the refusals.** `--no-auth` now exists
+on `get`, and the results are clean: `/methods?key_id=...` returns 200 with no
+Authorization header at all, confirming it is a publishable-tier endpoint
+addressed by key id. `/iins/411111` and `/orders` both return 401 without one.
+The endpoints that refuse us are refusing on entitlement, not on credentials.
 
 ## Running it
 
@@ -223,6 +474,17 @@ go run ./bench-cli run P2              # runs P1 too: P2 needs P1's order id
 go run ./bench-cli run --destructive   # the real run
 ```
 
+`get` makes one raw call and prints the exact URL, the status, the classifier's
+reading and the whole body. It answered more questions than the probe registry
+did:
+
+```
+go run ./bench-cli get /orders/order_XXXX            # did the fields survive?
+go run ./bench-cli get "/methods?key_id={key_id}"    # capability document
+go run ./bench-cli get /iinz/411111                  # control: gateway or app?
+go run ./bench-cli get /iins/411111 --no-auth        # credentials, or entitlement?
+```
+
 `run` prints one row per probe then the claim ledger. A `<-` marks a probe whose
 outcome differed from the guess.
 
@@ -234,11 +496,19 @@ money, and P8 forces email and SMS notifications off.
 ## Layout
 
 ```
-types/       Verdict and ClaimState enums. Depends on nothing.
-bench/       Domain logic. No network, no files, no CLI.
-razorpay/    The only package that knows HTTP exists.
-bench-cli/   Cobra commands and output formatting.
+types/         Verdict and ClaimState enums. Depends on nothing.
+bench/         Domain logic. No network, no files, no CLI.
+razorpay/      The only package that knows HTTP exists.
+bench-cli/     Cobra commands and output formatting.
+checkout-lab/  Browser harness — the questions the CLI cannot answer.
 ```
+
+`checkout-lab` exists because the API and the modal disagree, and only the modal
+is authoritative about what a payer will experience. `go run ./checkout-lab`,
+then open `http://127.0.0.1:8899`. It mints a **fresh order per run** — an order
+is single use, and a spent one makes checkout show "Uh! oh! Something went
+wrong", which is easy to misread as the feature failing. Its Inspect button
+queries the same order three ways so the disagreement is visible in one click.
 
 Dependencies point inward only: `bench-cli` → `bench` + `razorpay` → `types`.
 `bench` does **not** import `razorpay`. It declares what it needs instead

@@ -1,0 +1,108 @@
+:root {
+  --ink: #17201c;
+  --muted: #6b7a72;
+  --line: #dfe5e1;
+  --bg: #fbfaf7;
+  --card: #ffffff;
+  --accent: #1f4037;
+  --warn: #8a4b1c;
+  --radius: 12px;
+  --max: 1080px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+a { color: inherit; }
+
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+
+/* header */
+header {
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+  position: sticky; top: 0; z-index: 10;
+}
+.bar { display: flex; align-items: baseline; gap: 18px; padding: 16px 0; }
+.brand { font-family: Georgia, serif; font-size: 22px; text-decoration: none; letter-spacing: .01em; }
+.brand span { color: var(--muted); font-size: 13px; letter-spacing: .18em; text-transform: uppercase; margin-left: 10px; font-family: system-ui, sans-serif; }
+nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+nav a { color: var(--muted); text-decoration: none; }
+nav a:hover { color: var(--ink); }
+
+/* hero */
+.hero { padding: 46px 0 30px; }
+.hero h1 { font-family: Georgia, serif; font-size: 34px; line-height: 1.25; margin: 0 0 8px; font-weight: 400; }
+.hero p { margin: 0; color: var(--muted); max-width: 60ch; }
+
+/* filters */
+.filters { display: flex; gap: 8px; flex-wrap: wrap; padding-bottom: 22px; }
+.chip {
+  border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  padding: 6px 13px; border-radius: 999px; font-size: 13px; cursor: pointer;
+}
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* grid */
+.grid {
+  display: grid; gap: 22px; padding-bottom: 60px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+}
+.card {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  overflow: hidden; text-decoration: none; display: flex; flex-direction: column;
+  transition: transform .15s ease, box-shadow .15s ease;
+}
+.card:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(23,32,28,.09); }
+.card img { width: 100%; aspect-ratio: 1/1; object-fit: cover; display: block; background: #eee; }
+.card .body { padding: 13px 14px 16px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.card h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.card .type { color: var(--muted); font-size: 12.5px; }
+.card .price { margin-top: auto; padding-top: 8px; font-size: 15px; }
+
+.flag { font-size: 12px; padding: 2px 8px; border-radius: 999px; display: inline-block; }
+.flag.low { background: #fdf0e4; color: var(--warn); }
+.flag.out { background: #f1f1f1; color: var(--muted); }
+
+/* product page */
+.product { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; padding: 34px 0 70px; align-items: start; }
+.product img { width: 100%; border-radius: var(--radius); border: 1px solid var(--line); }
+.product h1 { font-family: Georgia, serif; font-weight: 400; font-size: 30px; margin: 0 0 6px; }
+.product .meta { color: var(--muted); font-size: 13.5px; margin-bottom: 18px; }
+.product .desc { margin: 0 0 22px; }
+.price-lg { font-size: 24px; margin-bottom: 18px; }
+
+.variants { display: flex; flex-direction: column; gap: 8px; margin-bottom: 22px; }
+.variant {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  border: 1px solid var(--line); background: var(--card); border-radius: 10px;
+  padding: 11px 14px; cursor: pointer; font: inherit;
+}
+.variant[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.variant[disabled] { opacity: .5; cursor: not-allowed; }
+.variant .v-title { font-weight: 500; }
+.variant .v-price { margin-left: auto; }
+.variant .v-stock { font-size: 12.5px; color: var(--muted); }
+
+.buy {
+  border: 0; background: var(--accent); color: #fff; padding: 13px 22px;
+  border-radius: 10px; font: inherit; cursor: pointer; width: 100%;
+}
+.buy[disabled] { background: #b9c2bd; cursor: not-allowed; }
+
+.policy { border-top: 1px solid var(--line); margin-top: 26px; padding-top: 18px; font-size: 14px; color: var(--muted); }
+.policy h4 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink); }
+.policy p { margin: 0 0 14px; }
+
+footer { border-top: 1px solid var(--line); color: var(--muted); font-size: 13.5px; padding: 26px 0 50px; }
+
+@media (max-width: 760px) {
+  .product { grid-template-columns: 1fr; gap: 24px; }
+  .hero h1 { font-size: 27px; }
+}

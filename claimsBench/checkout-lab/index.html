@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>checkout-lab</title>
+<style>
+  :root { --bg:#fbfbfa; --fg:#1c1c1a; --dim:#6b6b66; --line:#e2e2dd; --accent:#2b5fd9; }
+  * { box-sizing: border-box; }
+  body { font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+         background:var(--bg); color:var(--fg); margin:0; padding:32px 24px; }
+  main { max-width: 900px; margin: 0 auto; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  h2 { font-size:14px; text-transform:uppercase; letter-spacing:.06em;
+       color:var(--dim); margin:32px 0 12px; font-weight:600; }
+  p.lede { color:var(--dim); margin:0 0 24px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+  .card { border:1px solid var(--line); border-radius:8px; background:#fff; padding:14px; }
+  .card h3 { margin:0 0 6px; font-size:15px; }
+  .card p { margin:0 0 12px; font-size:13px; color:var(--dim); }
+  .card code { font-size:12px; background:#f2f2ee; padding:1px 4px; border-radius:3px; }
+  button { font:inherit; font-size:14px; padding:8px 14px; border-radius:6px;
+           border:1px solid var(--line); background:#fff; cursor:pointer; }
+  button.go { background:var(--accent); border-color:var(--accent); color:#fff; width:100%; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
+  pre { background:#161614; color:#c8e6a0; padding:14px; border-radius:8px;
+        overflow-x:auto; font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;
+        white-space:pre-wrap; word-break:break-word; max-height:460px; }
+  .hint { font-size:13px; color:var(--dim); border-left:3px solid var(--line);
+          padding-left:12px; margin:12px 0; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>checkout-lab</h1>
+<p class="lede">
+  Every run mints a <b>fresh order</b> from the Go backend, so a spent order can
+  never be mistaken for a broken feature. Watch the Network tab while you click.
+</p>
+
+<h2>Scenarios</h2>
+<div class="grid" id="scenarios"></div>
+
+<h2>Inspect</h2>
+<div class="row">
+  <button id="inspect">Inspect last order (all three surfaces)</button>
+  <button id="clear">Clear log</button>
+</div>
+<p class="hint">
+  After paying, this asks the Orders API, the order's payments, and the checkout
+  preferences document about the same order. They disagree — that disagreement is
+  the point.
+</p>
+
+<h2>Log</h2>
+<pre id="log">ready.</pre>
+
+</main>
+
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<script>
+"use strict";
+
+// Each scenario isolates one variable. The open question is whether checkout
+// skips the email field because Magic is not running, or because a wallet
+// payment simply does not need one — so two of these force card-only.
+var SCENARIOS = [
+  {
+    id: "magic",
+    title: "Magic Checkout",
+    note: "1cc order + one_click_checkout. Should ask for phone, then a delivery address.",
+    magic: true,
+    options: { one_click_checkout: true, show_coupons: true }
+  },
+  {
+    id: "standard",
+    title: "Standard (control)",
+    note: "Plain order, no special options. The baseline to compare against.",
+    magic: false,
+    options: {}
+  },
+  {
+    id: "standard-card",
+    title: "Standard, card only",
+    note: "Wallets hidden. If email appears here but not elsewhere, the wallet was the reason.",
+    magic: false,
+    options: { method: { card: true, netbanking: false, wallet: false, upi: false, paylater: false, emi: false } }
+  },
+  {
+    id: "magic-card",
+    title: "Magic, card only",
+    note: "Both variables at once: 1cc on, wallet ruled out as the explanation.",
+    magic: true,
+    options: { one_click_checkout: true, show_coupons: true,
+               method: { card: true, netbanking: false, wallet: false, upi: false, paylater: false, emi: false } }
+  }
+];
+
+var logEl = document.getElementById("log");
+var lastOrderID = null;
+
+function log(msg, obj) {
+  var line = new Date().toLocaleTimeString() + "  " + msg;
+  if (obj !== undefined) line += "\n" + JSON.stringify(obj, null, 2);
+  logEl.textContent += "\n\n" + line;
+  logEl.scrollTop = logEl.scrollHeight;
+  console.log(msg, obj);
+}
+
+function mintOrder(scenario) {
+  return fetch("/api/order", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ magic: scenario.magic, label: scenario.id })
+  }).then(function (res) {
+    return res.json().then(function (data) {
+      if (!res.ok) throw new Error(JSON.stringify(data));
+      return data;
+    });
+  });
+}
+
+function run(scenario, button) {
+  button.disabled = true;
+  log("[" + scenario.id + "] minting a fresh order (magic=" + scenario.magic + ")");
+
+  mintOrder(scenario).then(function (data) {
+    lastOrderID = data.order_id;
+    log("[" + scenario.id + "] order " + data.order_id);
+
+    var options = {
+      key: data.key_id,
+      order_id: data.order_id,
+      name: "Checkout Lab",
+      description: scenario.title,
+      // Deliberately no prefill and nothing hidden. Prefilling contact or email
+      // suppresses the field, which would answer the question by rigging it.
+      handler: function (res) {
+        log("[" + scenario.id + "] PAID", res);
+        log("now click Inspect to see what the three surfaces say.");
+      },
+      modal: {
+        ondismiss: function () {
+          log("[" + scenario.id + "] DISMISSED — no payment entity exists server-side for this");
+        }
+      }
+    };
+
+    Object.keys(scenario.options).forEach(function (k) { options[k] = scenario.options[k]; });
+
+    log("[" + scenario.id + "] opening with options", redact(options));
+
+    var rzp = new Razorpay(options);
+    rzp.on("payment.failed", function (res) { log("[" + scenario.id + "] FAILED", res.error); });
+    rzp.open();
+  }).catch(function (err) {
+    log("[" + scenario.id + "] could not mint an order: " + err.message);
+  }).finally(function () {
+    button.disabled = false;
+  });
+}
+
+// Functions do not survive JSON.stringify, so name them instead of dropping
+// them silently — the log should show the options actually used.
+function redact(options) {
+  var out = {};
+  Object.keys(options).forEach(function (k) {
+    out[k] = (typeof options[k] === "function") ? "<fn>" : options[k];
+  });
+  out.modal = "<fn ondismiss>";
+  return out;
+}
+
+var host = document.getElementById("scenarios");
+SCENARIOS.forEach(function (s) {
+  var card = document.createElement("div");
+  card.className = "card";
+
+  var h = document.createElement("h3");
+  h.textContent = s.title;
+
+  var p = document.createElement("p");
+  p.textContent = s.note;
+
+  var b = document.createElement("button");
+  b.className = "go";
+  b.textContent = "Run";
+  b.onclick = function () { run(s, b); };
+
+  card.appendChild(h);
+  card.appendChild(p);
+  card.appendChild(b);
+  host.appendChild(card);
+});
+
+document.getElementById("inspect").onclick = function () {
+  if (!lastOrderID) { log("nothing to inspect yet — run a scenario first."); return; }
+
+  log("inspecting " + lastOrderID + " ...");
+  fetch("/api/inspect?order_id=" + encodeURIComponent(lastOrderID))
+    .then(function (r) { return r.json(); })
+    .then(function (d) { log("inspect " + lastOrderID, d); })
+    .catch(function (e) { log("inspect failed: " + e.message); });
+};
+
+document.getElementById("clear").onclick = function () { logEl.textContent = "ready."; };
+</script>
+</body>
+</html>

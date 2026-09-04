@@ -193,20 +193,28 @@ var Probes = []Probe{
 	},
 	{
 		ID:      "P13",
-		Purpose: "Fetch the mandate order back and check the token fields survived",
+		Purpose: "Check the mandate token survived, on the surface that renders it",
 		ClaimID: "C2",
 		Method:  "GET",
-		Path:    "/orders/{mandate_order_id}",
-		// Reachable only if the mandate fields are still attached. A 200 whose
-		// body has quietly lost them means Razorpay accepted the request and
-		// ignored the part we were testing, which is the whole point of P4.
+		// NOT /orders/{id}. The Orders API does not render the token object at
+		// all, even when it was accepted and stored — fetching the order back
+		// there returns a plain order and reads as a silent field drop. That
+		// false negative cost this bench a headline finding.
+		//
+		// The checkout preferences document is the surface that consumes the
+		// mandate, so it is the surface that shows it. Verified against a plain
+		// order created without a token: its order block has no "token" and no
+		// "method", so a hit here is the mandate and not boilerplate.
+		Path:            "/preferences?key_id={key_id}&order_id={mandate_order_id}",
 		Expected:        types.Reachable,
 		Requires:        []string{"P4"},
 		NotFoundIsError: true,
 		MustEcho: []string{
-			"token.max_amount",
-			"token.expire_at",
-			"token.frequency",
+			"order.token.max_amount",
+			"order.token.frequency",
+			// Sent as expire_at, stored and returned as end_time.
+			"order.token.end_time",
+			"order.method",
 		},
 	},
 	{

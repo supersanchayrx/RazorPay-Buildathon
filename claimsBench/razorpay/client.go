@@ -91,11 +91,37 @@ func (c *Client) Post(path string, payload any) (int, []byte, error) {
 	return c.do(req)
 }
 
+// GetUnauthenticated issues a GET with no Authorization header at all, passing
+// only whatever is already in the path.
+//
+// This exists to distinguish "this account may not use the endpoint" from "this
+// endpoint does not want merchant credentials". Some Razorpay surfaces — the
+// methods endpoint, checkout preferences — are addressed with the key id as a
+// query parameter and reject or ignore Basic auth. Without this, a refusal that
+// is really about the wrong auth scheme reads as a refusal about entitlement.
+//
+// Safe to expose: the key id is publishable, and the secret is never involved.
+func (c *Client) GetUnauthenticated(path string) (int, []byte, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	return c.send(req)
+}
+
 // do authenticates and sends an already-built request. Get and Post both funnel
 // through here so auth, sending and body reading exist in exactly one place.
 func (c *Client) do(req *http.Request) (int, []byte, error) {
 	req.SetBasicAuth(c.keyID, c.keySecret)
 
+	return c.send(req)
+}
+
+// send performs the request exactly as given, adding nothing. Splitting it out
+// of do is what lets an unauthenticated call reuse the timeout, the body
+// reading and the "a bad status is not an error" rule.
+func (c *Client) send(req *http.Request) (int, []byte, error) {
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return 0, nil, err

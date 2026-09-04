@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" width="600" height="600">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3a1c71"/><stop offset="100%" stop-color="#d76d77"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="600" fill="url(#g)"/>
+  <circle cx="300" cy="250" r="120" fill="rgba(255,255,255,.10)"/>
+  <circle cx="300" cy="250" r="80" fill="rgba(255,255,255,.14)"/>
+  <text x="300" y="470" text-anchor="middle" font-family="Georgia, serif" font-size="42"
+        fill="rgba(255,255,255,.92)">Araku Valley</text>
+  <text x="300" y="510" text-anchor="middle" font-family="system-ui, sans-serif" font-size="18"
+        letter-spacing="4" fill="rgba(255,255,255,.55)">NILGIRI POST</text>
+</svg>
