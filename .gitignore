@@ -10,3 +10,6 @@ bench-cli
 
 # Local bench data
 claimsBench/data/
+
+# Planning notes — kept locally, not part of the deliverable
+claude docs/

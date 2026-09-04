@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your account — Nilgiri Post</title>
+<link rel="stylesheet" href="/assets/style.css">
+<style>
+.signin { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin: 18px 0 8px; }
+.signin label { display: block; font-size: 13px; color: #6b7a72; margin-bottom: 4px; }
+.signin input { padding: 9px 11px; border: 1px solid #d8ded9; border-radius: 7px; font-size: 15px; min-width: 260px; }
+.signin button { padding: 10px 18px; border: 0; border-radius: 7px; background: #1f4037; color: #fff; font-size: 15px; cursor: pointer; }
+.hint { color: #6b7a72; font-size: 13.5px; max-width: 62ch; }
+.accounts { list-style: none; padding: 0; margin: 6px 0 0; font-size: 13.5px; }
+.accounts li { padding: 3px 0; }
+.accounts span { color: #9aa5a0; }
+.signedin { font-size: 15px; margin: 16px 0; }
+table.orders { width: 100%; border-collapse: collapse; font-size: 13.5px; margin: 8px 0 4px; }
+table.orders th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .03em;
+  color: #6b7a72; border-bottom: 1px solid #e3e6e2; padding: 6px 12px 6px 0; }
+table.orders td { padding: 8px 12px 8px 0; border-bottom: 1px solid #eef1ef; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <a class="brand" href="/">Nilgiri Post<span>Coonoor</span></a>
+    <nav>
+      <a href="/">Shop</a>
+      <a href="/#about">About</a>
+      <a href="/#contact">Contact</a>
+      <a href="/account.html">Account</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <h1 style="margin-top:28px">Your account</h1>
+  <!--ACCOUNTS-->
+</main>
+
+<footer class="wrap">
+  Nilgiri Post — demo storefront. Prices in INR. Not a real shop.
+</footer>
+
+<script src="/assets/app.js"></script>
+
+<!-- Order access, the merchant half: this comment is replaced with a short-lived
+     signed token when a shopper is logged in, and with nothing when they are not.
+     CHAPMAN never receives a database credential. -->
+<!--CHAPMAN_SESSION-->
+
+<script src="AGENT_BASE/embed.js"
+        data-site="pk_nilgiripost_dev"
+        data-greeting="Ask me about our teas and coffees."
+        data-accent="#1f4037"
+        defer></script>
+
+</body>
+</html>

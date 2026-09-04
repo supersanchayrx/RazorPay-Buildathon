@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nilgiri Post</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <a class="brand" href="/">Nilgiri Post<span>Coonoor</span></a>
+    <nav>
+      <a href="/">Shop</a>
+      <a href="/#about">About</a>
+      <a href="/#contact">Contact</a>
+      <a href="/account.html">Account</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="product" id="product"></div>
+</main>
+
+<footer class="wrap">
+  Nilgiri Post — demo storefront. Prices in INR. Not a real shop.
+</footer>
+
+<script src="/assets/app.js"></script>
+
+<!-- The entire agent install: one tag. AGENT_BASE is rewritten by the dev
+     server from its -agent flag so the port can move; in production this is
+     just the gateway URL, typed once. -->
+<!-- Order access, the merchant half: this comment is replaced with a short-lived
+     signed token when a shopper is logged in, and with nothing when they are not.
+     CHAPMAN never receives a database credential. -->
+<!--CHAPMAN_SESSION-->
+
+<script src="AGENT_BASE/embed.js"
+        data-site="pk_nilgiripost_dev"
+        data-greeting="Ask me about our teas and coffees."
+        data-accent="#1f4037"
+        defer></script>
+
+</body>
+</html>
