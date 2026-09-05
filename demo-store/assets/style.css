@@ -106,3 +106,42 @@ footer { border-top: 1px solid var(--line); color: var(--muted); font-size: 13.5
   .product { grid-template-columns: 1fr; gap: 24px; }
   .hero h1 { font-size: 27px; }
 }
+
+/* ---- cart & checkout ---- */
+.np-cart-btn { position: fixed; left: 20px; bottom: 20px; z-index: 40;
+  background: #1f4037; color: #fff; border: 0; border-radius: 999px;
+  padding: 11px 18px; font: inherit; font-size: 14px; font-weight: 550;
+  cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,.16); }
+.np-cart-btn[data-empty="1"] { opacity: .55; }
+.np-badge { display: inline-block; min-width: 20px; margin-left: 7px; padding: 1px 6px;
+  border-radius: 999px; background: rgba(255,255,255,.22); font-size: 12.5px; }
+.np-cart { position: fixed; left: 20px; bottom: 74px; z-index: 41; width: 340px;
+  max-width: calc(100vw - 40px); max-height: 72vh; overflow: auto;
+  background: #fff; border: 1px solid #e3e6e2; border-radius: 12px;
+  box-shadow: 0 12px 34px rgba(0,0,0,.16); }
+.np-cart-head { display: flex; align-items: center; justify-content: space-between;
+  padding: 13px 15px; border-bottom: 1px solid #eef1ef; font-size: 14.5px; }
+.np-x { background: none; border: 0; font-size: 20px; line-height: 1; cursor: pointer; color: #6b7a72; }
+.np-cart-body { padding: 13px 15px 16px; }
+.np-empty { color: #6b7a72; font-size: 13.5px; margin: 6px 0; }
+.np-lines { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.np-lines td { padding: 8px 0; border-bottom: 1px solid #f0f2f0; vertical-align: middle; }
+.np-var { display: block; color: #9aa5a0; font-size: 12px; }
+.np-qty { white-space: nowrap; text-align: center; width: 88px; }
+.np-qty button { width: 24px; height: 24px; border: 1px solid #dde2de; background: #fff;
+  border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1; }
+.np-qty span { display: inline-block; min-width: 22px; }
+.np-amt { text-align: right; white-space: nowrap; }
+.np-tot { display: flex; justify-content: space-between; font-size: 13.5px; padding: 5px 0; color: #6b7a72; }
+.np-grand { color: #16211c; font-weight: 620; font-size: 15px; border-top: 1px solid #eef1ef;
+  margin-top: 4px; padding-top: 9px; }
+.np-pay { width: 100%; margin-top: 12px; padding: 11px; border: 0; border-radius: 8px;
+  background: #1f4037; color: #fff; font: inherit; font-size: 15px; font-weight: 550; cursor: pointer; }
+.np-pay[disabled] { opacity: .6; cursor: default; }
+.np-note { color: #9aa5a0; font-size: 11.5px; margin: 9px 0 0; line-height: 1.5; }
+.np-problems { background: #fbf4e4; border-radius: 8px; padding: 10px 12px; font-size: 13.5px; color: #8a6d2f; }
+.np-problems p { margin: 4px 0; }
+.np-clear { margin-top: 10px; padding: 8px 12px; border: 1px solid #dde2de; background: #fff;
+  border-radius: 7px; font: inherit; font-size: 13px; cursor: pointer; }
+.np-done b { display: block; margin-bottom: 4px; }
+.np-done { background: #eef3f0; border-radius: 8px; padding: 12px 14px; font-size: 13.5px; color: #1f4037; }

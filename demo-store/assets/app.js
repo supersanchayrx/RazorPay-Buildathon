@@ -119,7 +119,7 @@
         p.variants
           .map(function (v, i) {
             return (
-              '<button class="variant" data-i="' + i + '"' +
+              '<button class="variant" data-i="' + i + '" data-sku="' + v.sku + '"' +
               ' aria-pressed="' + (v.sku === selected.sku) + '"' +
               (v.inStock ? "" : " disabled") + ">" +
               '<span class="v-title">' + v.title + "</span>" +

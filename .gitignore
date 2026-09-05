@@ -13,3 +13,12 @@ claimsBench/data/
 
 # Planning notes — kept locally, not part of the deliverable
 claude docs/
+
+# Scratch files from local testing — cookie jars hold live session tokens
+ck.txt
+c.txt
+_o.html
+_e.js
+
+# Agent skills installed by `npx skills add` — tooling, not project code
+.agents/
