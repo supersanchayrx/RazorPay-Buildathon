@@ -1,0 +1,28 @@
+#agent-gateway-root { position: fixed; right: 20px; bottom: 20px; z-index: 2147483000; }
+.agw-btn {
+  width: 56px; height: 56px; border-radius: 50%; border: 0; cursor: pointer;
+  background: #111; color: #fff; font-size: 22px; line-height: 1;
+  box-shadow: 0 6px 24px rgba(0,0,0,.28);
+}
+.agw-panel {
+  position: absolute; right: 0; bottom: 68px; width: min(360px, calc(100vw - 40px));
+  height: min(480px, calc(100vh - 140px)); display: none; flex-direction: column;
+  background: #fff; color: #111; border: 1px solid #e3e3e3; border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.22); overflow: hidden;
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.agw-panel[data-open="1"] { display: flex; }
+.agw-head { padding: 12px 14px; border-bottom: 1px solid #eee; font-weight: 600; }
+.agw-log { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.agw-msg { padding: 8px 11px; border-radius: 10px; max-width: 85%; white-space: pre-wrap; word-wrap: break-word; }
+.agw-msg[data-who="user"] { align-self: flex-end; background: #111; color: #fff; }
+.agw-msg[data-who="agent"] { align-self: flex-start; background: #f2f2f2; }
+.agw-msg[data-who="error"] { align-self: flex-start; background: #fdecec; color: #8a1c1c; }
+.agw-form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid #eee; }
+.agw-form input { flex: 1; padding: 9px 11px; border: 1px solid #ddd; border-radius: 9px; font: inherit; }
+.agw-form button { padding: 9px 14px; border: 0; border-radius: 9px; background: #111; color: #fff; cursor: pointer; font: inherit; }
+.agw-form button[disabled] { opacity: .5; cursor: default; }
+.agw-gate {
+  display: block; margin-top: 6px; padding-top: 5px; border-top: 1px solid rgba(0,0,0,.12);
+  font-size: 11px; letter-spacing: .02em; text-transform: uppercase; opacity: .65;
+}

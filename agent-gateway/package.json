@@ -1,0 +1,83 @@
+{
+  "name": "agent-gateway",
+  "private": true,
+  "scripts": {
+    "build": "react-router build",
+    "dev": "shopify app dev",
+    "config:link": "shopify app config link",
+    "generate": "shopify app generate",
+    "deploy": "shopify app deploy",
+    "config:use": "shopify app config use",
+    "env": "shopify app env",
+    "start": "react-router-serve ./build/server/index.js",
+    "docker-start": "npm run setup && npm run start",
+    "setup": "prisma generate && prisma migrate deploy",
+    "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
+    "shopify": "shopify",
+    "prisma": "prisma",
+    "graphql-codegen": "graphql-codegen",
+    "vite": "vite",
+    "typecheck": "react-router typegen && tsc --noEmit",
+    "seed": "node scripts/seed-history.mjs",
+    "seed:check": "node scripts/seed-history.mjs && npm run check",
+    "probe": "node scripts/probe-methods.mjs && node scripts/probe-ranking.mjs",
+    "check": "node scripts/check-history.mjs && node scripts/check-seasonal.mjs && node scripts/check-cortex.mjs && node scripts/check-identity.mjs && node scripts/check-auth.mjs && node scripts/check-streaming.mjs && node scripts/check-payments.mjs && node scripts/check-settlement.mjs && node scripts/check-proposals.mjs && node scripts/check-approvals.mjs && node scripts/check-harness.mjs && node scripts/check-ucp.mjs",
+    "merchant:add": "node scripts/merchant-add.mjs",
+    "probe:ucp": "node scripts/probe-ucp.mjs",
+    "probe:models": "node scripts/probe-models.mjs",
+    "probe:model": "node scripts/probe-model.mjs",
+    "probe:analyst": "node scripts/probe-analyst.mjs",
+    "dev:gateway": "vite --port 3000 --strictPort --mode embed"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20.19 <22 || >=22.12"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.123.0",
+    "@prisma/client": "^6.16.3",
+    "@react-router/dev": "^7.12.0",
+    "@react-router/fs-routes": "^7.12.0",
+    "@react-router/node": "^7.12.0",
+    "@react-router/serve": "^7.12.0",
+    "@shopify/app-bridge-react": "^4.2.4",
+    "@shopify/shopify-app-react-router": "^1.2.1",
+    "@shopify/shopify-app-session-storage-prisma": "^9.0.0",
+    "isbot": "^5.1.31",
+    "prisma": "^6.16.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router": "^7.12.0",
+    "vite-tsconfig-paths": "^5.1.4"
+  },
+  "devDependencies": {
+    "@shopify/api-codegen-preset": "^1.2.0",
+    "@shopify/polaris-types": "^1.0.1",
+    "@types/eslint": "^9.6.1",
+    "@types/node": "^22.18.8",
+    "@types/react": "^18.3.25",
+    "@types/react-dom": "^18.3.7",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "eslint": "^8.57.1",
+    "eslint-import-resolver-typescript": "^3.10.1",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^4.6.2",
+    "graphql-config": "^5.1.1",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "vite": "^6.3.6"
+  },
+  "workspaces": [
+    "extensions/*"
+  ],
+  "trustedDependencies": [
+    "@shopify/plugin-cloudflare"
+  ],
+  "overrides": {
+    "p-map": "^4.0.0"
+  },
+  "author": "sanch"
+}

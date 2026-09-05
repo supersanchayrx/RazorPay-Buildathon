@@ -72,7 +72,12 @@ func main() {
 		shop = &store{byCustomer: map[string][]order{}, byEmail: map[string]customer{}, secret: *secret, site: *site}
 	}
 
+	// The merchant's entire agent-readable integration: one well-known path,
+	// proxied from the gateway. See ucp.go.
+	ucp := &ucpProxy{upstream: strings.TrimSuffix(*agent, "/") + "/ucp/" + *site + "/profile"}
+
 	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/ucp", ucp.handle)
 	mux.HandleFunc("/api/orders", shop.handleOrders)
 	mux.HandleFunc("/login", shop.handleLogin)
 	mux.HandleFunc("/logout", shop.handleLogout)

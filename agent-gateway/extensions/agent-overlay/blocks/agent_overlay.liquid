@@ -1,0 +1,41 @@
+{% comment %}
+  Agent gateway overlay.
+
+  An app embed block: injected on every storefront page once the merchant
+  toggles it on in the theme editor. No theme code is edited.
+
+  It talks to the app through Shopify's App Proxy, so requests are same-origin
+  and Shopify HMAC-signs them on the way through.
+{% endcomment %}
+
+<div
+  id="agent-gateway-root"
+  data-proxy="{{ block.settings.proxy_base }}"
+  data-greeting="{{ block.settings.greeting | escape }}"
+  data-shop="{{ shop.permanent_domain }}"
+  data-customer-id="{{ customer.id | default: '' }}"
+></div>
+
+{{ 'overlay.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'overlay.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "Agent overlay",
+  "target": "body",
+  "settings": [
+    {
+      "type": "text",
+      "id": "proxy_base",
+      "label": "Proxy base path",
+      "default": "/apps/agent"
+    },
+    {
+      "type": "text",
+      "id": "greeting",
+      "label": "Greeting",
+      "default": "Hi — ask me anything about this store."
+    }
+  ]
+}
+{% endschema %}
