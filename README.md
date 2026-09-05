@@ -149,11 +149,12 @@ flowchart TB
         S4["get_live_offers<br/><i>approved only</i>"]
     end
 
-    subgraph merchant ["Merchant registry — 11 tools"]
+    subgraph merchant ["Merchant registry — 14 tools"]
         direction LR
         M1["list_proposals<br/>explain_proposal<br/>cross_sell_opportunities"]
         M2["classify_catalogue<br/>break_even<br/>detect_change<br/>repeat_purchase_rhythm<br/>store_scale"]
         M3["list_live_offers<br/>list_decisions<br/>read_ledger"]
+        M4["recovery_queue<br/>why_they_did_not_buy<br/>recovery_grants"]
     end
 
     subgraph diag ["Diagnostics — 3, not shipped"]
@@ -174,6 +175,8 @@ flowchart TB
 **Every tool in both registries is a read.** There is no `checkout.start`, no `approve_offer`, no `publish`, no `refund`. Not an oversight to be filled in later — it is the architecture. A model that can call a tool that moves money is a model you are trusting with money. Approval stays a human clicking a button with an exposure cap in front of them.
 
 Because the registry is data, it can be printed. The console shows a merchant the complete list of what the assistant is able to do, which is a much stronger assurance than a paragraph promising it behaves.
+
+**Three of the merchant tools are about the recovery loop**, and one of them answers a question nothing else in the shop can. `recovery_queue` is who would be written to and — the more useful half — who would not, with the reason each was left alone. `recovery_grants` is what the discount policy has actually cost and how much budget is left. And `why_they_did_not_buy` returns what shoppers *said*, counted by reason: every other tool in either registry reports what happened, and this is the only one that reports why, because the why never touched the server. It carries its own sample floor, so a merchant cannot read four answers as a pattern by forgetting to check.
 
 **The diagnostics are excluded on purpose.** A tool earns a place if a merchant would ask for it in those words. Nobody says *"give me the Wilson lower bound of 12 out of 29"* — and a model reaching for one is a signal that the deterministic pipeline should already have done that work and put the answer on a page.
 
@@ -303,6 +306,156 @@ A payment outage is not an offer proposal. Putting it in a weekly ranked digest 
 
 ---
 
+## Basket recovery, and the third chokepoint
+
+The proposer finds the *opportunity* — "82 baskets held a kettle and were never completed". A finding is not a campaign, and the distance between the two is where abandoned-cart tools go wrong.
+
+**Outreach is speech at a distance.** It reaches someone who is not in a conversation, on a channel they gave us for a different purpose, with nobody present to say *that's wrong*. So the bar is the widget's bar and then some — the opposite of the direction marketing tools drift.
+
+```mermaid
+flowchart TD
+    C["226 abandoned baskets"] --> S{"suppression, first"}
+    S -->|"bought it afterwards · 66"| X1["left alone"]
+    S -->|"too old · 145"| X1
+    S -->|"cooldown · frequency cap · thin margin"| X1
+    S --> E["12 eligible"]
+    E --> D["one per person,<br/>largest margin wins"]
+    D --> T{"treatment"}
+    T -->|"died at payment,<br/>during a live incident"| SV["<b>service</b><br/>“if that's what happened,<br/>it wasn't you”"]
+    T -->|"an approval is live<br/>on something in the basket"| OF["<b>offer</b><br/>announce the exact %"]
+    T -->|"otherwise"| RM["<b>reminder</b><br/>no offer, no deadline"]
+    SV --> B
+    OF --> B
+    RM --> B["<b>checkReply</b><br/>the widget's own gate"]
+    B -->|fails| X2["suppressed:<br/>blocked_by_bounds"]
+    B -->|passes| Q{"quiet hours?<br/>shop's timezone"}
+    Q -->|"21:00–09:00 IST"| X3["held"]
+    Q --> L["send log written FIRST"]
+    L --> CH["channel"]
+
+    style B fill:#8a2f2f,stroke:#5c1f1f,color:#fff
+    style X1 fill:#f1f3f1,stroke:#9aa5a0
+    style X2 fill:#f1f3f1,stroke:#9aa5a0
+    style X3 fill:#f1f3f1,stroke:#9aa5a0
+```
+
+Three properties, each enforced by code rather than by care:
+
+**It never asks for a discount.** There is no code path that creates an offer. If the merchant has already approved one on something in the basket, the message may ANNOUNCE it — exact percentage, real end date, applied by the server at the payment page. Otherwise it is a plain reminder, and that is the intended outcome, not a degraded one. Money off pays people who were going to buy anyway and teaches the rest to abandon deliberately.
+
+**Its best answer is often "we broke it".** A basket that died on the payment step during a live payment incident is not a wavering shopper; it is our failure wearing a shopper's clothes. The recovery agent reads the incident detector for exactly this — and still hedges, because a cart record carries no payment method, so we cannot tie *this* basket to *that* bank.
+
+**Suppression is computed first and shown in full**, the same discipline as `rejected` on the offers page. 214 of 226 baskets are left alone, each with a reason and — where a threshold fired — the value and the threshold it missed. A campaign tool that shows you only its reach has hidden the number that can embarrass you.
+
+Channels are capabilities, not config flags: `whatsapp`, `sms`, `voice` and `email` have **no `deliver` function**, only a sentence saying what would unlock them. A boolean can be flipped by editing a settings file; a missing function cannot.
+
+---
+
+## The return path into the cortex
+
+The cortex fed the proposer from the day both existed — floors, costs, catalogue shape. Nothing came back. So the system could establish on Tuesday that netbanking was failing at 41%, and the assistant talking to a shopper on Wednesday knew nothing and would suggest they try again.
+
+The obvious fix — have `buildCortex` call `runProposals` — is wrong: the cortex sits on the shopper's path, cached for sixty seconds, and the proposer reads eight hundred orders through seven detectors and a false-discovery correction. So **the proposer publishes and the cortex reads**, as a small document with a `ranAt` on it. Findings go stale, they say so, and "the last analysis ran nine days ago" is itself worth surfacing.
+
+Exactly one thing crosses to a shopper:
+
+> *"Some HDFC netbanking payments have not been going through recently. If one fails, UPI and cards are working normally."*
+
+Written by the server from the detector's own facts, bounds-checked before it was stored, dropped after seven days whether or not anyone re-ran the analysis. Note the three absences: **no failure rate** (telling a shopper 41% of netbanking fails invites them to distrust the methods that work), **no date** (the onset is a window, and the honest version of a window is not a customer-service sentence), and no apology for something we have not confirmed is ours.
+
+**Relevance is a routing decision, not a model's judgement.** That was learned the hard way. The notice was first placed in the FACTS block with an instruction that it "may be repeated when relevant" — and a shopper who said their netbanking payment had just failed, during the outage, with the sentence sitting right there, was told that payment troubleshooting is handled by the support team. Then a model that had declined to use one announced to a shopper that *"there is no service notice in our system right now"*.
+
+So the model never sees a notice at all. `router.server.ts` classifies the message as `payment_trouble`, the notice's subject is matched against the method the shopper actually named — somebody whose **card** was declined is not handed a sentence about netbanking — and the answer is returned verbatim with no model in the path.
+
+---
+
+## Asking why, and what an answer earns
+
+A recovery message that only says "you left this behind" recovers a basket at
+best. **The reason is worth more than the basket**: everything a shop can
+measure says WHAT happened, and nothing says why, because the why never touched
+the server. So the message asks one question, and the page it points at is the
+only place the shopper gets to answer.
+
+```mermaid
+flowchart TD
+    Q["one question,<br/>one link, one line"] --> C{"classify<br/>11 labels, closed set"}
+    C -->|"button pressed"| T["taken as given"]
+    C -->|"phrase rule fires"| T
+    C -->|"neither"| M["a model, asked for<br/>one label and nothing else"]
+    M -->|"two labels · invented · down"| U["<b>unknown</b>"]
+    M --> T
+    T --> R{"remedy<br/>pure function"}
+    U --> R
+    R -->|"changed their mind"| X["<b>ends</b> — no counter-offer branch"]
+    R -->|"delivery cost · speed · stock · trust"| F["a true fact,<br/>costs nothing"]
+    R -->|"price, and only price"| G{"8 gates"}
+    G -->|"any one fails"| CS["cheaper things,<br/>actually in stock"]
+    G --> GR["<b>grant</b><br/>bound · capped · single-use<br/>never negotiated"]
+    T -.->|"counted, never quoted"| CX[("shop cortex")]
+
+    style X fill:#8a2f2f,stroke:#5c1f1f,color:#fff
+    style GR fill:#8a2f2f,stroke:#5c1f1f,color:#fff
+    style CX fill:#1f4037,stroke:#143029,color:#fff
+```
+
+**The classifier never learns which answer pays out.** Its prompt mentions no
+discount, no offer, no standing and no basket value — it is labelling a
+sentence. A classifier that knows one label leads to money is a classifier with
+an incentive.
+
+**Eight gates stand in front of one discount**, and the two that matter most:
+`requiresTier` may not be `new` — refused when the merchant saves, not merely
+defaulted, because an agent that pays whoever complains has taught everyone to
+complain — and the depth is the *smaller* of the recovery policy and the
+merchant's existing discount ceiling, then refused outright if the discounted
+basket falls through the margin floor.
+
+**The guarantee, verified live rather than only asserted:**
+
+```
+"too expensive"        ─▶  8% off, 2 units, 48 hours
+"still too expensive"  ─▶  the same 8%, the same grant id
+"come on, 25%?"        ─▶  the same 8%, the same grant id
+```
+
+An agent that improves its offer under pressure has taught the customer base to
+push, and that lesson travels faster than any campaign. The grant reaches
+`buildQuote` **by id**, never as terms; it does not stack with an approved offer;
+and it is dead the moment it is spent — but the redemption keeps the order id, so
+a shopper who closed the tab lands back on the same payment page instead of
+being told their discount is gone.
+
+**And "I changed my mind" ends it.** There is no counter-offer branch,
+deliberately, and the refusal silences that *person* rather than that basket.
+Every instinct in commerce says this is the moment to try one more thing. It is
+the moment somebody told you plainly that they do not want it.
+
+### Delivery: the constraint is the feature
+
+Nothing leaves the building yet. WhatsApp needs Meta-approved templates; SMS
+needs DLT registration — entity, sender header and *every content template* filed
+with the Indian regulator before one message sends; voice needs **Sarvam** for
+speech (chosen for Hinglish, because that is how the shopper actually talks) and
+**Exotel or Plivo** to place the call.
+
+DLT is usually described as friction. It is really an externally enforced version
+of the rule this codebase already imposes on itself: **the body is fixed,
+reviewed by someone who is not us, and only the variables move.** Our templates
+map onto DLT templates one to one because they were written under the same
+constraint. A system that generated free-form recovery copy with a language model
+*could not be sent over Indian SMS at all.*
+
+Voice gets the same discipline and needs it most: the script is templated and
+bounds-checked **before the call is placed**, never generated live. It is the one
+channel where a fabricated discount leaves no screenshot, cannot be retracted,
+and cannot be disproved — so the remedy is decided and the grant issued before
+anyone speaks, and the voice layer only reads out a sentence that already passed
+`checkReply`. Push back on the call and you get the same grant, for the same
+reason you do on the web page.
+
+---
+
 ## The model layer
 
 `pickReasoner()` is the seam. With no key configured it returns the deterministic reasoner and the product still works — which is why a bad reply, once a model is wired, is unambiguously the model's.
@@ -359,7 +512,7 @@ agent-gateway/          the gateway — React Router v7 + Vite, Shopify app temp
     orders.server.ts      the merchant's own history, scoped at the source
     ucp.server.ts         UCP wire types, money, identity, discovery
     ucpmethods.server.ts  the 13 Shopping methods, over the same core
-    ucptools.server.ts    what tools/list returns
+    ucptools.ts           what tools/list returns
     stats.server.ts       Wilson · hypergeometric · Fisher · hyper-lift · BH · CUSUM
     detectors.server.ts   7 detectors, pure
     floors.server.ts      merchant floors + false-discovery guard, BEFORE the model
@@ -367,6 +520,15 @@ agent-gateway/          the gateway — React Router v7 + Vite, Shopify app temp
     rank.server.ts        RICE + risk + decay, then MMR
     proposals.server.ts   the pipeline end to end
     cortex.server.ts      the shop cortex and its two projections
+    settings.server.ts    the writable half — voice, and the outreach ceilings
+    findings.server.ts    the return path: proposer → cortex, and the one shopper sentence
+    recovery.server.ts    basket recovery — who to write to, and the 14 reasons not to
+    reasons.ts            why they didn't buy: a CLOSED set, and how a sentence becomes one
+    loyalty.server.ts     standing, computed. one order is not loyalty
+    remedies.server.ts    what an answer earns. pure function, no model in the path
+    grants.server.ts      a discount for one shopper, one basket, once. never negotiated
+    conversations.server.ts  asked once, and the state machine that enforces it
+    outreach.server.ts    channels as capabilities, and the send log that is the only memory
     identity.server.ts    shopper identity — signed tokens, never a typed identifier
     auth.server.ts        merchant console login — a separate credential class
     calendar.server.ts    Indian festival dates as data, never as a trigger
@@ -374,9 +536,14 @@ agent-gateway/          the gateway — React Router v7 + Vite, Shopify app temp
     ledger.server.ts      append-only decision log
   app/routes/           embed.js widget, chat + checkout endpoints, UCP MCP,
                         hosted payment page, and the merchant console
+    dashboard.recovery.tsx  the campaign before it goes out: every message in full,
+                            every basket left alone, the limits, the discount policy
+    recover.$site.$token.tsx  the shopper's end of the loop — the only page that ASKS.
+                            A signed link, not a login: it shows the basket it names
+                            and nothing else, and never mints a session
   scripts/
     seed-history.mjs      the deterministic fixture — signals and traps
-    check-*.mjs           twelve assertion suites (`npm run check`)
+    check-*.mjs           fourteen assertion suites (`npm run check`)
     probe-*.mjs           live measurements: models, UCP end to end, the analyst
     merchant-add.mjs      create a console account
 demo-store/             Nilgiri Post — a custom merchant site, Go, no build step
@@ -500,7 +667,7 @@ It has to be *your* domain: an agent told to shop at your store looks there and 
 cd agent-gateway && npm run check
 ```
 
-**312 assertions across twelve suites.** They are adversarial where it matters — each identity check tries to read somebody else's orders and asserts that it could not.
+**470 assertions across fourteen suites.** They are adversarial where it matters — each identity check tries to read somebody else's orders and asserts that it could not.
 
 | Suite | Asserts |
 |---|---|
@@ -514,6 +681,8 @@ cd agent-gateway && npm run check
 | `check-settlement` | overselling, double-settling and forged webhooks all fail |
 | `check-proposals` | the traps are **found** and then **stopped**; each floor tested by removing it |
 | `check-approvals` | the same sentence refused → permitted → refused again |
+| `check-recovery` | mostly what does **not** get sent: 226 baskets in, 12 out, 214 with a named reason each |
+| `check-remedies` | the loop: eleven labels, eight gates in front of one discount, and the same grant however hard they push |
 | `check-harness` | the call parser, and that every shopper tool is a read |
 | `check-ucp` | money, identifiers, what is published, and every checkout guard |
 
@@ -538,11 +707,17 @@ Live probes, which need the servers running: `probe:ucp`, `probe:models`, `probe
 | ✅ | **Approvals** — the only thing that can license a price claim, applied server-side |
 | ✅ | **Tool harness** — two registries, structured protocol, three budgets |
 | ✅ | Model layer with per-job chains and a deterministic floor under everything |
+| ✅ | **Basket recovery** — per-basket decisions, 14 suppression rules, every draft through the bounds layer, delivery to a reviewable file |
+| ✅ | **The recovery loop** — asks why, classifies into a closed set, remembers it, and answers with a fact, an alternative, or a bounded single-use grant |
+| ✅ | **Recovery grants** — merchant-approved policy with a monthly cap; the agent chooses whether, never how much, and never improves an offer under pressure |
+| ✅ | **Cortex ← proposer** — aggregates on a 7-day TTL, plus one server-written service sentence a shopper may hear |
+| ✅ | Merchant-writable cortex: the shop's voice, and every outreach ceiling |
 | ✅ | Test bench and readiness probes, merchant-facing |
 | ⚠️ | **No rate limiting.** The site key is public by design, `Origin` only binds browsers, and the MCP endpoint is public. A real bill now that a model is wired |
 | ⚠️ | Ledger, site registry, approvals and cortex still live in files and memory, not Prisma |
 | ⚠️ | The `ucp` CLI requires HTTPS, so third-party client verification needs a tunnel |
-| 📋 | Shopper memory, voice outreach, cortex ← proposer wiring, Shopify key set 2 |
+| ⚠️ | Outreach **decides and drafts but does not deliver** — WhatsApp needs Meta-approved templates, SMS needs DLT registration, voice needs Sarvam for speech *and* Exotel/Plivo for the call. Each is a registration, not a code change |
+| 📋 | Shopper memory, a cart-restore URL, Shopify key set 2 |
 
 ---
 

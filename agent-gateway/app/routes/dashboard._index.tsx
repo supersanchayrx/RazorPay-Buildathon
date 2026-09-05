@@ -1,5 +1,5 @@
 import { Link, useLoaderData } from "react-router";
-import { FEATURES, STATUS_LABEL } from "../lib/features.server";
+import { FEATURES, STATUS_LABEL } from "../lib/features";
 import { readLedger } from "../lib/ledger.server";
 import type { LoaderFunctionArgs } from "react-router";
 import { sitesForMerchant } from "../lib/sites.server";

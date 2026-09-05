@@ -36,6 +36,8 @@ import type { CatalogSource, ShopPolicies } from "./catalog.server";
 import { readLedger } from "./ledger.server";
 import type { Region } from "./calendar.server";
 import type { Site } from "./sites.server";
+import { readSettings } from "./settings.server";
+import { findingsAgeDays, readFindings, type ServiceNotice } from "./findings.server";
 
 export type Provenance = "merchant" | "catalogue" | "orders" | "ledger" | "derived";
 
@@ -102,6 +104,37 @@ export type ShopCortex = {
     refusals: number;
     byGate: Record<string, number>;
   }>;
+
+  /**
+   * MERCHANT-ONLY. What the last analysis run concluded.
+   *
+   * The return path that was missing. The cortex has always fed the proposer;
+   * this is the proposer feeding back, as an aged fact like everything else, so
+   * a merchant can see both what was found and how long ago it was found.
+   */
+  findings: Fact<{
+    incidents: Array<{ id: string; title: string; onsetAt: string; detectedAt: string }>;
+    topActions: Array<{ id: string; title: string; monthlyValue: number }>;
+    stopped: number;
+    recovery: {
+      wouldContact: number;
+      suppressed: number;
+      marginAtStake: number;
+      expectedValue: number;
+      enabled: boolean;
+    } | null;
+    /** Why shoppers said they didn't buy. Merchant-only, like everything above. */
+    reasons: { total: number; enough: boolean; counts: Array<{ reason: string; count: number; share: number }> } | null;
+  }> | null;
+
+  /**
+   * The ONLY thing derived from analysis that a shopper may hear.
+   *
+   * Whole sentences, written server-side and bounds-checked before they were
+   * stored. The assistant may repeat one; it may not paraphrase it, and it
+   * cannot reach the finding underneath. One approved sentence, or nothing.
+   */
+  serviceNotices: Fact<ServiceNotice[]>;
 
   /** What we still need, and who has to supply it. A to-do list the agent keeps about itself. */
   gaps: Array<{ what: string; who: "merchant" | "us"; unlocks: string }>;
@@ -196,13 +229,25 @@ export async function buildCortex(opts: {
   const ledger = readLedger(5000);
   const floors = readMerchantInputs();
   const orders = readOrderSummary();
+  const settings = readSettings(opts.site.key);
+  const found = readFindings(opts.site.key);
+  const foundAge = findingsAgeDays(found);
+
+  /**
+   * An explicit argument still wins over the stored setting.
+   *
+   * The caller that passes a voice is a test or a preview, and a preview that
+   * silently rendered the saved value instead of the one being previewed would
+   * be useless in exactly the moment someone needed it.
+   */
+  const voice = opts.voice ?? settings.voice;
 
   const prices = products.flatMap((p) => [Number(p.minPrice), Number(p.maxPrice)]).filter(Number.isFinite);
   const byGate: Record<string, number> = {};
   for (const e of ledger) if (e.kind === "refusal" && e.gate) byGate[e.gate] = (byGate[e.gate] ?? 0) + 1;
 
   const gaps: ShopCortex["gaps"] = [];
-  if (!opts.voice)
+  if (!voice)
     gaps.push({
       what: "How the shop should sound — a sentence or two in the merchant's own words",
       who: "merchant",
@@ -220,6 +265,20 @@ export async function buildCortex(opts: {
       who: "merchant",
       unlocks: "Cross-sell from real co-purchase, replenishment reminders, offer proposals",
     });
+  if (!found)
+    gaps.push({
+      what: "An analysis run — nothing has been proposed yet",
+      who: "us",
+      unlocks:
+        "Incidents and recovery figures in this memory, and the service notices the assistant is " +
+        "allowed to pass on when payments are failing",
+    });
+  else if (foundAge !== null && foundAge > 7)
+    gaps.push({
+      what: `A fresh analysis — the last one ran ${Math.round(foundAge)} days ago`,
+      who: "us",
+      unlocks: "Findings that describe this week rather than the one before last",
+    });
   gaps.push({
     what: "Signed shopper identity",
     who: "us",
@@ -231,7 +290,7 @@ export async function buildCortex(opts: {
     name: opts.site.name,
     currency: products[0]?.currency ?? "INR",
     regions: opts.regions ?? ["IN"],
-    voice: opts.voice ? fact(opts.voice, "merchant", null) : null,
+    voice: voice ? fact(voice, "merchant", null, settings.updatedAt ?? undefined) : null,
     policies: fact(policies, "catalogue", 7),
     catalogue: fact(
       {
@@ -258,6 +317,24 @@ export async function buildCortex(opts: {
       "ledger",
       null,
     ),
+    findings: found
+      ? fact(
+          {
+            incidents: found.incidents,
+            topActions: found.topActions,
+            stopped: found.stopped,
+            recovery: found.recovery,
+            reasons: found.reasons ?? null,
+          },
+          "derived",
+          // A week. Long enough that a weekly run keeps it fresh, short enough
+          // that a run which quietly stopped shows up as stale rather than as
+          // a confident answer about a month ago.
+          7,
+          found.ranAt,
+        )
+      : null,
+    serviceNotices: fact(found?.serviceNotices ?? [], "derived", 7, found?.ranAt),
     gaps,
   };
 }
@@ -273,6 +350,14 @@ export type ShopperView = {
   policies: ShopPolicies;
   /** Shape only. Never a price or a stock number — those come from a live tool. */
   sells: { categories: string[]; products: number };
+  /**
+   * Sentences about service, already written and already checked.
+   *
+   * The single channel from the analysis side to a shopper. Text, not data: the
+   * assistant repeats one or it says nothing, and it has no route to the
+   * finding that produced it.
+   */
+  serviceNotices: Array<{ text: string; about: string[] }>;
 };
 
 /**
@@ -293,6 +378,9 @@ export function shopperView(c: ShopCortex): ShopperView {
     voice: c.voice?.value ?? null,
     policies: c.policies.value,
     sells: { categories: c.catalogue.value.categories, products: c.catalogue.value.products },
+    serviceNotices: isStale(c.serviceNotices)
+      ? []
+      : c.serviceNotices.value.map((n) => ({ text: n.text, about: n.about ?? [] })),
   };
 }
 

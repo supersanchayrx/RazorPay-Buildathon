@@ -3,7 +3,7 @@ import { findSite } from "../lib/sites.server";
 import { jsonFeedCatalog } from "../lib/catalog.server";
 import { resolveAgent } from "../lib/ucp.server";
 import { METHODS, type MethodContext } from "../lib/ucpmethods.server";
-import { TOOLS } from "../lib/ucptools.server";
+import { TOOLS } from "../lib/ucptools";
 import { record } from "../lib/ledger.server";
 
 /**

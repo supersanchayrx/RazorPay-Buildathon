@@ -128,6 +128,7 @@ export default function DashboardLayout() {
             <Link to="/dashboard">Features</Link>
             <Link to="/dashboard/chatbot">Assistant</Link>
             <Link to="/dashboard/offers">Offers</Link>
+            <Link to="/dashboard/recovery">Recovery</Link>
             <Link to="/dashboard/analyst">Analyst</Link>
             <Link to="/dashboard/agentfront">Agent front</Link>
             <Link to="/dashboard/cortex">Cortex</Link>

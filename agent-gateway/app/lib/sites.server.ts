@@ -24,6 +24,16 @@ export type Site = {
   origins: string[];
   /** Where the catalogue is read from. Discovery will populate this later. */
   catalogFeedUrl: string;
+
+  /**
+   * How to build a product page URL, with `{handle}` substituted.
+   *
+   * Needed the moment anything we write has to point somewhere the shopper can
+   * act — a recovery message, an agent handoff, a card in the widget. Absent is
+   * a legitimate state and means every link falls back to the shop's front
+   * page, which is worse but never wrong.
+   */
+  productUrlTemplate?: string;
   greeting: string;
   accent: string;
 
@@ -63,6 +73,7 @@ const SITES: Site[] = [
     name: "Nilgiri Post",
     origins: ["http://127.0.0.1:4000", "http://localhost:4000", "http://127.0.0.1:4100"],
     catalogFeedUrl: "http://127.0.0.1:4000/catalog.json",
+    productUrlTemplate: "/product.html?handle={handle}",
     greeting: "Ask me about our teas and coffees.",
     accent: "#1f4037",
     // Development value. In production this is generated per merchant at

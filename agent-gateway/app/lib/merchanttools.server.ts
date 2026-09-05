@@ -54,6 +54,12 @@ import { markdownEconomics, storeScale } from "./economics.server";
 import { runProposals, type ProposalRun } from "./proposals.server";
 import { activeOffers, history as decisionHistory } from "./approvals.server";
 import { readLedger } from "./ledger.server";
+import { runRecovery } from "./recovery.server";
+import { answerRate, reasonHistogram } from "./conversations.server";
+import { REASON_LABEL } from "./reasons";
+import { allGrants, monthlySpend } from "./grants.server";
+import { readSettings } from "./settings.server";
+import { findSite } from "./sites.server";
 
 export type MerchantToolContext = {
   shop: string;
@@ -568,6 +574,132 @@ export const MERCHANT_TOOLS: ToolSpec<MerchantToolContext>[] = [
             )
             .join("\n")
         : "No offers are live.";
+    },
+  },
+  {
+    name: "recovery_queue",
+    description:
+      "Abandoned baskets that are worth writing to right now, and — the more useful half — the ones that are not, with the reason each was left alone. Answers 'who should we chase about their cart', 'why aren't we messaging more people', and 'what is that costing us'.",
+    parameters: obj({ show: { type: "string", enum: ["send", "skip", "both"] } }, []),
+    async run(ctx, a) {
+      const site = findSite(ctx.shop);
+      const run = runRecovery({
+        shop: ctx.shop,
+        shopName: ctx.shopName,
+        storefrontOrigin: site?.origins[0],
+        productUrlTemplate: site?.productUrlTemplate,
+        gatewayOrigin: process.env.GATEWAY_ORIGIN,
+        siteSecret: site?.secret,
+      });
+      if (run.emptyReason && !run.targets.length && !run.suppressed.length) return run.emptyReason;
+
+      const show = String(a.show ?? "both");
+      const out: string[] = [];
+
+      if (show !== "skip") {
+        out.push(
+          run.targets.length
+            ? `WOULD WRITE TO ${run.targets.length} people, ${inr(run.totals.marginAtStake)} of margin at stake, ` +
+                `about ${inr(run.totals.expectedValue)} of it recoverable at an ASSUMED ${pct(run.totals.assumedRecovery)} ` +
+                `— assumed, because this outreach has never run here and there is no rate to cite:\n` +
+                run.targets
+                  .map(
+                    (t) =>
+                      `  ${t.treatment.padEnd(9)} ${inr(t.marginAtStake).padStart(7)}  ${t.items
+                        .map((i) => i.title)
+                        .join(" + ")}  (${Math.round(t.ageHours / 24)}d old, stopped at ${t.lastStep})`,
+                  )
+                  .join("\n")
+            : "NOTHING would be written today.",
+        );
+      }
+
+      if (show !== "send") {
+        /**
+         * The suppressed side is where a merchant's actual question lives. "Why
+         * are we only messaging twelve people" is answered by this table and by
+         * nothing else, and a tool that returned only the queue would send them
+         * to a settings page to guess.
+         */
+        out.push(
+          `LEFT ALONE — ${run.suppressed.length} baskets, ${inr(
+            run.suppressedBy.reduce((s2, x) => s2 + x.margin, 0),
+          )} of margin not chased:\n` +
+            run.suppressedBy
+              .map((x) => `  ${String(x.count).padStart(4)}  ${x.label}  (${inr(x.margin)})`)
+              .join("\n"),
+        );
+      }
+
+      if (!run.settings.outreach.enabled)
+        out.push("Outreach is switched OFF, so this is a dry run: everything above is drafted and nothing is delivered.");
+
+      return out.join("\n\n");
+    },
+  },
+  {
+    name: "why_they_did_not_buy",
+    description:
+      "What shoppers said when asked why they abandoned a basket, counted by reason. The only thing in this shop's data that answers WHY rather than WHAT — nothing else can, because the reason never touched the server. Use it for 'why are people not buying', 'what is putting people off', 'is it the price or the delivery'.",
+    parameters: obj({ since_days: { type: "integer" } }, []),
+    async run(ctx, a) {
+      const days = Number(a.since_days) || 0;
+      const h = reasonHistogram(ctx.shop, days > 0 ? { sinceDays: days } : {});
+      const rate = answerRate(ctx.shop);
+
+      if (h.total === 0) {
+        return (
+          `Nobody has answered yet. ${rate.asked} basket${rate.asked === 1 ? " has" : "s have"} been asked about. ` +
+          `This is the one number in the shop that cannot be derived from order data, so it is worth waiting for.`
+        );
+      }
+      if (!h.enough) {
+        /**
+         * A histogram over four answers is a histogram that will be read as a
+         * finding, and four people are not a finding. Same reasoning as the
+         * proposer's sample floor, and it matters more here because the
+         * temptation to act on the first three replies is enormous.
+         */
+        return (
+          `Only ${h.total} answers so far — too few to read as a pattern, so here they are as raw counts and nothing more:\n` +
+          h.counts.map((c) => `  ${String(c.count).padStart(3)}  ${REASON_LABEL[c.reason]}`).join("\n") +
+          `\nBELOW THE SAMPLE FLOOR. Do not change anything on the strength of this yet.`
+        );
+      }
+      return (
+        `${h.total} shoppers answered, out of ${rate.asked} asked (${pct(rate.rate)} replied):\n` +
+        h.counts
+          .map((c) => `  ${pct(c.share).padStart(6)}  ${String(c.count).padStart(3)}  ${REASON_LABEL[c.reason]}`)
+          .join("\n")
+      );
+    },
+  },
+  {
+    name: "recovery_grants",
+    description:
+      "Discounts the recovery agent has issued under the merchant's own policy: who, why, how deep, what it cost in margin, and how much of the monthly budget is left. Use it for 'what discounts have gone out', 'what is this costing me', 'how much budget is left'.",
+    parameters: obj({}),
+    async run(ctx) {
+      const settings = readSettings(ctx.shop);
+      const grants = allGrants(ctx.shop);
+      const spent = monthlySpend(ctx.shop);
+      if (!settings.recovery.enabled)
+        return "Recovery discounts are switched OFF, so none can be issued. Nothing has gone out.";
+      if (!grants.length)
+        return `Recovery discounts are on — up to ${settings.recovery.maxDepthPct}% for ${settings.recovery.requiresTier} shoppers — and none has been issued yet.`;
+      return (
+        `${spent.count} of ${settings.recovery.monthlyGrantCap} grants used this month, ` +
+        `${inr(spent.margin)} of ${inr(settings.recovery.monthlyMarginCap)} margin budget:\n` +
+        grants
+          .slice(-15)
+          .reverse()
+          .map(
+            (g) =>
+              `  ${g.state.padEnd(9)} ${String(Math.round(g.depth * 100)).padStart(3)}% off ${g.title} ` +
+              `(${g.tier}, said ${g.reason}, costs ${inr(g.marginCost)})`,
+          )
+          .join("\n")
+      );
     },
   },
   {

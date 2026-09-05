@@ -24,6 +24,7 @@ export type RouteKind =
   | "policy_shipping"
   | "policy_cod"
   | "discount_request"
+  | "payment_trouble"
   | "order_status"
   | "order_history"
   | "catalog_query"
@@ -118,6 +119,28 @@ export function route(message: string): Route {
   }
   if (/\b(return|refund|exchange|send it back)\b/i.test(m)) {
     return { kind: "policy_returns", search: {}, because: "asked about returns" };
+  }
+
+  /**
+   * A payment that did not go through.
+   *
+   * Routed deterministically, and placed after COD so that "pay on delivery"
+   * cannot be mistaken for a failure. This exists because of what the storefront
+   * assistant did when the shop had a live netbanking outage and the notice
+   * about it was sitting in the FACTS block: it deflected to "our support team
+   * handles payment troubleshooting" and never mentioned it.
+   *
+   * That is the whole argument for routing. A notice that a small model may or
+   * may not choose to relay is not a notice. The shopper in front of you is the
+   * one person it was written for, and whether they hear it should not depend
+   * on which free model was up this morning.
+   */
+  if (
+    /\b(?:payment|card|upi|netbanking|net banking|transaction|checkout)\b[^?]{0,48}\b(?:fail|failed|failing|declin\w*|bounced|error|not (?:work|go)\w*|didn'?t (?:work|go)\w*|won'?t go)\b/i.test(m) ||
+    /\b(?:fail\w*|declin\w*|error|problem|trouble|issue)\b[^?]{0,48}\b(?:payment|paying|card|upi|netbanking|net banking|transaction|checkout)\b/i.test(m) ||
+    /\b(?:can'?t|cannot|unable to)\s+(?:pay|check\s?out|complete\s+(?:my\s+)?(?:order|payment))\b/i.test(m)
+  ) {
+    return { kind: "payment_trouble", search: {}, because: "reported a payment that did not go through" };
   }
   if (/\b(ship|shipping|deliver|delivery|dispatch|how long|when will)\b/i.test(m)) {
     return { kind: "policy_shipping", search: {}, because: "asked about shipping" };

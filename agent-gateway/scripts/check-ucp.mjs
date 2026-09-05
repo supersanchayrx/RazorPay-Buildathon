@@ -41,7 +41,7 @@ fs.rmSync(SANDBOX, { recursive: true, force: true });
 fs.mkdirSync(path.join(SANDBOX, "data"), { recursive: true });
 
 const U = await load("app/lib/ucp.server.ts", "ucp-check.mjs");
-const T = await load("app/lib/ucptools.server.ts", "ucptools-check.mjs");
+const T = await load("app/lib/ucptools.ts", "ucptools-check.mjs");
 const R = await load("app/lib/reservations.server.ts", "ucpresv-check.mjs");
 
 process.chdir(SANDBOX);

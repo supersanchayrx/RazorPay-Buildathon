@@ -35,9 +35,27 @@ if (host === "localhost") {
   };
 }
 
+/**
+ * The dev tunnel's hostname, allowed only when one is configured.
+ *
+ * Vite refuses requests whose Host header it does not recognise — DNS-rebinding
+ * protection, and it is right to. But Twilio cannot fetch TwiML from localhost,
+ * so during voice development the gateway is reached through a tunnel and every
+ * request arrives with the tunnel's hostname. Without this, Vite answers 403 to
+ * Twilio and the failure looks exactly like a broken route.
+ *
+ * Derived from PUBLIC_ORIGIN rather than a wildcard like `.ngrok-free.app`. A
+ * wildcard would allow anybody's tunnel, which is the whole class of host the
+ * check exists to refuse; this allows precisely the one origin we ourselves
+ * handed to Twilio, and nothing when no tunnel is configured.
+ */
+const tunnelHost = process.env.PUBLIC_ORIGIN
+  ? [new URL(process.env.PUBLIC_ORIGIN).hostname]
+  : [];
+
 export default defineConfig({
   server: {
-    allowedHosts: [host],
+    allowedHosts: [host, ...tunnelHost],
     cors: {
       preflightContinue: true,
     },

@@ -22,6 +22,7 @@
 import type { CatalogSource, ShopPolicies } from "./catalog.server";
 import { committed } from "./reservations.server";
 import { activeOffers } from "./approvals.server";
+import { findGrant, priceable } from "./grants.server";
 
 /** What a client may ask for. Note the absence of any price field. */
 export type CartLineRequest = {
@@ -102,11 +103,25 @@ const QUOTE_TTL_MINUTES = 15;
  * guessing. A shipping rule invented from a misread sentence is a promise the
  * merchant never made.
  */
-function shippingFor(subtotal: number, policies: ShopPolicies): number {
+/**
+ * The threshold above which delivery is free, read from the merchant's own
+ * policy text.
+ *
+ * Exported because the recovery agent needs it for a genuinely useful, entirely
+ * true sentence: a shopper who abandoned over a ₹60 delivery charge, ₹140 short
+ * of free delivery, should be told that. It is a fact about the shop's own
+ * published policy, not a concession — which is exactly the kind of remedy this
+ * system should reach for before it reaches for money.
+ */
+export function freeShippingThreshold(policies: ShopPolicies): number {
   const free = policies.shipping?.match(/free (?:shipping|delivery)[^\d]{0,20}(\d[\d,]*)/i);
-  const threshold = free ? Number(free[1].replace(/,/g, "")) : 1200;
-  return subtotal >= threshold ? 0 : 60;
+  return free ? Number(free[1].replace(/,/g, "")) : 1200;
 }
+
+function shippingFor(subtotal: number, policies: ShopPolicies): number {
+  return subtotal >= freeShippingThreshold(policies) ? 0 : 60;
+}
+
 
 function fingerprint(lines: QuoteLine[], total: number, currency: string): string {
   const body = lines
@@ -133,6 +148,20 @@ export async function buildQuote(opts: {
   shop?: string;
   /** A re-quote for an attempt that already holds stock does not compete with itself. */
   excludeOrderId?: string;
+  /**
+   * A recovery grant to price against, BY ID.
+   *
+   * An id, never terms. The caller says which grant; this function reads what
+   * it is worth, from disk, at quote time — exactly the rule that makes the
+   * rest of this file safe. A caller that could pass a depth is a caller that
+   * could pass 90%, and the browser is a caller.
+   *
+   * Unknown, expired or already-redeemed grants are ignored in silence rather
+   * than refused: a shopper opening a stale link should see the real price of
+   * their basket, not an error page about a discount they never knew the
+   * mechanics of.
+   */
+  grantId?: string | null;
 }): Promise<QuoteResult> {
   const reserved = opts.shop ? committed(opts.shop, opts.excludeOrderId) : new Map<string, number>();
   const problems: QuoteProblem[] = [];
@@ -282,6 +311,45 @@ export async function buildQuote(opts: {
     if (amount <= 0) continue;
     offers.push({ handle: o.handle, title: o.title, percent: Math.round(o.depth * 100), amount, endsAt: o.endsAt });
   }
+
+  /**
+   * A recovery grant, if one was named and is still live.
+   *
+   * Two differences from a broadcast offer, both of which exist to bound what
+   * one conversation can cost:
+   *
+   *   - it is capped at UNITS, not just at a percentage, so a grant issued
+   *     against a basket of two cannot be spent on a basket of twenty;
+   *   - it stacks with nothing. If an approved offer already covers this
+   *     product, the grant is skipped rather than added on top — two discounts
+   *     on one line is how a 10% policy becomes 18% and nobody can say which
+   *     rule allowed it.
+   */
+  if (opts.shop && opts.grantId) {
+    const g = findGrant(opts.shop, opts.grantId);
+    const p = g ? priceable(g) : null;
+    if (p && !offers.some((o) => o.handle === p.handle)) {
+      let remaining = p.qtyCap;
+      let base = 0;
+      for (const l of lines) {
+        if (l.handle !== p.handle || remaining <= 0) continue;
+        const units = Math.min(l.qty, remaining);
+        base += l.unitPrice * units;
+        remaining -= units;
+      }
+      const amount = Math.round(base * p.depth);
+      if (amount > 0) {
+        offers.push({
+          handle: p.handle,
+          title: p.title,
+          percent: Math.round(p.depth * 100),
+          amount,
+          endsAt: p.endsAt,
+        });
+      }
+    }
+  }
+
   const discount = offers.reduce((s, o) => s + o.amount, 0);
 
   const shipping = shippingFor(subtotal - discount, policies);

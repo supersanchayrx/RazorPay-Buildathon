@@ -19,6 +19,7 @@ import { SHOPPER_TOOLS } from "./tools.server";
 import { isConfigured } from "./openrouter.server";
 import { record } from "./ledger.server";
 import { getCortex, shopperView } from "./cortex.server";
+import { methodsMentioned } from "./findings.server";
 import type { ShopperIdentity } from "./identity.server";
 import type { Order, OrderSource } from "./orders.server";
 
@@ -115,6 +116,7 @@ async function prepare(opts: AssistantOptions) {
       catalog: opts.catalog,
       prefetched,
       route: decided,
+      voice: shop.voice,
       orders: {
         available: Boolean(opts.orderSource),
         identified: Boolean(opts.identity),
@@ -296,11 +298,60 @@ async function tryHarness(
   };
 }
 
+/**
+ * A payment failed, and the shop already knows why.
+ *
+ * Answered here, deterministically, and never handed to a model. The sentence
+ * was written by `findings.server.ts` from the incident detector, checked
+ * against the bounds layer before it was ever stored, and carries no failure
+ * rate and no date — one approved sentence, or nothing.
+ *
+ * The alternative was tried and failed in the obvious way: the notice was put
+ * in the FACTS block with an instruction that it "may be repeated when
+ * relevant", and a shopper who said their netbanking payment had just failed
+ * was told that payment troubleshooting is handled by the support team. The
+ * model was not wrong to be cautious; it simply had no way to know that the
+ * sentence in front of it was the answer. Relevance is a routing decision, and
+ * routing is not a thing to delegate to whichever free model is up today.
+ *
+ * Returns null when there is nothing to say, which is the common case: with no
+ * live incident this route falls straight through to the reasoner.
+ */
+function serviceAnswer(
+  shop: Awaited<ReturnType<typeof prepare>>["shop"],
+  decided: Awaited<ReturnType<typeof prepare>>["decided"],
+  message: string,
+): { reply: string; toolCalls: string[]; products: CatalogProduct[] } | null {
+  if (decided.kind !== "payment_trouble") return null;
+
+  /**
+   * Match the notice to what they actually said.
+   *
+   * A shopper who names no method ("my payment failed") is told about whatever
+   * is live. A shopper who names one is told only about THAT one — handing
+   * somebody whose card was declined a sentence about netbanking is worse than
+   * saying nothing, because it is confidently about the wrong thing. When
+   * nothing matches, this returns null and the reasoner answers normally.
+   */
+  const named = methodsMentioned(message);
+  const notice = named.length
+    ? shop.serviceNotices.find((n) => n.about.some((a) => named.includes(a)))
+    : shop.serviceNotices[0];
+  if (!notice) return null;
+  return {
+    // The notice verbatim, then an offer of the one thing we can actually do.
+    // Nothing here is generated, so nothing here can drift.
+    reply: `${notice.text} Nothing was charged for an attempt that failed. If you'd like, tell me what you were buying and I'll check it's still there.`,
+    toolCalls: ["service_notice()"],
+    products: [],
+  };
+}
+
 export async function runAssistant(opts: AssistantOptions): Promise<AssistantResult> {
-  const { reasoner, decided, ctx } = await prepare(opts);
+  const { reasoner, decided, ctx, shop } = await prepare(opts);
 
   let result: { reply: string; toolCalls: string[]; products: CatalogProduct[] } | null =
-    await tryHarness(opts, ctx, decided);
+    serviceAnswer(shop, decided, opts.message) ?? (await tryHarness(opts, ctx, decided));
 
   // No usable answer from the loop falls through to the single-shot path, which
   // falls through again to the deterministic reasoner. Three layers, each
@@ -363,7 +414,7 @@ export type StreamEvent =
 export async function* runAssistantStream(
   opts: AssistantOptions,
 ): AsyncGenerator<StreamEvent> {
-  const { reasoner, decided, ctx } = await prepare(opts);
+  const { reasoner, decided, ctx, shop } = await prepare(opts);
   yield { type: "meta", route: decided.kind, reasoner: reasoner.name };
 
   /**
@@ -375,7 +426,7 @@ export async function* runAssistantStream(
    * by sentence. The shopper waits a little longer before the first word and
    * then sees ordinary streamed text; the widget covers the wait.
    */
-  const viaTools = await tryHarness(opts, ctx, decided);
+  const viaTools = serviceAnswer(shop, decided, opts.message) ?? (await tryHarness(opts, ctx, decided));
   if (viaTools) {
     const guard = createStreamGuard({
       groundedStockClaims: groundedStock(viaTools.products),

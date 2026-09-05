@@ -10,6 +10,15 @@
  * connect something" is a different conversation from "not built yet", and
  * collapsing them into `locked` would hide the only ones the merchant can act
  * on today.
+ *
+ * Named `features.ts` rather than `features.server.ts`, and that is not
+ * cosmetic. It holds no secret, reads no file and touches no request — it is
+ * a list of what exists — and the dashboard renders it in the COMPONENT, not
+ * only in the loader. React Router strips server modules out of the client
+ * bundle by removing `loader`/`action`, so a `.server` module reached from a
+ * component fails the production build outright while dev mode carries on
+ * happily. The suffix is a claim about where code may run, and this file was
+ * making a claim that was not true.
  */
 
 export type FeatureStatus =
@@ -87,6 +96,18 @@ export const FEATURES: Feature[] = [
     href: "/dashboard/offers",
   },
   {
+    key: "recovery",
+    name: "Basket recovery",
+    blurb:
+      "Baskets that were never completed, and what — if anything — is worth saying about them. Shows you every message before it goes out, and every basket it decided to leave alone.",
+    status: "available",
+    unlockedBy:
+      "Live as a dry run: it drafts through the same bounds check as your assistant and delivers to a file. " +
+      "WhatsApp, SMS and voice each need their own registration before a message can actually leave.",
+    doc: "architecture-recovery.md",
+    href: "/dashboard/recovery",
+  },
+  {
     key: "seasonality",
     name: "Festival & event windows",
     blurb:
@@ -118,10 +139,16 @@ export const FEATURES: Feature[] = [
   },
   {
     key: "voice",
-    name: "Voice outreach",
-    blurb: "Call back on failed payments and abandoned carts, within limits you set.",
-    status: "planned",
-    unlockedBy: "Needs order access, consent capture, and the voice framework.",
+    name: "Voice & messaging outreach",
+    blurb: "Deliver recovery messages over WhatsApp, SMS or a call, within the limits you set.",
+    status: "building",
+    unlockedBy:
+      "The agent that decides who to contact and what to say is built and runs today — see Basket recovery. " +
+      "What is missing is delivery: WhatsApp needs Business templates approved by Meta, SMS needs a DLT-registered " +
+      "sender and template, voice needs a telephony provider and a recorded-consent trail. Each is a registration, " +
+      "not a code change.",
+    doc: "architecture-recovery.md",
+    href: "/dashboard/recovery",
   },
   {
     key: "testbench",

@@ -37,6 +37,17 @@ export type ReasonerContext = {
   route: Route;
 
   /**
+   * How this shop sounds, in the merchant's own words. Style only.
+   *
+   * It can change the register of a sentence and nothing else — every bound
+   * still applies, and a voice note asking for urgency buys none. The cortex
+   * has always been able to hold this; until there was somewhere to type it, it
+   * was always null.
+   */
+  voice?: string | null;
+
+
+  /**
    * The verified shopper's orders, or null.
    *
    * Null covers three different situations and the reply differs for each:

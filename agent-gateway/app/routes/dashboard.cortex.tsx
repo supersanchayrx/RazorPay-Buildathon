@@ -1,9 +1,10 @@
-import { Link, useLoaderData } from "react-router";
+import { Form, Link, useLoaderData, useNavigation } from "react-router";
 import { jsonFeedCatalog } from "../lib/catalog.server";
 import { buildCortex, isStale, shopperView } from "../lib/cortex.server";
-import type { LoaderFunctionArgs } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { sitesForMerchant } from "../lib/sites.server";
 import { requireMerchant } from "../lib/auth.server";
+import { writeSettings } from "../lib/settings.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const site = sitesForMerchant(requireMerchant(request).sites)[0];
@@ -16,7 +17,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     policies: isStale(cortex.policies),
     catalogue: isStale(cortex.catalogue),
     commerce: cortex.commerce ? isStale(cortex.commerce) : false,
+    findings: cortex.findings ? isStale(cortex.findings) : false,
+    notices: isStale(cortex.serviceNotices),
   } };
+};
+
+/**
+ * The one thing on this page a merchant can write.
+ *
+ * Everything else in the cortex is derived, and deliberately so — a typed
+ * number goes stale silently while looking authoritative. The voice is the
+ * exception because there is no data anywhere that could tell us how a shop
+ * wants to sound. Until this form existed, `buildCortex` accepted a voice that
+ * nothing ever supplied, so the cortex reported the same gap forever.
+ */
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const merchant = requireMerchant(request);
+  const form = await request.formData();
+  const shop = String(form.get("shop") ?? "");
+  if (!merchant.sites.includes(shop)) return { ok: false, error: "not your store" };
+  const res = writeSettings(shop, { voice: String(form.get("voice") ?? "") }, merchant.email);
+  return { ok: res.ok, error: res.error };
 };
 
 const age = (at: string) => {
@@ -39,6 +60,7 @@ function Src({ from, at, stale }: { from: string; at: string; stale?: boolean })
 
 export default function Cortex() {
   const { cortex: c, shopper, stale } = useLoaderData<typeof loader>();
+  const busy = useNavigation().state !== "idle";
 
   return (
     <>
@@ -76,11 +98,34 @@ export default function Cortex() {
                 <b>Voice</b>
               </td>
               <td>
-                {shopper.voice ?? (
+                {shopper.voice ? (
+                  <>
+                    “{shopper.voice}”
+                    {c.voice ? <Src from={c.voice.from} at={c.voice.at} /> : null}
+                  </>
+                ) : (
                   <span className="muted">not set — the assistant sounds generic without it</span>
                 )}
               </td>
             </tr>
+            {shopper.serviceNotices.length > 0 && (
+              <tr>
+                <td>
+                  <b>Service notices</b>
+                </td>
+                <td>
+                  {shopper.serviceNotices.map((n) => (
+                    <div key={n.text}>“{n.text}”</div>
+                  ))}
+                  <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
+                    Written here, not by the model. The assistant may repeat one word for word when it
+                    is relevant, and cannot reach the finding underneath it — not the failure rate,
+                    not the date.
+                    <Src from={c.serviceNotices.from} at={c.serviceNotices.at} stale={stale.notices} />
+                  </div>
+                </td>
+              </tr>
+            )}
             {(["returns", "shipping", "cod"] as const).map((k) => (
               <tr key={k}>
                 <td>
@@ -102,6 +147,36 @@ export default function Cortex() {
         The assistant is not asked to keep them secret — it is never handed them, which is a
         stronger guarantee.
       </p>
+
+      <h3>How should this shop sound?</h3>
+      <p className="muted" style={{ fontSize: 13.5, margin: "0 0 8px", maxWidth: "62ch" }}>
+        The one thing here we cannot work out from your data. It changes the register of a reply and
+        nothing else — every limit still applies, whatever you write, and the checks that stop a
+        fabricated discount do not read this at all.
+      </p>
+      <Form method="post" className="panel">
+        <input type="hidden" name="shop" value={c.key} />
+        <textarea
+          name="voice"
+          rows={3}
+          defaultValue={c.voice?.value ?? ""}
+          placeholder="Plain and unhurried. We are a small estate, not a supermarket — no exclamation marks, no pressure."
+          style={{
+            width: "100%",
+            font: "inherit",
+            fontSize: 13.5,
+            padding: "8px 10px",
+            border: "1px solid var(--line)",
+            borderRadius: 7,
+            background: "var(--bg)",
+            color: "var(--ink)",
+            resize: "vertical",
+          }}
+        />
+        <button type="submit" className="btn-primary" disabled={busy} style={{ marginTop: 10 }}>
+          Save voice
+        </button>
+      </Form>
 
       <h2>Only you can see this</h2>
       <div className="panel">
@@ -147,6 +222,37 @@ export default function Cortex() {
                 <b>Out of stock</b>
               </td>
               <td>{c.catalogue.value.outOfStock.join(", ") || <span className="muted">nothing</span>}</td>
+            </tr>
+            <tr>
+              <td>
+                <b>Last analysis</b>
+              </td>
+              <td>
+                {c.findings ? (
+                  <>
+                    {c.findings.value.incidents.length} incident
+                    {c.findings.value.incidents.length === 1 ? "" : "s"} ·{" "}
+                    {c.findings.value.topActions.length} ideas ranked · {c.findings.value.stopped} stopped
+                    {c.findings.value.recovery ? (
+                      <div className="muted" style={{ fontSize: 12.5, marginTop: 3 }}>
+                        basket recovery: {c.findings.value.recovery.wouldContact} to write to,{" "}
+                        {c.findings.value.recovery.suppressed} left alone, ₹
+                        {c.findings.value.recovery.marginAtStake.toLocaleString("en-IN")} of margin at stake
+                      </div>
+                    ) : null}
+                    {c.findings.value.incidents.map((i) => (
+                      <div key={i.id} className="muted" style={{ fontSize: 12.5, marginTop: 3 }}>
+                        {i.title} · began around {i.onsetAt}, confirmed {i.detectedAt}
+                      </div>
+                    ))}
+                    <Src from={c.findings.from} at={c.findings.at} stale={stale.findings} />
+                  </>
+                ) : (
+                  <span className="muted">
+                    never run — open Offers once and the proposer publishes what it finds back to here
+                  </span>
+                )}
+              </td>
             </tr>
             <tr>
               <td>

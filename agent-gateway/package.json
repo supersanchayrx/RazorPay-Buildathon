@@ -21,7 +21,7 @@
     "seed": "node scripts/seed-history.mjs",
     "seed:check": "node scripts/seed-history.mjs && npm run check",
     "probe": "node scripts/probe-methods.mjs && node scripts/probe-ranking.mjs",
-    "check": "node scripts/check-history.mjs && node scripts/check-seasonal.mjs && node scripts/check-cortex.mjs && node scripts/check-identity.mjs && node scripts/check-auth.mjs && node scripts/check-streaming.mjs && node scripts/check-payments.mjs && node scripts/check-settlement.mjs && node scripts/check-proposals.mjs && node scripts/check-approvals.mjs && node scripts/check-harness.mjs && node scripts/check-ucp.mjs",
+    "check": "node scripts/check-history.mjs && node scripts/check-seasonal.mjs && node scripts/check-cortex.mjs && node scripts/check-identity.mjs && node scripts/check-auth.mjs && node scripts/check-streaming.mjs && node scripts/check-payments.mjs && node scripts/check-settlement.mjs && node scripts/check-proposals.mjs && node scripts/check-approvals.mjs && node scripts/check-recovery.mjs && node scripts/check-remedies.mjs && node scripts/check-voice.mjs && node scripts/check-harness.mjs && node scripts/check-ucp.mjs",
     "merchant:add": "node scripts/merchant-add.mjs",
     "probe:ucp": "node scripts/probe-ucp.mjs",
     "probe:models": "node scripts/probe-models.mjs",
@@ -48,7 +48,8 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router": "^7.12.0",
-    "vite-tsconfig-paths": "^5.1.4"
+    "vite-tsconfig-paths": "^5.1.4",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@shopify/api-codegen-preset": "^1.2.0",

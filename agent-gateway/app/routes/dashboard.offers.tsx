@@ -5,6 +5,9 @@ import { sitesForMerchant } from "../lib/sites.server";
 import { jsonFeedCatalog } from "../lib/catalog.server";
 import { runProposals } from "../lib/proposals.server";
 import { decide, activeOffers, history } from "../lib/approvals.server";
+import { publishFindings } from "../lib/findings.server";
+import { recoverySummary, runRecovery } from "../lib/recovery.server";
+import { reasonHistogram } from "../lib/conversations.server";
 
 /**
  * The offer proposer, as a merchant sees it.
@@ -34,6 +37,32 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const run = await runProposals({
     shop: site.key,
     catalog: jsonFeedCatalog(site.catalogFeedUrl),
+  });
+
+  /**
+   * The analysis just ran; record what it concluded.
+   *
+   * A loader that writes is not free of sin, but the alternative is worse in
+   * every direction: a scheduler we do not have, or a cortex that re-runs the
+   * whole pipeline on the shopper's path. What crosses is aggregates and
+   * server-written sentences \u2014 see `findings.server.ts` for why a
+   * shopper may hear "netbanking has been failing; UPI is fine" and may not
+   * hear the rate behind it.
+   */
+  publishFindings({
+    shop: site.key,
+    incidents: run.incidents,
+    actions: run.actions,
+    stopped: run.rejected.length,
+    recovery: recoverySummary(
+      runRecovery({
+        shop: site.key,
+        shopName: site.name,
+        storefrontOrigin: site.origins[0],
+        productUrlTemplate: site.productUrlTemplate,
+      }),
+    ),
+    reasons: reasonHistogram(site.key),
   });
 
   return {

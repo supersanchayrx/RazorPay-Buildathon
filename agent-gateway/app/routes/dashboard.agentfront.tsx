@@ -3,7 +3,7 @@ import { useLoaderData } from "react-router";
 import { requireMerchant } from "../lib/auth.server";
 import { sitesForMerchant } from "../lib/sites.server";
 import { discoveryDocument, UCP_VERSION, capabilities, paymentHandlers } from "../lib/ucp.server";
-import { TOOLS } from "../lib/ucptools.server";
+import { TOOLS } from "../lib/ucptools";
 
 /**
  * The agent-readable storefront, explained to the merchant who has to enable it.
