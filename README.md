@@ -29,9 +29,9 @@ If `check_bounds` were a tool the model *chose* to call, a model having a bad da
 flowchart TB
     subgraph clients ["Who talks to it"]
         direction LR
-        H["🧑 Shopper<br/>in the browser"]
-        A["🤖 Shopper's agent<br/>OpenClaw · ChatGPT"]
-        M["🏪 Merchant<br/>console"]
+        H["Shopper<br/>in the browser"]
+        A["Shopper's agent<br/>OpenClaw · ChatGPT"]
+        M["Merchant<br/>console"]
     end
 
     subgraph doors ["Front doors — identity differs, core does not"]
@@ -43,11 +43,11 @@ flowchart TB
 
     subgraph core ["CHAPMAN core"]
         direction TB
-        CX["🧠 Shop cortex<br/>one shared memory of the merchant"]
+        CX["Shop cortex<br/>one shared memory of the merchant"]
         OR["Orchestrator<br/>ground → route → reason → bound → log"]
         TL["Read tools<br/>catalogue · policies · orders · calendar"]
-        BD["🚧 Bounds<br/>the only path to a shopper"]
-        LG["📒 Decision ledger<br/>append-only"]
+        BD["Bounds<br/>the only path to a shopper"]
+        LG["Decision ledger<br/>append-only"]
     end
 
     R["Reasoner seam<br/><i>the only place a model may live</i>"]
