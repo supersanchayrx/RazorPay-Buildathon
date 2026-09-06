@@ -193,3 +193,61 @@ export function describeOrder(o: Order): string {
   const items = o.lines.map((l) => `${l.qty}× ${l.title}`).join(", ");
   return `${o.id} — placed ${when}, ${money(o.total, o.currency)}, ${STATUS_TEXT[o.status]}: ${items}`;
 }
+
+/* ------------------------------------------------------------------ *
+ * Contact
+ * ------------------------------------------------------------------ */
+
+/** A way to reach one shopper, as the merchant chose to expose it. */
+export type ShopperContact = { phone: string | null; email: string | null };
+
+/**
+ * Ask the merchant how to reach one of their own customers.
+ *
+ * THE BROWSER IS NEVER ASKED THIS. A phone number in a POST body is a phone
+ * number anyone can put there, and accepting one would let a stranger aim our
+ * outreach at somebody else's handset by opening the console on a shop page.
+ * The browser may prove WHO it is with a signed session token; turning that
+ * `sub` into a way of reaching them is the merchant's business, answered
+ * server-to-server over the same signed request that serves their orders.
+ *
+ * It fails soft and on purpose. No feed, no `customer` object, a slow endpoint
+ * or an outright error all produce nulls, and a basket with no contact is
+ * suppressed by the recovery agent as `no_channel` with that reason shown. A
+ * shop that never publishes contact details simply never has anyone chased,
+ * which is a coherent way to run a shop.
+ */
+export async function jsonFeedContact(
+  feedUrl: string,
+  secret: string,
+  sub: string,
+  timeoutMs = 2500,
+): Promise<ShopperContact> {
+  const empty: ShopperContact = { phone: null, email: null };
+  if (!sub) return empty;
+
+  const ts = Math.floor(Date.now() / 1000);
+  const url = new URL(feedUrl);
+  url.searchParams.set("customer", sub);
+
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "x-chapman-timestamp": String(ts),
+        "x-chapman-signature": signRequest(secret, sub, ts),
+        accept: "application/json",
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return empty;
+    const body = (await res.json()) as { customer?: { id?: string; phone?: string; email?: string } };
+    const c = body.customer;
+    // Same defence in depth as the orders above: we asked about one shopper, so
+    // a record naming a different one is the merchant's bug and not our licence
+    // to phone whoever came back.
+    if (!c || (c.id && c.id !== sub)) return empty;
+    return { phone: c.phone ?? null, email: c.email ?? null };
+  } catch {
+    return empty;
+  }
+}

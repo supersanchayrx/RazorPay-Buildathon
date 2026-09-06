@@ -5,7 +5,7 @@ import { draftById } from "../lib/outreach.server";
 import { config, verifyTwilioSignature } from "../lib/voice.server";
 import { record } from "../lib/ledger.server";
 import { readSettings } from "../lib/settings.server";
-import { openConversation, speak, THE_ASK, warmFallback } from "../lib/voicetalk.server";
+import { openConversation, openSession, speak, THE_ASK, warmFallback } from "../lib/voicetalk.server";
 import { listen, reply, respondWithin } from "../lib/twiml.server";
 
 /**
@@ -203,6 +203,24 @@ async function inner({ request, params }: LoaderFunctionArgs | ActionFunctionArg
    * not what they did — a person who hangs up on the question was still asked.
    */
   openConversation(site.key, draft);
+
+  /**
+   * Open the session HERE, where there is slack, rather than lazily on the
+   * first thing the shopper says.
+   *
+   * The session carries what the shop knows — its own policy wording, any live
+   * service notice, and what it remembers about this caller — and assembling
+   * that reads the cortex and the memory store. Doing it on the first turn
+   * would spend those milliseconds inside the window Twilio is counting, on the
+   * one request where being late means the shopper hears silence. Doing it now
+   * costs nothing: the opening audio is usually already rendered.
+   *
+   * `takeTurn` still creates a session if this one never happened, so a call
+   * that arrives by some other path degrades to the facts-only prompt rather
+   * than failing.
+   */
+  const callSid = formParams.CallSid ?? "";
+  if (callSid) void openSession(callSid, site.key, draft);
 
   // Warmed here because the opening has slack and every later turn does not.
   void warmFallback(c, c.origin);

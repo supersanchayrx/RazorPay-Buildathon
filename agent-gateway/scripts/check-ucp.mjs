@@ -205,14 +205,67 @@ check(
     doc.ucp.services["dev.ucp.shopping"][0].endpoint === "http://127.0.0.1:3000/ucp/pk_test/mcp",
 );
 check(
-  "we do NOT advertise the discount capability",
-  !("dev.ucp.shopping.discount" in doc.ucp.capabilities),
-  "no approved-offer store exists yet, so claiming it would be a lie told in JSON",
+  "we DO advertise the discount capability, now that discounts exist",
+  "dev.ucp.shopping.discount" in doc.ucp.capabilities,
+  'this assertion used to be the opposite, noting "no approved-offer store exists yet" \u2014 the approval store shipped, so the lie would now be omitting it',
+);
+check(
+  "...and declares itself an extension of the two things it extends",
+  (() => {
+    const e = doc.ucp.capabilities["dev.ucp.shopping.discount"]?.[0];
+    return (
+      Array.isArray(e?.extends) &&
+      e.extends.includes("dev.ucp.shopping.cart") &&
+      e.extends.includes("dev.ucp.shopping.checkout")
+    );
+  })(),
+  "the profile schema: `extends` is present for extensions and absent for root capabilities",
+);
+check(
+  "no spec or schema URL is invented for it",
+  (() => {
+    const e = doc.ucp.capabilities["dev.ucp.shopping.discount"]?.[0];
+    return e && !("spec" in e) && !("schema" in e);
+  })(),
+  "both are optional and we host neither; a plausible URL that 404s is the same class of claim as a handler we cannot honour",
 );
 check(
   "a store with Razorpay keys advertises a payment handler",
   Object.keys(doc.ucp.payment_handlers).includes("in.razorpay.checkout"),
 );
+/* ---- the methods we advertise have to be ones the store can take ---- */
+//
+// This block exists because the opposite was shipped. `payment_methods` was
+// hardcoded to ["upi", "card", "netbanking", "wallet"] for every store, and a
+// probe on 2026-09-06 came back "UPI transactions are not enabled for the
+// merchant" — UPI needs KYC. So the discovery document was promising a method
+// the store could not take, to a caller whose only way to find out was to fail
+// at the last step. Nothing in this file noticed, because nothing asked.
+
+const handlerCfg = (site) =>
+  U.discoveryDocument(site, "http://x").ucp.payment_handlers["in.razorpay.checkout"]?.[0]?.config ?? {};
+
+check(
+  "A STORE DOES NOT ADVERTISE UPI UNTIL IT SAYS IT HAS UPI",
+  !handlerCfg(SITE).payment_methods.includes("upi"),
+  "UPI needs KYC. Advertised falsely, an agent tells a buyer to pay by a method the checkout page will not offer",
+);
+check(
+  "...and does advertise the methods that need no enablement",
+  ["card", "netbanking", "wallet"].every((m) => handlerCfg(SITE).payment_methods.includes(m)),
+  "the conservative default has to still be useful, or every store looks broken",
+);
+check(
+  "a store that HAS cleared KYC advertises UPI",
+  handlerCfg({ ...SITE, razorpay: { ...SITE.razorpay, methods: ["upi", "card"] } }).payment_methods.includes("upi"),
+  "the fix must not be 'never say UPI' — that is the same error pointing the other way",
+);
+check(
+  "buyer presence is required whatever the method",
+  handlerCfg(SITE).requires_buyer_presence === true,
+  "cards and netbanking go through Razorpay's hosted page too; no method here is completable by an agent holding a token",
+);
+
 check(
   "a store WITHOUT keys advertises none",
   Object.keys(U.discoveryDocument({ ...SITE, razorpay: undefined }, "http://x").ucp.payment_handlers).length === 0,
@@ -227,6 +280,10 @@ check(
       "dev.ucp.shopping.order": ["get_order"],
       "dev.ucp.shopping.catalog.search": ["search_catalog"],
       "dev.ucp.shopping.catalog.lookup": ["lookup_catalog", "get_product"],
+      // An extension is honoured by FIELDS, not by a method: `discount_codes`
+      // in, `items_discount` out. There is no method to point at, and asking
+      // for one would be asking the wrong question of an extension.
+      "dev.ucp.shopping.discount": [],
     }[cap];
     return need && need.every((m) => typeof M.METHODS[m] === "function");
   }),
@@ -437,6 +494,179 @@ check(
 check(
   "get_order requires an id",
   (await M.get_order(ctx(), {})).messages[0].code === "invalid_request",
+);
+
+/* ================= offers, on the agent surface ================= *
+ *
+ * THIS SECTION EXISTS BECAUSE OF A BUG THE REST OF THIS FILE DID NOT CATCH.
+ *
+ * `cartResponse` called `buildQuote` without `shop`. The intent was right \u2014 a
+ * cart holds no stock, so it should not subtract stock held for other shoppers
+ * \u2014 but `shop` was also what switched approved offers on. So an agent's cart
+ * quoted full price while `create_checkout`, on the same basket, charged the
+ * discounted total.
+ *
+ * Every check above asks "can an agent make us charge the wrong amount?", and
+ * every one of them passed, because none asked whether the two priced surfaces
+ * agree WITH EACH OTHER. A number can be individually defensible on both sides
+ * of a disagreement. That is the gap being closed here.
+ */
+
+process.chdir(SANDBOX);
+const A = await load(path.join(REAL, "app/lib/approvals.server.ts"), "appr-ucp.mjs");
+const G = await load(path.join(REAL, "app/lib/grants.server.ts"), "grants-ucp.mjs");
+const Q = await load(path.join(REAL, "app/lib/quote.server.ts"), "quote-ucp.mjs");
+process.chdir(REAL);
+
+const iso = (days) => new Date(Date.now() + days * 86400000).toISOString();
+const HANDLE = "masala-chai-blend";
+const POLICIES = await catalog.policies();
+const BASKET = [{ handle: HANDLE, qty: 2 }];
+
+A.decide({
+  shop: "pk_test",
+  candidateId: "cand_ucp_offer",
+  action: "approve",
+  by: "merchant@nilgiripost.test",
+  offer: { handle: HANDLE, title: "Masala Chai Blend", depth: 0.1, endsAt: iso(7), maxUnits: 50 },
+});
+
+const onOffer = await M.get_product(ctx(), { catalog: { id: HANDLE } });
+const ext = onOffer.product["dev.ucp.shopping.discount"];
+
+check(
+  "a product on offer says so",
+  ext?.promotions?.[0]?.value === 10 && ext.promotions[0].type === "percentage",
+  "an agent that only reads the catalogue still learns the offer exists",
+);
+check(
+  "...as TERMS, with no amount and no discounted price",
+  !/amount|discounted_price|was_price/i.test(JSON.stringify(ext)),
+  "a product carries no basket; handing an agent a figure here is how it quotes a total nobody computed",
+);
+check(
+  "...and the merchant's exposure cap is NOT published",
+  // Asserted STRUCTURALLY, not by substring. The first version of this check
+  // looked for the string "50" and passed for a week by luck: the offer's end
+  // date is an ISO timestamp, and a run at 14:50 puts "50" in the payload with
+  // nothing wrong. A check that depends on the clock is a check that will one
+  // day fail loudly for no reason, and — far worse — passed quietly for the
+  // wrong one.
+  Object.values(ext.promotions[0]).every((v) => v !== 50) &&
+    !Object.keys(ext.promotions[0]).some((k) => /max|cap|units|budget/i.test(k)),
+  'maxUnits is the merchant budget, and published it becomes "only 50 left at this price"',
+);
+check(
+  "a product with no offer carries no promotions key at all",
+  !("dev.ucp.shopping.discount" in (await M.get_product(ctx(), { catalog: { id: "copper-chai-kettle" } })).product),
+  'an empty array reads as "we checked, there are none", which invites a model to say it out loud',
+);
+
+const promos = await M.get_promotions(ctx(), {});
+check("get_promotions lists the live offer", promos.promotions.length === 1 && promos.promotions[0].value === 10);
+check(
+  "get_promotions says the offer needs no code",
+  /automatic|no code/i.test(JSON.stringify(promos)) && promos.promotions[0].automatic === true,
+  "otherwise a model invents a code field and tells a buyer to enter one",
+);
+
+/* ---- the regression: cart and checkout must agree ---- */
+
+const offerCart = await M.create_cart(ctx(), { cart: { line_items: [{ item: { id: HANDLE }, quantity: 2 }] } });
+const cartTotal = offerCart.totals.find((t) => t.type === "total").amount;
+const cartDiscount = offerCart.totals.find((t) => t.type === "items_discount");
+
+// Exactly what create_checkout prices with: same function, same arguments.
+const authoritative = await Q.buildQuote({ catalog, items: BASKET, policies: POLICIES, shop: "pk_test" });
+
+check(
+  "AN AGENT'S CART SHOWS THE APPROVED OFFER",
+  cartDiscount !== undefined && cartDiscount.amount < 0,
+  "the bug: no discount line at all, because `shop` was omitted to skip reservations and took `activeOffers` with it",
+);
+check(
+  "THE CART TOTAL EQUALS WHAT CHECKOUT WILL CHARGE",
+  cartTotal === U.toMinor(authoritative.quote.total, "INR"),
+  `cart ${cartTotal} vs checkout ${U.toMinor(authoritative.quote.total, "INR")} \u2014 the two surfaces disagreeing IS the failure`,
+);
+check(
+  "the discounted total still adds up",
+  cartTotal === offerCart.totals.filter((t) => t.type !== "total").reduce((s, t) => s + t.amount, 0),
+  "a breakdown that does not reconcile has an agent quoting one number and a buyer paying another",
+);
+check(
+  "a cart STILL holds no stock, offer or not",
+  R.committed("pk_test").size === 0,
+  "the fix passes `shop` for offers; it must not have quietly turned carts into reservations",
+);
+
+/* ---- recovery grants: redeemable by an agent, not discoverable ---- */
+
+const { grant } = G.issue({
+  shop: "pk_test",
+  cartId: "cart_abandoned_1",
+  customerId: "cus_1",
+  handle: "single-estate-assam-ctc",
+  title: "Single Estate Assam CTC",
+  depth: 0.08,
+  qtyCap: 2,
+  marginCost: 40,
+  reason: "price_too_high",
+  tier: "returning",
+  expiresAt: iso(2),
+  under: { maxDepthPct: 10, requiresTier: "returning" },
+});
+
+check(
+  "a grant is NOT listed by get_promotions",
+  !JSON.stringify(await M.get_promotions(ctx(), {})).includes(grant.id),
+  "a grant is bound to one basket and one customer; listing it turns a private remedy into a coupon feed",
+);
+
+const redeemed = await M.create_cart(ctx(), {
+  cart: {
+    line_items: [{ item: { id: "single-estate-assam-ctc" }, quantity: 2 }],
+    discount_codes: [grant.id],
+  },
+});
+check(
+  "an agent can redeem a grant the buyer was given",
+  redeemed.totals.some((t) => t.type === "items_discount" && t.amount < 0),
+);
+
+const bogus = await M.create_cart(ctx(), {
+  cart: { line_items: [{ item: { id: HANDLE }, quantity: 2 }], discount_codes: ["grn_madeup"] },
+});
+check(
+  "an unrecognised code is IGNORED, and the basket still prices",
+  bogus.totals.find((t) => t.type === "total").amount > 0 &&
+    bogus.messages?.some((m) => m.severity === "recoverable"),
+  "refusing would have an agent abandon a good basket over a stale string from an old email",
+);
+check(
+  "a made-up code buys nothing",
+  bogus.totals.find((t) => t.type === "total").amount === cartTotal,
+  "identical to the same basket with no code at all",
+);
+
+const stacked = await M.create_cart(ctx(), {
+  cart: {
+    line_items: [{ item: { id: "single-estate-assam-ctc" }, quantity: 2 }],
+    discount_codes: [grant.id, grant.id, "grn_other"],
+  },
+});
+check(
+  "codes do not stack",
+  stacked.totals.filter((t) => t.type === "items_discount").length === 1,
+  "five codes that all landed would turn an 8% policy into 40% with no rule to point at",
+);
+
+check(
+  "an agent cannot send terms, only an id",
+  !/depth|percent_off|discount_amount|discount_value/i.test(
+    JSON.stringify(T.TOOLS.find((x) => x.name === "create_cart")),
+  ),
+  "a caller that could pass a depth is a caller that could pass 90%",
 );
 
 /* ================= agent identity ================= */

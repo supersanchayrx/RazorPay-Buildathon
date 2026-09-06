@@ -34,6 +34,30 @@ export type Site = {
    * page, which is worse but never wrong.
    */
   productUrlTemplate?: string;
+
+  /**
+   * A path on the merchant's own origin that proxies our recovery page.
+   *
+   * When set, the "why didn't you buy?" link in a recovery message points at
+   * the merchant's domain rather than at ours, and their server forwards it
+   * here — the same fifteen-line proxy as `/.well-known/ucp`. A shopper who
+   * was on nilgiripost.example is then asked the question on
+   * nilgiripost.example, which is both less alarming and more likely to be
+   * answered.
+   *
+   * Absent is a valid state: the link falls back to our own origin, which
+   * works and looks like a third party, in that order.
+   */
+  recoverPath?: string;
+
+  /**
+   * A path on the merchant's origin that restores a basket from a signed link.
+   *
+   * Without it, a recovery message can only point at a product page and the
+   * shopper has to add everything again — honest, and one avoidable step away
+   * from the thing we asked them to do.
+   */
+  restorePath?: string;
   greeting: string;
   accent: string;
 
@@ -74,6 +98,8 @@ const SITES: Site[] = [
     origins: ["http://127.0.0.1:4000", "http://localhost:4000", "http://127.0.0.1:4100"],
     catalogFeedUrl: "http://127.0.0.1:4000/catalog.json",
     productUrlTemplate: "/product.html?handle={handle}",
+    recoverPath: "/recover",
+    restorePath: "/restore",
     greeting: "Ask me about our teas and coffees.",
     accent: "#1f4037",
     // Development value. In production this is generated per merchant at
@@ -81,6 +107,19 @@ const SITES: Site[] = [
     secret: process.env.SITE_SECRET_NILGIRIPOST ?? "dev-secret-nilgiripost-do-not-ship",
     orders: { feedUrl: "http://127.0.0.1:4000/api/orders" },
     // Key set 1 belongs to the custom-site path.
+    //
+    // `methods` is deliberately ABSENT, which means the conservative default:
+    // card, netbanking, wallet — and no UPI. That is not a preference, it is
+    // this account's actual state. Probed 2026-09-06:
+    //
+    //   POST /payments/create/ajax → "UPI transactions are not enabled for the
+    //   merchant"
+    //
+    // UPI needs KYC. When that clears, add `methods: ["upi", "card",
+    // "netbanking", "wallet"]` here and the discovery document, the escalation
+    // message and the checkout page all follow from the one edit. Until then,
+    // advertising UPI would have an agent tell a buyer to pay by a method the
+    // checkout page will not offer them.
     razorpay: {
       keyIdEnv: "RAZORPAY_TEST_API_KEY_ID1",
       keySecretEnv: "RAZORPAY_TEST_API_KEY_SECRET1",

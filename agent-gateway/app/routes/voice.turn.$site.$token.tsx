@@ -167,4 +167,18 @@ async function handle(args: LoaderFunctionArgs | ActionFunctionArgs) {
 export const loader = handle;
 export const action = handle;
 
-export { SAFE_LINE };
+/*
+ * There was an `export { SAFE_LINE }` here and it broke `npm run build`.
+ *
+ * React Router strips server code from a route by removing `loader`, `action`,
+ * `middleware` and `headers`. ANY OTHER export keeps the whole module graph
+ * alive in the client bundle — so one re-export dragged `voicetalk.server`, and
+ * with it Twilio, Sarvam and the model chain, towards the browser. Dev mode
+ * does not care, which is why it survived a commit.
+ *
+ * Nothing imported it from here: `check-voice.mjs` takes `SAFE_LINE` from
+ * `voicetalk.server` directly, which is where it lives. Third occurrence of
+ * this exact class after `features.ts` and `reasons.ts`, and the first on a
+ * route rather than a module — the rule is the same either way. A route
+ * exports loader and action, and nothing else.
+ */

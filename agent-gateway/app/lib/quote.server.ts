@@ -141,11 +141,28 @@ export async function buildQuote(opts: {
   items: CartLineRequest[];
   policies?: ShopPolicies;
   /**
-   * When given, stock already held for other shoppers is subtracted before
-   * anything is priced. Omitting it prices against the raw catalogue, which is
-   * right for a browsing "what would this cost" and wrong for a checkout.
+   * Which shop this basket belongs to.
+   *
+   * IDENTITY, not intent. It is how approved offers, recovery grants and held
+   * stock are all looked up, so anything priced for a real shop passes it. What
+   * a caller does NOT want from that set is chosen separately, below.
    */
   shop?: string;
+  /**
+   * Which stock figure to price against.
+   *
+   * `"available"` (the default) subtracts units already held for other shoppers
+   * mid-payment — right for anything about to take money. `"catalogue"` prices
+   * against the merchant's raw figure, which is right for a cart: a cart holds
+   * nothing, and an agent comparing five shops should not see a shortfall caused
+   * by a stranger's half-finished checkout.
+   *
+   * This is a SEPARATE knob from `shop` deliberately, because it used to be the
+   * same one — omitting `shop` bought you the raw catalogue — and the price of
+   * that overloading was a cart that silently lost every merchant-approved offer
+   * along with the reservations it meant to skip.
+   */
+  stock?: "available" | "catalogue";
   /** A re-quote for an attempt that already holds stock does not compete with itself. */
   excludeOrderId?: string;
   /**
@@ -163,7 +180,10 @@ export async function buildQuote(opts: {
    */
   grantId?: string | null;
 }): Promise<QuoteResult> {
-  const reserved = opts.shop ? committed(opts.shop, opts.excludeOrderId) : new Map<string, number>();
+  const reserved =
+    opts.shop && opts.stock !== "catalogue"
+      ? committed(opts.shop, opts.excludeOrderId)
+      : new Map<string, number>();
   const problems: QuoteProblem[] = [];
   const lines: QuoteLine[] = [];
 

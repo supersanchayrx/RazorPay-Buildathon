@@ -46,6 +46,18 @@ export type ReasonerContext = {
    */
   voice?: string | null;
 
+  /**
+   * What this shop remembers about the signed-in shopper, if anyone is.
+   *
+   * Deliberately NOT part of the FACTS block. FACTS are things fetched a moment
+   * ago and framed as "the only things you know, quote them as written"; a
+   * memory is none of those — it is weeks old, it may be wrong, and quoting one
+   * as a fact is the failure this whole feature has to avoid. It supplies the
+   * QUESTION ("still after something low-caffeine?") and the tools supply the
+   * answer. Empty for anonymous shoppers, always.
+   */
+  memories?: string[];
+
 
   /**
    * The verified shopper's orders, or null.

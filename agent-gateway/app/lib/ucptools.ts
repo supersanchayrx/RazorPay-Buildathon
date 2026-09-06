@@ -87,6 +87,25 @@ const buyer = {
   },
 } as const;
 
+/**
+ * Discount codes, as the UCP discount extension passes them.
+ *
+ * The description tells the model two things it will otherwise get wrong, and
+ * both cost a buyer real money when it does:
+ *
+ *   - merchant offers are AUTOMATIC. A model that believes a code is needed
+ *     will either invent one or tell the buyer there is no offer because it
+ *     could not find one to enter.
+ *   - a code that does not resolve is not an error. Saying so here stops an
+ *     agent abandoning a good basket over a stale string.
+ */
+const discountCodes = {
+  type: "array",
+  items: { type: "string" },
+  description:
+    "Recovery codes the buyer already holds, if any. Merchant offers apply AUTOMATICALLY and need no code here — if a product is on offer the total comes back discounted on its own. A code that has expired or been used is ignored rather than refused, and the response says so: the basket still prices, at full price. Only one code applies; discounts do not stack. Send an empty array to remove a code already on the cart.",
+} as const;
+
 const idParam = (what: string) => ({ type: "string", description: `The id of the ${what}.` });
 
 export type ToolDescriptor = {
@@ -183,14 +202,28 @@ export const TOOLS: ToolDescriptor[] = [
     ),
   },
   {
+    name: "get_promotions",
+    description:
+      "Offers the merchant has approved and that are running right now: which product, what percentage, and when it ends. " +
+      "NOT a UCP method — a convenience this merchant adds. The same offers appear on every product from search_catalog and get_product, so an agent that never calls this still sees them. " +
+      "It returns TERMS, not prices. There is no discounted figure here and you should not compute one: put the item in a cart and the total comes back with the discount already applied by the merchant. " +
+      "Nothing here needs a code.",
+    inputSchema: obj({ meta }, ["meta"]),
+  },
+  {
     name: "create_cart",
     description:
-      "Create a priced cart. A cart is exploration: it costs the buyer nothing and HOLDS NO STOCK, so use it freely while comparing. Totals come back priced by the merchant." +
+      "Create a priced cart. A cart is exploration: it costs the buyer nothing and HOLDS NO STOCK, so use it freely while comparing. " +
+      "Totals come back priced by the merchant, with any approved offer ALREADY APPLIED and itemised as a negative `items_discount` line — this is the only place a discount becomes a number, so quote the buyer this total and not one you worked out. The same total is what create_checkout will charge." +
       AMOUNTS,
     inputSchema: obj(
       {
         meta,
-        cart: { type: "object", properties: { line_items: lineItems, buyer }, required: ["line_items"] },
+        cart: {
+          type: "object",
+          properties: { line_items: lineItems, buyer, discount_codes: discountCodes },
+          required: ["line_items"],
+        },
       },
       ["meta", "cart"],
     ),
@@ -206,7 +239,14 @@ export const TOOLS: ToolDescriptor[] = [
       "Replace a cart's contents. `line_items` is a FULL REPLACEMENT, not a patch — send every line you want to keep." +
       AMOUNTS,
     inputSchema: obj(
-      { meta, id: idParam("cart"), cart: { type: "object", properties: { line_items: lineItems, buyer } } },
+      {
+        meta,
+        id: idParam("cart"),
+        cart: {
+          type: "object",
+          properties: { line_items: lineItems, buyer, discount_codes: discountCodes },
+        },
+      },
       ["meta", "id", "cart"],
     ),
   },
@@ -233,9 +273,10 @@ export const TOOLS: ToolDescriptor[] = [
             cart_id: {
               type: "string",
               description:
-                "Convert an existing cart. When given, the cart's contents are used and any line_items here are ignored.",
+                "Convert an existing cart. When given, the cart's contents are used and any line_items here are ignored. A discount already on that cart carries over.",
             },
             buyer,
+            discount_codes: discountCodes,
           },
         },
       },

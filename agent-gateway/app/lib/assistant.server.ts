@@ -21,6 +21,7 @@ import { record } from "./ledger.server";
 import { getCortex, shopperView } from "./cortex.server";
 import { methodsMentioned } from "./findings.server";
 import type { ShopperIdentity } from "./identity.server";
+import { learn, recall } from "./memory.server";
 import type { Order, OrderSource } from "./orders.server";
 
 export type AssistantResult = {
@@ -103,12 +104,32 @@ async function prepare(opts: AssistantOptions) {
     }
   }
 
+  /**
+   * What this shop remembers about this person, if it knows who they are.
+   *
+   * Scoped to (shop, verified sub) inside `recall`, and empty for anybody who
+   * is not signed in — an anonymous shopper has no memory to retrieve because
+   * none was ever written. Scored against THIS message rather than returned
+   * wholesale, so a question about kettles does not drag in what they said
+   * about decaf in March.
+   *
+   * Failure is soft: a memory store that is unreadable costs a slightly less
+   * personal reply, and must never cost the reply.
+   */
+  let memories: string[] = [];
+  try {
+    memories = recall({ shop: opts.shop, sub: opts.identity?.sub, query: opts.message }).map((m) => m.text);
+  } catch {
+    /* enrichment, never a dependency */
+  }
+
   return {
     reasoner,
     decided,
     shop,
     ctx: {
       message: opts.message,
+      memories,
       history,
       shopName: shop.name,
       currency: "INR",
@@ -199,6 +220,33 @@ function writeLedger(
       products: o.result.products.map((p) => p.handle),
     },
   });
+}
+
+/**
+ * Keep what this turn said about the person, if anything.
+ *
+ * Called alongside the ledger write and for the same reason: it must happen on
+ * BOTH transports, or the widget — which streams — quietly stops learning while
+ * every curl and every check keeps working. That exact shape of bug has been
+ * shipped here twice already, once for tools and once for bounds.
+ *
+ * Every gate is inside `learn`: no verified identity means nothing is written,
+ * a message with no first-person statement is discarded before any model is
+ * involved, and a candidate carrying a price, a stock level, an offer or an
+ * order state is refused. So there is nothing to decide here.
+ */
+function learnFromTurn(opts: AssistantOptions, decided: ReturnType<typeof route>): void {
+  try {
+    learn({
+      shop: opts.shop,
+      sub: opts.identity?.sub,
+      said: opts.message,
+      route: decided.kind,
+      source: "chat",
+    });
+  } catch {
+    /* never let bookkeeping break a conversation */
+  }
 }
 
 /**
@@ -374,6 +422,7 @@ export async function runAssistant(opts: AssistantOptions): Promise<AssistantRes
   });
   const reply = violations.length ? refusalFor(violations) : result.reply;
   writeLedger(opts, { reasoner: reasoner.name, decided, result, violations });
+  learnFromTurn(opts, decided);
   const cards = violations.length ? [] : toCards(result.products);
 
   return {
@@ -461,6 +510,7 @@ export async function* runAssistantStream(
       result: viaTools,
       violations,
     });
+    learnFromTurn(opts, decided);
     yield { type: "done", bounded: violations.length > 0, gates: violations.map((v) => v.gate) };
     return;
   }
@@ -527,6 +577,7 @@ export async function* runAssistantStream(
     result: { ...settled, reply: guard.text },
     violations,
   });
+  learnFromTurn(opts, decided);
 
   if (violations.length) {
     yield { type: "replace", reply: refusalFor(violations), gates: violations.map((v) => v.gate) };

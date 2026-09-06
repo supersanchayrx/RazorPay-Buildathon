@@ -60,6 +60,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     op?: "quote" | "start" | "confirm";
     items?: CartLineRequest[];
     session?: string;
+    /** The storefront's handle for this basket, so settlement can close it. */
+    ref?: string;
     razorpay_order_id?: string;
     razorpay_payment_id?: string;
     razorpay_signature?: string;
@@ -175,6 +177,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       currency: quote.currency,
       fingerprint: quote.fingerprint,
       customer: shopper,
+      // So settlement can mark exactly this basket bought, including when the
+      // only report that arrives is the webhook.
+      cartRef: typeof body.ref === "string" ? body.ref.slice(0, 120) : null,
       lines: quote.lines.map((l) => ({
         handle: l.handle,
         title: l.title,

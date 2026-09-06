@@ -20,6 +20,7 @@
  */
 import { record } from "./ledger.server";
 import { release } from "./reservations.server";
+import { markRecovered } from "./carts.server";
 import { findPending, settle, type PlacedOrder } from "./orderstore.server";
 
 export type SettleInput = {
@@ -97,6 +98,18 @@ export function settlePayment(input: SettleInput): SettleOutcome {
       detail: { orderId: input.gatewayOrderId, paymentId: input.gatewayPaymentId, by: input.by },
     });
     return { order: result.order, duplicate: result.duplicate, mismatch: true };
+  }
+
+  /**
+   * The basket this came from is no longer abandoned.
+   *
+   * Marked here rather than only in the browser, because the browser is the
+   * messenger that may never arrive: a shopper who pays and closes the tab is
+   * reported by the webhook alone. Idempotent, like everything else on this
+   * path — a second report re-marks a basket that is already marked.
+   */
+  if (status === "paid" && pending.cartRef) {
+    markRecovered(input.shop, pending.cartRef);
   }
 
   record({

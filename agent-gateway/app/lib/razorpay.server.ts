@@ -26,12 +26,48 @@ const API = "https://api.razorpay.com/v1";
  * or rendered into a diagnostics page, because it contains no secret — only the
  * name of one.
  */
+/**
+ * Payment methods a Razorpay account can actually present.
+ *
+ * `upi` is separated from the rest in every comment below because it behaves
+ * differently in two ways that both matter here: it needs account enablement
+ * (KYC) before it works at all, and even once enabled it authenticates the payer
+ * inside their own banking app, so no agent holding a token can complete it.
+ */
+export type PaymentMethod = "upi" | "card" | "netbanking" | "wallet" | "emi" | "paylater";
+
 export type RazorpayRef = {
   keyIdEnv: string;
   keySecretEnv: string;
   /** For webhook verification, when we get there. */
   webhookSecretEnv?: string;
+  /**
+   * What this account can really take, if it differs from the safe default.
+   *
+   * ADVERTISED TO AGENTS, so it has to be true. This was hardcoded to
+   * `["upi", "card", "netbanking", "wallet"]` for every store until a probe on
+   * 2026-09-06 got `UPI transactions are not enabled for the merchant` back from
+   * Razorpay — UPI needs KYC, and until that completes the account cannot take
+   * it. We were telling agents otherwise in the discovery document, which is the
+   * lie-told-in-JSON this codebase refuses everywhere else.
+   *
+   * Absent means the conservative default in `paymentHandlers`: the methods a
+   * Razorpay account has without extra enablement. UPI is opt-in per site rather
+   * than assumed, because assuming it is how the wrong answer got here in the
+   * first place — and a merchant who has completed KYC adds one array entry.
+   */
+  methods?: PaymentMethod[];
 };
+
+/**
+ * What a Razorpay account can present without anything extra switched on.
+ *
+ * UPI is deliberately absent. It is the dominant method in India and leaving it
+ * out of a default feels wrong, right up until you remember that the cost of
+ * advertising it falsely is an agent telling a buyer they can pay by UPI and the
+ * checkout page not offering it.
+ */
+export const DEFAULT_PAYMENT_METHODS: PaymentMethod[] = ["card", "netbanking", "wallet"];
 
 export type RazorpayOrder = {
   id: string;

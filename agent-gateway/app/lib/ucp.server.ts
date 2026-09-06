@@ -35,6 +35,7 @@
 
 import type { CatalogProduct, ShopPolicies } from "./catalog.server";
 import type { Site } from "./sites.server";
+import { DEFAULT_PAYMENT_METHODS } from "./razorpay.server";
 
 export const UCP_VERSION = "2026-08-25";
 const SPEC = `https://ucp.dev/${UCP_VERSION}`;
@@ -124,10 +125,21 @@ const capability = (name: string, schema: string, extra: Record<string, unknown>
  * than advertising nothing: an agent will compose a request against it, and the
  * failure surfaces halfway through a purchase instead of at discovery.
  *
- * `dev.ucp.shopping.discount` is deliberately ABSENT until the offer proposer
- * ships. There is currently no way for a discount to exist in this system —
- * `bounds.server.ts` blocks every price claim precisely because no approval
- * store backs one — so claiming the capability would be a lie told in JSON.
+ * `dev.ucp.shopping.discount` USED TO BE absent here, with the note "there is
+ * currently no way for a discount to exist in this system — `bounds.server.ts`
+ * blocks every price claim precisely because no approval store backs one, so
+ * claiming the capability would be a lie told in JSON." The approval store
+ * shipped. `activeOffers` returns merchant-approved terms, `buildQuote` applies
+ * them server-side, and recovery grants are redeemable by id. The sentence was
+ * right when it was written and is now the reason the capability is present.
+ *
+ * It is advertised UNCONDITIONALLY, including for a shop with nothing approved
+ * today. A capability describes the interface, not the stock: the honest claim
+ * is "cart and checkout accept `discount_codes[]` and price approved offers",
+ * which is true of every site here. Gating it on `activeOffers().length` would
+ * make discovery flicker as offers expire — an agent that read the profile at
+ * nine would compose against a capability that vanished by noon, which is a
+ * worse failure than an empty promotions list.
  */
 export function capabilities(): Registry {
   return {
@@ -136,6 +148,20 @@ export function capabilities(): Registry {
     "dev.ucp.shopping.order": [capability("order", "order")],
     "dev.ucp.shopping.catalog.search": [capability("catalog", "catalog_search")],
     "dev.ucp.shopping.catalog.lookup": [capability("catalog", "catalog_lookup")],
+    // An EXTENSION, not a root capability, so it declares its parents. The
+    // profile schema is explicit about the difference: `extends` is "present
+    // for extensions, absent for root capabilities". Discounts are a thing
+    // carts and checkouts do, which is exactly the two it names.
+    //
+    // No `spec` or `schema` URL. Both are optional in the schema and we do not
+    // host either; pointing at a plausible-looking URL that 404s is the same
+    // class of mistake as advertising a handler we cannot honour.
+    "dev.ucp.shopping.discount": [
+      {
+        version: UCP_VERSION,
+        extends: ["dev.ucp.shopping.cart", "dev.ucp.shopping.checkout"],
+      },
+    ],
   };
 }
 
@@ -158,11 +184,18 @@ export function paymentHandlers(site: Site): Registry {
         version: "2026-09-05",
         spec: "https://razorpay.com/docs/api/orders/",
         config: {
-          // Methods Razorpay will present. UPI is the reason this handler
-          // exists: it is a redirect to the payer's own banking app, so it can
-          // never be completed by an agent holding a token. The escalation
-          // path is a property of Indian rails, not a limitation of ours.
-          payment_methods: ["upi", "card", "netbanking", "wallet"],
+          // What this merchant's account can ACTUALLY present, not what Razorpay
+          // offers in general. Hardcoding the full list here was wrong: a probe
+          // on 2026-09-06 returned `UPI transactions are not enabled for the
+          // merchant`, so the discovery document was promising a method the
+          // store could not take, to a caller with no way to find out but to
+          // fail at the end.
+          payment_methods: site.razorpay.methods ?? DEFAULT_PAYMENT_METHODS,
+          // True regardless of method, and the reason this whole handler
+          // escalates. UPI redirects into the payer's own banking app; cards and
+          // netbanking here go through Razorpay's hosted page, which
+          // authenticates the payer directly. Neither is completable by an agent
+          // holding a token, which is a property of the rails and not of us.
           requires_buyer_presence: true,
         },
       },
@@ -339,7 +372,22 @@ export function _resetAgentCache(): void {
  * "only 3 left!", which is the one sentence this whole system exists to stop
  * being said without grounds.
  */
-export function toUcpProduct(p: CatalogProduct): Record<string, unknown> {
+/**
+ * A live offer, in the shape a product response carries it.
+ *
+ * Deliberately not `AppliedOffer` from `quote.server.ts`. That type has an
+ * `amount` — rupees off a specific basket — and there is no basket here. A
+ * product carries the TERMS; only a quote carries a number. Handing an agent a
+ * discount amount at catalogue time is how it ends up quoting a total nobody
+ * computed.
+ */
+export type ProductPromotion = {
+  title: string;
+  percent: number;
+  endsAt: string;
+};
+
+export function toUcpProduct(p: CatalogProduct, promotions: ProductPromotion[] = []): Record<string, unknown> {
   const cur = (p.currency || "INR").toUpperCase();
 
   // Catalogue prices arrive as strings, because that is how both Shopify and a
@@ -364,6 +412,36 @@ export function toUcpProduct(p: CatalogProduct): Record<string, unknown> {
     price_range: { min: price(num(p.minPrice), cur), max: price(num(p.maxPrice), cur) },
     ...(p.tags?.length ? { tags: p.tags } : {}),
     ...(p.image ? { media: [{ type: "image", url: p.image }] } : {}),
+    /**
+     * Merchant-approved offers on this product, under the discount extension's
+     * own namespace so a strict validator treats it as an extension rather than
+     * an unknown core field.
+     *
+     * TERMS ONLY — no amount, and no discounted price. An agent reading this
+     * knows an offer exists and can say so; what it is worth comes back from
+     * `create_cart`, priced by the same server that will charge for it. The
+     * split is the whole architecture: the assistant announces, the server
+     * decides what anything costs, and this is the announcing half.
+     *
+     * Omitted entirely when there is nothing live, rather than sent empty. An
+     * empty array reads as "we checked and there are no offers", which is true
+     * but invites a model to say it out loud.
+     */
+    ...(promotions.length
+      ? {
+          "dev.ucp.shopping.discount": {
+            promotions: promotions.map((o) => ({
+              title: o.title,
+              type: "percentage",
+              value: o.percent,
+              ends_at: o.endsAt,
+              // No code. These apply to anyone, automatically, at quote time.
+              // An agent told to "enter a code" would invent one.
+              automatic: true,
+            })),
+          },
+        }
+      : {}),
     variants: variants.map((v) => ({
       id: variantGid(v.sku as string),
       sku: v.sku,

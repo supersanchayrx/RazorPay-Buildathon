@@ -6,9 +6,11 @@ import { runRecovery, toDraft, recoverySummary, type RecoveryTarget } from "../l
 import { CHANNELS, readDrafts, readSends, send } from "../lib/outreach.server";
 import { callTranscript, calls } from "../lib/voicetalk.server";
 import { readSettings, writeSettings } from "../lib/settings.server";
-import { answerRate, conversations, reasonHistogram } from "../lib/conversations.server";
+import { addTurn, answerRate, conversations, reasonHistogram } from "../lib/conversations.server";
 import { REASON_LABEL, REASONS } from "../lib/reasons";
 import { allGrants, monthlySpend } from "../lib/grants.server";
+import { liveCarts } from "../lib/carts.server";
+import { updateFindings } from "../lib/findings.server";
 
 /**
  * The recovery campaign, as a merchant sees it before anything goes out.
@@ -47,11 +49,48 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // deploy and localhost all produce links that actually resolve.
     gatewayOrigin: new URL(request.url).origin,
     siteSecret: site.secret,
+    // When the merchant proxies the ask page, the link lives on THEIR domain.
+    recoverPath: site.recoverPath,
   });
 
   const convs = conversations(site.key);
 
+  /**
+   * Refresh the parts of the findings document this page just recomputed.
+   *
+   * `updateFindings` MERGES. The whole-document writer lives on the Offers page,
+   * because that is where the analysis actually runs; calling it from here with
+   * no incidents would blank the service notices and silently stop the
+   * assistant telling shoppers that netbanking is failing. A page that does not
+   * compute incidents must not be able to erase them.
+   *
+   * Why write from a loader at all: the alternative is a scheduler we do not
+   * have, or a cortex that re-runs recovery on the shopper's path. What crosses
+   * is counts and rupees — no cart, no customer, no phone number.
+   */
+  updateFindings(site.key, {
+    recovery: recoverySummary(run),
+    reasons: reasonHistogram(site.key),
+  });
+
+  /**
+   * Real baskets, from the storefront, alongside the seeded ones.
+   *
+   * Shown separately and counted honestly, because "12 messages from 226
+   * baskets" reads very differently when 226 of them came out of `npm run
+   * seed`. `recoverable` is the number that matters: a basket nobody signed in
+   * for has no contact on file and will be suppressed as `no_channel`, which is
+   * the correct behaviour and looks like a bug if the page does not say so.
+   */
+  const live = liveCarts(site.key);
+
   return {
+    live: {
+      total: live.length,
+      recoverable: live.filter((c) => c.customer?.phone || c.customer?.email).length,
+      newestAt: live.map((c) => c.ts).sort().pop() ?? null,
+      captureConfigured: Boolean(site.orders?.feedUrl),
+    },
     conversations: convs
       .slice()
       .sort((a, b) => (b.answeredAt ?? "").localeCompare(a.answeredAt ?? ""))
@@ -70,6 +109,28 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         remedy: (c.turns.filter((t) => t.kind === "remedied").pop() as { remedy?: string } | undefined)?.remedy ?? null,
         blocked: (c.turns.filter((t) => t.kind === "remedied").pop() as { blocked?: string[] } | undefined)?.blocked ?? [],
         grantId: c.grantId,
+        /**
+         * Every turn, not just the interesting ones.
+         *
+         * A merchant looking at "unknown x7" needs to see the shape of the
+         * exchange to tell a failing classifier from genuinely vague answers,
+         * and a spoken conversation is the only record there is of a channel
+         * with no screenshot.
+         */
+        turns: c.turns.map((t) => ({
+          kind: t.kind,
+          ts: t.ts,
+          detail:
+            t.kind === "asked"
+              ? `asked over ${t.channel}`
+              : t.kind === "answered"
+                ? `${REASON_LABEL[t.reason]} — classified ${t.by}`
+                : t.kind === "remedied"
+                  ? t.remedy
+                  : t.kind === "recovered"
+                    ? `bought — ${t.gatewayOrderId}`
+                    : t.why,
+        })),
       })),
     histogram: reasonHistogram(site.key),
     answered: answerRate(site.key),
@@ -193,6 +254,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       productUrlTemplate: site.productUrlTemplate,
       gatewayOrigin: new URL(request.url).origin,
       siteSecret: site.secret,
+      recoverPath: site.recoverPath,
       channel,
     });
     if (!run.settings.outreach.enabled) {
@@ -204,6 +266,74 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const results = [];
     for (const t of run.targets) results.push(await send(toDraft(shop, t)));
     return { ok: true, sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length };
+  }
+
+  /**
+   * Send to ONE person, on a channel chosen for them.
+   *
+   * The whole run is recomputed rather than trusting anything the page posted.
+   * A target list is a snapshot of a moment, and between rendering and clicking
+   * somebody may have bought the thing, answered on another channel, or asked
+   * to be left alone. The cart id is used to FIND a target in a fresh run, never
+   * to construct one — so a cart that is no longer eligible cannot be messaged
+   * by posting its id, and the reason it dropped out is reported back.
+   */
+  if (act === "send_one" || act === "skip_one") {
+    const site = sitesForMerchant(merchant.sites).find((s) => s.key === shop)!;
+    const cartId = String(form.get("cartId") ?? "");
+
+    if (act === "skip_one") {
+      /**
+       * Leaving somebody alone is a `closed` turn, not a new kind of flag.
+       *
+       * `silenced()` already reads exactly this, and every future run on every
+       * channel already consults it — the same record a shopper writes by
+       * pressing 9 on a call, or by saying they changed their mind on the web
+       * page. A second mechanism meaning the same thing is how one of them ends
+       * up being the one nobody checks.
+       */
+      const res = addTurn({
+        shop,
+        cartId,
+        customerId: String(form.get("customerId") ?? ""),
+        turn: { kind: "closed", ts: new Date().toISOString(), why: "the merchant chose to leave them alone" },
+      });
+      return res.ok
+        ? { ok: true, message: "Left alone. They will not be written to about this basket again." }
+        : { ok: false, error: res.error };
+    }
+
+    const asked = String(form.get("channel") ?? "");
+    const ch = CHANNELS.find((c) => c.id === asked);
+    const channel = ch && ch.available ? (ch.id as never) : ("draft" as never);
+
+    const run = runRecovery({
+      shop,
+      shopName: site.name,
+      storefrontOrigin: site.origins[0],
+      productUrlTemplate: site.productUrlTemplate,
+      gatewayOrigin: new URL(request.url).origin,
+      siteSecret: site.secret,
+      recoverPath: site.recoverPath,
+      channel,
+    });
+    if (!run.settings.outreach.enabled) {
+      return { ok: false, error: "outreach is switched off — nothing was sent" };
+    }
+    const target = run.targets.find((t) => t.cartId === cartId);
+    if (!target) {
+      const why = run.suppressed.find((x) => x.cartId === cartId);
+      return {
+        ok: false,
+        error: why
+          ? `That basket is no longer eligible: ${why.detail}`
+          : "That basket is no longer in this run.",
+      };
+    }
+    const res = await send(toDraft(shop, target));
+    return res.ok
+      ? { ok: true, sent: 1, failed: 0 }
+      : { ok: false, error: res.error ?? "that message could not be sent" };
   }
 
   return { ok: false, error: "unknown action" };
@@ -269,6 +399,41 @@ export default function Recovery() {
           <b>{inr(run.totals.expectedValue)}</b>
           <span>at an assumed {(run.totals.assumedRecovery * 100).toFixed(0)}%</span>
         </div>
+      </div>
+
+      {/* ---------------- real baskets ---------------- */}
+      <div className="panel">
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 600 }}>From your live storefront</span>
+          <span className={`pill ${d.live.total ? "available" : "planned"}`}>
+            {d.live.total} of {run.totals.cartsConsidered} baskets are real
+          </span>
+        </div>
+        <p className="muted" style={{ fontSize: 13.5, margin: "8px 0 0", maxWidth: "62ch" }}>
+          {d.live.total === 0 ? (
+            <>
+              Everything below came from <code>npm run seed</code>. Real baskets appear here as soon
+              as somebody puts something in a cart on your shop — the widget script already posts
+              them; there is nothing else to install.
+            </>
+          ) : (
+            <>
+              <b>{d.live.recoverable}</b> of them can actually be recovered. The rest were built by
+              somebody who was not signed in, so there is no way to reach them and no message will
+              be sent — you will find them below under <i>no way to reach them</i>. That is the
+              honest number, and it is the one most abandoned-cart tools do not show you.
+              {d.live.newestAt ? ` Most recent: ${new Date(d.live.newestAt).toLocaleString("en-IN")}.` : ""}
+            </>
+          )}
+        </p>
+        {!d.live.captureConfigured ? (
+          <p className="muted" style={{ fontSize: 12.5, margin: "8px 0 0" }}>
+            This shop has not connected an order source, so even a signed-in shopper has no contact
+            details on file. Contact is looked up from your own records, server to server — it is
+            never taken from the page, because a page that could name a phone number could name
+            anybody&rsquo;s.
+          </p>
+        ) : null}
       </div>
 
       <p className="note">
@@ -359,6 +524,28 @@ export default function Recovery() {
                           no discount: {c.blocked.join("; ")}
                         </div>
                       ) : null}
+                      {/*
+                        The whole exchange, folded away.
+                        Collapsed because the summary above answers the usual
+                        question and this answers the one that follows it —
+                        "why did it decide that?" — which is exactly when a
+                        merchant wants the sequence rather than the verdict.
+                      */}
+                      {c.turns.length > 1 ? (
+                        <details style={{ marginTop: 6 }}>
+                          <summary className="muted" style={{ fontSize: 12, cursor: "pointer" }}>
+                            {c.turns.length} steps
+                          </summary>
+                          <ol style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 12.5 }}>
+                            {c.turns.map((t, i) => (
+                              <li key={i} style={{ margin: "3px 0" }}>
+                                <b>{t.kind}</b> — {t.detail}
+                                <span className="muted"> · {new Date(t.ts).toLocaleString("en-IN")}</span>
+                              </li>
+                            ))}
+                          </ol>
+                        </details>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -405,6 +592,49 @@ export default function Recovery() {
               }}
             >
               {t.text}
+            </div>
+
+            {/*
+              One person at a time.
+              Bulk send is a campaign; this is a merchant reading a message and
+              deciding about the human it is addressed to. It matters most on
+              voice, where "send" previously meant ringing everybody at once —
+              which is not a thing anyone should be able to do by accident.
+              Every one of these re-runs the whole pipeline server-side and
+              re-checks this cart is still eligible, so a button clicked five
+              minutes after the page rendered cannot send a message about a
+              basket that has since been bought.
+            */}
+            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
+              <Form method="post" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <input type="hidden" name="shop" value={d.site!.key} />
+                <input type="hidden" name="act" value="send_one" />
+                <input type="hidden" name="cartId" value={t.cartId} />
+                <select name="channel" defaultValue="draft" className="mono" style={{ fontSize: 12.5, padding: "6px 8px", borderRadius: 7, border: "1px solid var(--line)" }}>
+                  {d.channels.map((c) => (
+                    <option key={c.id} value={c.id} disabled={!c.available}>
+                      {c.label}
+                      {c.available ? "" : " — not available"}
+                    </option>
+                  ))}
+                </select>
+                <button className="btn-primary" type="submit" disabled={busy}>
+                  Send to this one
+                </button>
+              </Form>
+              <Form method="post">
+                <input type="hidden" name="shop" value={d.site!.key} />
+                <input type="hidden" name="act" value="skip_one" />
+                <input type="hidden" name="cartId" value={t.cartId} />
+                <input type="hidden" name="customerId" value={t.customerId} />
+                <button className="btn-secondary" type="submit" disabled={busy}>
+                  Leave this one alone
+                </button>
+              </Form>
+              <span className="muted" style={{ fontSize: 12.5 }}>
+                Leaving them alone closes this basket for good — the same record a shopper
+                writes by pressing 9, so every future run on every channel reads it.
+              </span>
             </div>
           </div>
         ))

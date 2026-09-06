@@ -1,5 +1,13 @@
 /**
- * The thirteen UCP Shopping methods.
+ * The thirteen UCP Shopping methods, and one of ours.
+ *
+ * The thirteenth-and-a-half is `get_promotions`. It is NOT in the spec — UCP
+ * carries discounts as an extension on carts and checkouts, not as a catalogue
+ * method — so it is reachable only because MCP `tools/list` advertises it. Every
+ * offer it returns ALSO appears on the products and in the cart totals, so an
+ * agent that speaks strict UCP and never calls it misses nothing that costs
+ * money. That is the rule for anything we add: an extension may be a shortcut,
+ * never the only road.
  *
  * NOTHING HERE IS A SECOND IMPLEMENTATION OF ANYTHING.
  *
@@ -13,6 +21,7 @@
  * The mapping, method by method:
  *
  *   search_catalog / lookup_catalog / get_product   catalog.server.ts
+ *   get_promotions                                  approvals.server.ts (ours)
  *   create_cart / get_cart / update_cart            buildQuote  (prices, no hold)
  *   cancel_cart                                     drop the session
  *   create_checkout                                 buildQuote + claim + createOrder
@@ -29,8 +38,10 @@
 import type { CatalogSource } from "./catalog.server";
 import type { Site } from "./sites.server";
 import { buildQuote, type CartLineRequest, type Quote, type QuoteProblem } from "./quote.server";
+import { activeOffers } from "./approvals.server";
+import { findGrant, redeem } from "./grants.server";
 import { claim, release } from "./reservations.server";
-import { createOrder, toMinorUnits } from "./razorpay.server";
+import { createOrder, toMinorUnits, DEFAULT_PAYMENT_METHODS } from "./razorpay.server";
 import { savePending, findPending, findByGatewayOrder, placedOrders, mergeSources } from "./orderstore.server";
 import { settlePayment } from "./settle.server";
 import { jsonFeedOrders, seededOrders } from "./orders.server";
@@ -42,8 +53,10 @@ import {
   errorResponse,
   errorMessage,
   toUcpProduct,
+  type ProductPromotion,
   toUcpPolicies,
   parseId,
+  productGid,
   variantGid,
   price,
   toMinor,
@@ -72,6 +85,15 @@ type CartSession = {
   createdAt: number;
   buyer?: Json;
   context?: Json;
+  /**
+   * A recovery grant this basket is priced against, BY ID.
+   *
+   * The id and nothing else — no depth, no cap, no expiry. `buildQuote` reads
+   * what the grant is worth from disk at quote time, so an agent that could
+   * send terms does not exist, and one that argues for a better rate is arguing
+   * with a file it cannot write to.
+   */
+  grantId?: string;
 };
 
 const CART_TTL_MS = 60 * 60_000;
@@ -190,6 +212,36 @@ function wireToItems(lineItems: unknown): CartLineRequest[] {
 }
 
 /**
+ * The one discount code we will price against, out of what the agent sent.
+ *
+ * UCP's discount extension passes `discount_codes[]`, plural. Only the first
+ * recognised one is used, deliberately: stacking is refused in `buildQuote`
+ * too, and an agent that could send five codes and have them all land would
+ * turn a 10% policy into 40% with nobody able to say which rule allowed it.
+ *
+ * A code that is not a live grant is IGNORED, not refused — the same rule
+ * `buildQuote` follows for a stale grant id. An agent relaying a code its buyer
+ * read off an old email should see the real price of the basket, not an error
+ * about a discount mechanism the buyer never knew existed. The `messages` on
+ * the response say what happened; the cart still prices.
+ */
+function grantFromCodes(shop: string, raw: unknown): { id?: string; unknown: string[] } {
+  const codes = Array.isArray(raw) ? raw.map((c) => String(c).trim()).filter(Boolean) : [];
+  const unknown: string[] = [];
+  let id: string | undefined;
+  for (const c of codes) {
+    if (id) {
+      unknown.push(c);
+      continue;
+    }
+    const g = findGrant(shop, c);
+    if (g && g.state === "live") id = g.id;
+    else unknown.push(c);
+  }
+  return { id, unknown };
+}
+
+/**
  * A cart line whose only identifier was a SKU still needs a handle, because the
  * quote resolves products by handle first. Fill it in from the catalogue.
  */
@@ -232,6 +284,29 @@ const orderSourceFor = (site: Site) => {
   return merchant ? mergeSources([placedOrders(site.key), merchant]) : placedOrders(site.key);
 };
 
+/**
+ * Live offers, indexed by product handle.
+ *
+ * READ ONCE PER REQUEST, not once per product. `activeOffers` reads and parses
+ * the whole decision log on every call, so calling it inside a `.map` over a
+ * fifty-product search page is fifty file reads to answer one question — the
+ * kind of cost that is invisible on a demo catalogue and arrives all at once on
+ * a real one.
+ *
+ * Not cached ACROSS requests, though, which is the other half. `buildQuote`
+ * re-reads at quote time so a revoked offer stops applying immediately, and an
+ * announcement that outlives the merchant's decision is the same failure as a
+ * discount that does. One request is the longest an offer may be held.
+ */
+function offerIndex(shop: string): Map<string, ProductPromotion[]> {
+  const byHandle = new Map<string, ProductPromotion[]>();
+  for (const o of activeOffers(shop)) {
+    const terms = { title: o.title, percent: Math.round(o.depth * 100), endsAt: o.endsAt };
+    byHandle.set(o.handle, [...(byHandle.get(o.handle) ?? []), terms]);
+  }
+  return byHandle;
+}
+
 /* ------------------------------------------------------------------ *
  * Catalogue
  * ------------------------------------------------------------------ */
@@ -262,10 +337,11 @@ export async function search_catalog(ctx: MethodContext, params: Json): Promise<
   const page = products.slice(cursor, cursor + limit);
   const hasNext = cursor + limit < products.length;
   const policies = await ctx.catalog.policies().catch(() => ({}));
+  const offers = offerIndex(ctx.site.key);
 
   return {
     ucp: okEnvelope(),
-    products: page.map((p) => toUcpProduct(p)),
+    products: page.map((p) => toUcpProduct(p, offers.get(p.handle) ?? [])),
     pagination: {
       has_next_page: hasNext,
       ...(hasNext ? { cursor: String(cursor + limit) } : {}),
@@ -319,8 +395,11 @@ export async function lookup_catalog(ctx: MethodContext, params: Json): Promise<
     }
   }
 
+  const offers = offerIndex(ctx.site.key);
   const products = [...found.values()].map(({ product, inputs }) => {
-    const wire = toUcpProduct(product) as Json & { variants: Array<Json & { sku?: string }> };
+    const wire = toUcpProduct(product, offers.get(product.handle) ?? []) as Json & {
+      variants: Array<Json & { sku?: string }>;
+    };
     return {
       ...wire,
       // `inputs` is REQUIRED on every variant in a lookup response: it tells the
@@ -378,7 +457,7 @@ export async function get_product(ctx: MethodContext, params: Json): Promise<Jso
   const policies = await ctx.catalog.policies().catch(() => ({}));
   return {
     ucp: okEnvelope(),
-    product: toUcpProduct(product),
+    product: toUcpProduct(product, offerIndex(ctx.site.key).get(product.handle) ?? []),
     policies: toUcpPolicies(policies),
   };
 }
@@ -387,14 +466,27 @@ export async function get_product(ctx: MethodContext, params: Json): Promise<Jso
  * Cart — priced, but holding nothing
  * ------------------------------------------------------------------ */
 
-async function cartResponse(ctx: MethodContext, session: CartSession): Promise<Json> {
+async function cartResponse(
+  ctx: MethodContext,
+  session: CartSession,
+  notes: UcpMessage[] = [],
+): Promise<Json> {
   const policies = await ctx.catalog.policies().catch(() => ({}));
   const result = await buildQuote({
     catalog: ctx.catalog,
     items: session.items,
     policies,
-    // No `shop`, deliberately: a cart prices against the raw catalogue and does
-    // not subtract other shoppers' held stock. Carts are exploration.
+    shop: ctx.site.key,
+    ...(session.grantId ? { grantId: session.grantId } : {}),
+    // A cart prices against the RAW catalogue: it holds no stock, so it should
+    // not subtract stock held for other shoppers either. Carts are exploration.
+    //
+    // `shop` is passed all the same, and that is the point. It used to be
+    // omitted to get this behaviour, which also switched off `activeOffers` —
+    // so a cart quoted full price while `create_checkout` charged the discounted
+    // total. Two surfaces disagreeing about what a basket costs is the one thing
+    // this file exists to prevent, and it was doing it to itself.
+    stock: "catalogue",
   });
 
   const base: Json = {
@@ -419,16 +511,49 @@ async function cartResponse(ctx: MethodContext, session: CartSession): Promise<J
         { type: "subtotal", display_text: "Subtotal", amount: 0 },
         { type: "total", display_text: "Total", amount: 0 },
       ],
-      messages: problemsToMessages(result.problems),
+      messages: [...notes, ...problemsToMessages(result.problems)],
     };
   }
 
-  return { ...base, ...quoteToWire(result.quote) };
+  return {
+    ...base,
+    ...quoteToWire(result.quote),
+    ...(notes.length ? { messages: notes } : {}),
+  };
+}
+
+/**
+ * Read `discount_codes` off a cart payload, remember the one that resolved, and
+ * say plainly what happened to the rest.
+ *
+ * The message is `recoverable` rather than an error: a cart with an unusable
+ * code is still a perfectly good cart, and marking it unrecoverable would have
+ * an agent abandon a basket over a typo.
+ */
+function applyCodes(session: CartSession, raw: unknown): UcpMessage[] {
+  if (raw === undefined) return [];
+  const { id, unknown } = grantFromCodes(session.shop, raw);
+  session.grantId = id;
+  if (unknown.length === 0) return [];
+  return [
+    errorMessage(
+      "invalid_request",
+      id
+        ? `Applied one discount. These were not used: ${unknown.join(", ")} — discounts do not stack here.`
+        : `No discount matched: ${unknown.join(", ")}. It may have expired or already been used. The basket is priced without it.`,
+      "recoverable",
+    ),
+  ];
 }
 
 export async function create_cart(ctx: MethodContext, params: Json): Promise<Json> {
   sweepCarts();
-  const req = (params.cart ?? {}) as { line_items?: unknown; buyer?: Json; context?: Json };
+  const req = (params.cart ?? {}) as {
+    line_items?: unknown;
+    buyer?: Json;
+    context?: Json;
+    discount_codes?: unknown;
+  };
   const items = await resolveHandles(ctx.catalog, wireToItems(req.line_items));
 
   const session: CartSession = {
@@ -440,7 +565,7 @@ export async function create_cart(ctx: MethodContext, params: Json): Promise<Jso
     context: req.context,
   };
   carts.set(session.id, session);
-  return cartResponse(ctx, session);
+  return cartResponse(ctx, session, applyCodes(session, req.discount_codes));
 }
 
 export async function get_cart(ctx: MethodContext, params: Json): Promise<Json> {
@@ -456,7 +581,12 @@ export async function update_cart(ctx: MethodContext, params: Json): Promise<Jso
   if (!session || session.shop !== ctx.site.key) {
     return errorResponse("not_found", "That cart does not exist or has expired.", "unrecoverable");
   }
-  const req = (params.cart ?? {}) as { line_items?: unknown; buyer?: Json; context?: Json };
+  const req = (params.cart ?? {}) as {
+    line_items?: unknown;
+    buyer?: Json;
+    context?: Json;
+    discount_codes?: unknown;
+  };
   // "Full replacement on update", per the cart schema. Merging would make the
   // result depend on what the agent believed the cart already held, and two
   // agents on one cart would each see their own idea of it.
@@ -465,7 +595,11 @@ export async function update_cart(ctx: MethodContext, params: Json): Promise<Jso
   }
   if (req.buyer !== undefined) session.buyer = req.buyer;
   if (req.context !== undefined) session.context = req.context;
-  return cartResponse(ctx, session);
+  // Full replacement here too: sending `discount_codes: []` removes the
+  // discount, and omitting the field leaves it alone. Anything else and an
+  // agent cannot take a code back off a basket it put one on.
+  const notes = applyCodes(session, req.discount_codes);
+  return cartResponse(ctx, session, notes);
 }
 
 export async function cancel_cart(ctx: MethodContext, params: Json): Promise<Json> {
@@ -535,14 +669,30 @@ function checkoutResponse(
       errorMessage("payment_failed", "That payment did not complete.", "recoverable"),
     );
   } else {
-    // The honest statement of where Indian rails actually are. UPI is a redirect
-    // into the payer's own banking app — there is no token an agent can hold
-    // that completes it. Saying so plainly, with a link that works, is worth
-    // more to an agent than a capability we would fail at.
+    // The honest statement of where this store actually is, built from the
+    // methods it can really take rather than from a sentence written once.
+    //
+    // It used to name UPI unconditionally. On a store whose account has not
+    // cleared KYC that is a method the checkout page will not offer, and an
+    // agent repeating it to a buyer sends them looking for a button that is not
+    // there. Naming what is there is more useful than naming what is popular.
+    const methods = ctx.site.razorpay?.methods ?? DEFAULT_PAYMENT_METHODS;
+    const NAME: Record<string, string> = {
+      upi: "UPI",
+      card: "cards",
+      netbanking: "netbanking",
+      wallet: "wallets",
+      emi: "EMI",
+      paylater: "pay-later",
+    };
+    const named = methods.map((m) => NAME[m] ?? m);
+    const list =
+      named.length > 1 ? `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]}` : named[0] ?? "payment";
+
     messages.push(
       errorMessage(
         "requires_buyer_presence",
-        "Payment needs the buyer. UPI, cards and netbanking here settle through Razorpay, which authenticates the payer directly — open the link to pay, then call complete_checkout or get_checkout.",
+        `Payment needs the buyer. This store takes ${list}, settled through Razorpay, which authenticates the payer directly — there is no token you can hold that completes it. Give the buyer continue_url, then call get_checkout until it turns to completed, or complete_checkout if you end up holding a payment id.`,
         "requires_buyer_input",
       ),
     );
@@ -588,7 +738,12 @@ export async function create_checkout(ctx: MethodContext, params: Json): Promise
     );
   }
 
-  const req = (params.checkout ?? {}) as { line_items?: unknown; cart_id?: string; buyer?: Json };
+  const req = (params.checkout ?? {}) as {
+    line_items?: unknown;
+    cart_id?: string;
+    buyer?: Json;
+    discount_codes?: unknown;
+  };
   const fromCart = req.cart_id ? carts.get(String(req.cart_id)) : null;
   if (req.cart_id && (!fromCart || fromCart.shop !== ctx.site.key)) {
     return errorResponse("not_found", "That cart does not exist or has expired.", "unrecoverable");
@@ -602,9 +757,27 @@ export async function create_checkout(ctx: MethodContext, params: Json): Promise
 
   const policies = await ctx.catalog.policies().catch(() => ({}));
 
+  /**
+   * Which grant, if any, this checkout is priced against.
+   *
+   * A code sent here wins over one the cart is carrying, because it is the more
+   * recent statement of intent. A code sent here that resolves to nothing falls
+   * back to the cart's — rather than clearing it — so a garbled retry cannot
+   * silently charge a buyer full price for a basket they were quoted less for.
+   */
+  const codes = req.discount_codes !== undefined ? grantFromCodes(ctx.site.key, req.discount_codes) : null;
+  const grantId = codes?.id ?? fromCart?.grantId;
+
   // Priced here, from the catalogue, against stock other shoppers already hold.
-  // Nothing the agent sent about money is read.
-  const result = await buildQuote({ catalog: ctx.catalog, items, policies, shop: ctx.site.key });
+  // The grant is named by ID and read from disk inside `buildQuote`. Nothing the
+  // agent sent about money is read.
+  const result = await buildQuote({
+    catalog: ctx.catalog,
+    items,
+    policies,
+    shop: ctx.site.key,
+    ...(grantId ? { grantId } : {}),
+  });
   if (!result.ok) {
     return {
       ...errorResponse("invalid_request", "That basket could not be priced.", "recoverable"),
@@ -655,6 +828,33 @@ export async function create_checkout(ctx: MethodContext, params: Json): Promise
     };
   }
 
+  /**
+   * Spend the grant at ORDER CREATION, not at settlement — the same moment the
+   * human path spends it, and for the same reason: the exposure exists as soon
+   * as a discounted order does.
+   *
+   * Re-checked here even though `buildQuote` already read it, because those are
+   * two different questions. `buildQuote` asked "is this worth anything"; this
+   * asks "is it still unspent, now that I am about to register the amount with
+   * Razorpay". Between them sits a network call, which is long enough for the
+   * same grant to be redeemed in another tab.
+   */
+  if (grantId && quote.discount > 0) {
+    const spent = redeem(ctx.site.key, grantId, order.order.id);
+    if (!spent.ok) {
+      // The units go back immediately rather than sitting out the fifteen-minute
+      // hold. Nobody is buying them: this checkout is over.
+      release(order.order.id);
+      return errorResponse(
+        "invalid_request",
+        spent.reason === "already_redeemed"
+          ? "That discount has already been used. Create the checkout again without it."
+          : "That discount is no longer valid. Create the checkout again without it.",
+        "recoverable",
+      );
+    }
+  }
+
   savePending({
     gatewayOrderId: order.order.id,
     shop: ctx.site.key,
@@ -691,6 +891,17 @@ export async function create_checkout(ctx: MethodContext, params: Json): Promise
 
   return checkoutResponse(ctx, order.order.id, quoteToWire(quote), {
     policies: toUcpPolicies(policies),
+    ...(codes?.unknown.length
+      ? {
+          messages: [
+            errorMessage(
+              "invalid_request",
+              `Not applied: ${codes.unknown.join(", ")}. The total below is what will be charged.`,
+              "recoverable",
+            ),
+          ],
+        }
+      : {}),
   });
 }
 
@@ -943,6 +1154,71 @@ export async function get_order(ctx: MethodContext, params: Json): Promise<Json>
 }
 
 /* ------------------------------------------------------------------ *
+ * Promotions
+ * ------------------------------------------------------------------ */
+
+/**
+ * What is on offer right now, as terms.
+ *
+ * NOT A UCP METHOD. There is no promotions method in 2026-08-25 — the discount
+ * extension puts offers on carts and checkouts, not in a catalogue-wide list —
+ * so this is ours, reachable because MCP `tools/list` advertises it. That is
+ * why offers ALSO appear on every product and in every cart total: an agent
+ * that only speaks strict UCP and never calls this must still see them. This
+ * method is a shortcut, never the only route.
+ *
+ * TERMS, NEVER AMOUNTS. Percentages and end dates, and no discounted prices,
+ * for the same reason the assistant may announce an offer but not compute one.
+ * The number comes from `create_cart`, from the server that will charge it.
+ *
+ * TWO THINGS DELIBERATELY WITHHELD:
+ *
+ *   - `maxUnits`, the exposure cap the merchant approved. It is their budget,
+ *     not a fact about the product, and published as "only 40 left at this
+ *     price" it becomes manufactured urgency out of an internal control.
+ *   - recovery grants. A grant is bound to one basket and one customer and is
+ *     worthless to anyone else; listing them would turn a private remedy into a
+ *     coupon feed. An agent can still redeem one it was given — see
+ *     `discount_codes` on create_cart — but it cannot discover one.
+ */
+export async function get_promotions(ctx: MethodContext, _params: Json): Promise<Json> {
+  const live = activeOffers(ctx.site.key);
+
+  // Titles come from the catalogue rather than from the approval record, so a
+  // renamed product does not keep being announced under the name it had when
+  // the merchant clicked approve.
+  const promotions = [];
+  for (const o of live) {
+    const product = await ctx.catalog.get(o.handle).catch(() => null);
+    if (!product) continue; // Approved, then delisted. Nothing to sell.
+    promotions.push({
+      id: o.candidateId,
+      title: o.title,
+      type: "percentage",
+      value: Math.round(o.depth * 100),
+      ends_at: o.endsAt,
+      automatic: true,
+      applies_to: {
+        product_id: productGid(product.handle),
+        handle: product.handle,
+        title: product.title,
+      },
+    });
+  }
+
+  return {
+    ucp: okEnvelope(),
+    promotions,
+    // Said outright, because the alternative is a model inventing a code field
+    // and telling a buyer to enter one at checkout.
+    notice:
+      promotions.length === 0
+        ? "No offers are running right now."
+        : "These apply automatically. There is no code to enter — add the item to a cart and the total comes back discounted.",
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * Registry
  * ------------------------------------------------------------------ */
 
@@ -952,6 +1228,7 @@ export const METHODS: Record<string, MethodFn> = {
   search_catalog,
   lookup_catalog,
   get_product,
+  get_promotions,
   create_cart,
   get_cart,
   update_cart,

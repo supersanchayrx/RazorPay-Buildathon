@@ -53,6 +53,11 @@ type order struct {
 type customer struct {
 	ID    string
 	Email string
+	// Kept because CHAPMAN's recovery agent needs a way to reach somebody, and
+	// asking the SHOPPER'S BROWSER for a phone number would let any page
+	// nominate any handset. The merchant holds it; the merchant serves it, over
+	// the same signed request that serves their orders.
+	Phone string
 	Name  string
 }
 
@@ -101,6 +106,7 @@ func loadOrders(path, secret, site string) (*store, error) {
 			Customer struct {
 				ID    string `json:"id"`
 				Email string `json:"email"`
+				Phone string `json:"phone"`
 			} `json:"customer"`
 			Synthetic bool `json:"synthetic"`
 		}
@@ -119,7 +125,8 @@ func loadOrders(path, secret, site string) (*store, error) {
 		if _, seen := s.byEmail[raw.Customer.Email]; !seen {
 			name := strings.SplitN(raw.Customer.Email, "@", 2)[0]
 			s.byEmail[strings.ToLower(raw.Customer.Email)] = customer{
-				ID: raw.Customer.ID, Email: raw.Customer.Email, Name: titleCase(strings.TrimRight(name, "0123456789")),
+				ID: raw.Customer.ID, Email: raw.Customer.Email, Phone: raw.Customer.Phone,
+				Name: titleCase(strings.TrimRight(name, "0123456789")),
 			}
 		}
 	}
@@ -209,7 +216,23 @@ func (s *store) handleOrders(w http.ResponseWriter, r *http.Request) {
 	if rows == nil {
 		rows = []order{}
 	}
-	json.NewEncoder(w).Encode(map[string]any{"orders": rows})
+
+	// How to reach this person, alongside what they bought.
+	//
+	// This is the merchant deciding to expose contact details for their own
+	// customer, over a request they have already authenticated. It is the only
+	// route by which CHAPMAN ever learns a phone number: the storefront's
+	// basket beacon proves WHO somebody is with a signed token and is never
+	// asked WHERE to reach them, because a page that could answer that could
+	// point an outbound call at a stranger.
+	//
+	// A merchant who does not want outreach simply omits this object, and every
+	// basket is then suppressed as `no_channel` with that reason shown.
+	out := map[string]any{"orders": rows}
+	if c, ok := s.byID(sub); ok {
+		out["customer"] = map[string]string{"id": c.ID, "email": c.Email, "phone": c.Phone}
+	}
+	json.NewEncoder(w).Encode(out)
 }
 
 /* ---------- sign-in (a fixture, not a real login) ---------- */
@@ -232,6 +255,16 @@ func (s *store) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *store) handleLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1})
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// byID looks a customer up by the merchant's own id.
+func (s *store) byID(id string) (customer, bool) {
+	for _, c := range s.byEmail {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return customer{}, false
 }
 
 // current returns the signed-in customer, if any.

@@ -65,6 +65,7 @@ import { readSettings, type MerchantSettings } from "./settings.server";
 import { contactHistory, type ChannelId, type Draft } from "./outreach.server";
 import { askedCarts, silenced } from "./conversations.server";
 import { mintRecoveryToken } from "./identity.server";
+import { liveCarts } from "./carts.server";
 
 /**
  * The recovery rate we assume, because we have never run this outreach here and
@@ -425,12 +426,34 @@ export function runRecovery(opts: {
    */
   gatewayOrigin?: string;
   siteSecret?: string;
+  /**
+   * A path on the MERCHANT's origin that proxies our recovery page.
+   *
+   * Set it and the question gets asked on their domain instead of ours. Absent
+   * is a perfectly good state and means the link points here.
+   */
+  recoverPath?: string;
   asOf?: Date;
   channel?: ChannelId;
 }): RecoveryRun {
   const asOf = opts.asOf ?? new Date();
   const settings = readSettings(opts.shop);
-  const carts = readJsonl<CartWithContact>("carts.jsonl").filter((c) => c.lines?.length);
+  /**
+   * Seeded history and real baskets, in one list.
+   *
+   * They are deliberately NOT one file. `npm run seed` rewrites `carts.jsonl`
+   * from scratch, which is what makes the fixture deterministic and what
+   * `check-history` asserts against — so a live basket written there survives
+   * until the next seed and then vanishes. Merging at read time gives the
+   * detectors one corpus without letting either half overwrite the other.
+   *
+   * Live rows are `synthetic: false`, so nothing downstream has to guess which
+   * kind it is holding, and a demo can be honest about which baskets are real.
+   */
+  const carts = [
+    ...readJsonl<CartWithContact>("carts.jsonl"),
+    ...(liveCarts(opts.shop) as unknown as CartWithContact[]),
+  ].filter((c) => c.lines?.length);
   const orders = readJsonl<HistoryOrder>("orders.jsonl").filter((o) => o.lines?.length);
   const inputs = readInputs();
   const channel: ChannelId = opts.channel ?? (settings.outreach.channels[0] as ChannelId) ?? "draft";
@@ -647,8 +670,28 @@ export function runRecovery(opts: {
      */
     const single = items.length === 1;
     const canAsk = Boolean(opts.gatewayOrigin && opts.siteSecret && c.customer?.id);
+
+    /**
+     * On the merchant's own domain when they have wired the route, on ours when
+     * they have not.
+     *
+     * A shopper who was on nilgiripost.example and is asked why they left
+     * should not be answering the question on a domain they have never heard
+     * of. The merchant proxies one path — exactly the `ucp.go` pattern, fifteen
+     * lines — and the link becomes theirs. The token is unchanged either way:
+     * it is signed with the site secret and verified by us, so moving the URL
+     * moves no trust.
+     *
+     * The site key stays out of the shopper-facing URL in the proxied form,
+     * because the merchant's own handler already knows which shop it is.
+     */
+    const askBase =
+      opts.recoverPath && opts.storefrontOrigin
+        ? `${opts.storefrontOrigin}${opts.recoverPath}`
+        : `${opts.gatewayOrigin}/recover/${opts.shop}`;
+
     const link = canAsk
-      ? `${opts.gatewayOrigin}/recover/${opts.shop}/${mintRecoveryToken({
+      ? `${askBase}/${mintRecoveryToken({
           site: opts.shop,
           cart: c.id,
           sub: c.customer!.id,

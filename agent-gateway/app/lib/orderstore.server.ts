@@ -67,6 +67,16 @@ export type PendingCheckout = {
   fingerprint: string;
   customer: string | null;
   lines: PlacedOrder["lines"];
+  /**
+   * The storefront's own handle for the basket this checkout came from.
+   *
+   * Carried so settlement can mark that exact basket as bought. The alternative
+   * — inferring it by matching lines and customer after the fact — is a
+   * heuristic, and the failure it produces is chasing somebody for something
+   * already in their hallway, which is the most embarrassing thing this system
+   * can do. Absent for checkouts that did not start in a storefront cart.
+   */
+  cartRef?: string | null;
 };
 
 export function savePending(p: PendingCheckout): void {

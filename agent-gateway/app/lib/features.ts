@@ -78,11 +78,16 @@ export const FEATURES: Feature[] = [
     key: "memory",
     name: "Shopper memory",
     blurb:
-      "Remember a returning shopper’s preferences — caffeine, brew style, budget — so they do not repeat themselves.",
-    status: "planned",
+      "Remember a returning shopper’s preferences — caffeine, brew style, who they buy for — so they do not repeat themselves, in the widget and on a call.",
+    status: "available",
     unlockedBy:
-      "Needs the order source above, an opt-in from you, and a vector store. Off by default, and kept apart from the shop cortex — shop knowledge is yours and shared by every tool; a shopper's is theirs and stays in its own store.",
+      "Live, and readable in full on its own page. Written only for a SIGNED-IN shopper, never for an anonymous one; " +
+      "a memory may not contain a price, a stock level, an offer or an order state, so a six-week-old sentence " +
+      "cannot become today's wrong answer. Kept apart from the shop cortex — shop knowledge is yours and shared by " +
+      "every tool, a shopper's is theirs and stays in its own store. Retrieval is term overlap today; a vector " +
+      "store replaces one function when Prisma arrives.",
     doc: "architecture-data-access.md",
+    href: "/dashboard/memory",
   },
   {
     key: "offers",
@@ -102,8 +107,9 @@ export const FEATURES: Feature[] = [
       "Baskets that were never completed, and what — if anything — is worth saying about them. Shows you every message before it goes out, and every basket it decided to leave alone.",
     status: "available",
     unlockedBy:
-      "Live as a dry run: it drafts through the same bounds check as your assistant and delivers to a file. " +
-      "WhatsApp, SMS and voice each need their own registration before a message can actually leave.",
+      "Live, and reading real baskets from your storefront as well as seeded history. It drafts through the same " +
+      "bounds check as your assistant, and you can send to one person at a time or leave one alone for good. " +
+      "Voice delivers today; WhatsApp and SMS each need their own registration before a message can leave.",
     doc: "architecture-recovery.md",
     href: "/dashboard/recovery",
   },
@@ -120,10 +126,12 @@ export const FEATURES: Feature[] = [
     key: "agent_front",
     name: "Agent-readable storefront",
     blurb:
-      "When a shopper’s AI agent reaches your store, it gets a machine surface it can transact against instead of guessing at your HTML.",
-    status: "needs_setup",
+      "When a shopper’s AI agent reaches your store, it gets a machine surface it can transact against instead of guessing at your HTML — including the offers you approved, which it can spend but never invent. One line to install.",
+    status: "available",
+    // Not rendered for a live card — the index only shows this on features that
+    // are not yet available — so the substance lives in the blurb and the page.
     unlockedBy:
-      "Built and live: 13 operations over UCP 2026-08-25, the same protocol every Shopify store already serves. On a custom site you add one route — /.well-known/ucp on your own domain, proxied from us. On Shopify you need nothing from us at all; you already have it.",
+      "Custom sites add one redirect line, generated for their host. Shopify stores already serve UCP and need nothing from us.",
     doc: "architecture-tool-surface.md",
     href: "/dashboard/agentfront",
   },
@@ -140,13 +148,13 @@ export const FEATURES: Feature[] = [
   {
     key: "voice",
     name: "Voice & messaging outreach",
-    blurb: "Deliver recovery messages over WhatsApp, SMS or a call, within the limits you set.",
-    status: "building",
+    blurb: "Deliver recovery messages over a call, WhatsApp or SMS, within the limits you set.",
+    status: "available",
     unlockedBy:
-      "The agent that decides who to contact and what to say is built and runs today — see Basket recovery. " +
-      "What is missing is delivery: WhatsApp needs Business templates approved by Meta, SMS needs a DLT-registered " +
-      "sender and template, voice needs a telephony provider and a recorded-consent trail. Each is a registration, " +
-      "not a code change.",
+      "VOICE DELIVERS: Sarvam for speech, Twilio to place the call, as a one-way notice or a bounded conversation " +
+      "that asks what put them off and answers back. Availability is computed from whether those credentials exist — " +
+      "a settings file cannot buy a Twilio account. WhatsApp still needs Business templates approved by Meta and SMS " +
+      "needs a DLT-registered sender and template; each is a registration, not a code change.",
     doc: "architecture-recovery.md",
     href: "/dashboard/recovery",
   },

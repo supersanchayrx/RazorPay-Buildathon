@@ -1,11 +1,8 @@
 {
   "mcpServers": {
-    "razorpay": {
+    "nilgiri-post": {
       "type": "http",
-      "url": "https://mcp.razorpay.com/mcp",
-      "headers": {
-        "Authorization": "Basic ${RAZORPAY_MCP_AUTH}"
-      }
+      "url": "http://[::1]:3000/ucp/pk_nilgiripost_dev/mcp"
     }
   }
 }

@@ -76,8 +76,14 @@ func main() {
 	// proxied from the gateway. See ucp.go.
 	ucp := &ucpProxy{upstream: strings.TrimSuffix(*agent, "/") + "/ucp/" + *site + "/profile"}
 
+	// The merchant's half of basket recovery: the ask page and the restore
+	// endpoint, both served from THIS domain and forwarded. See recovery.go.
+	rec := &recoveryProxy{base: strings.TrimSuffix(*agent, "/"), site: *site}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/ucp", ucp.handle)
+	mux.HandleFunc("/recover/", rec.handleRecover)
+	mux.HandleFunc("/restore/", rec.handleRestore)
 	mux.HandleFunc("/api/orders", shop.handleOrders)
 	mux.HandleFunc("/login", shop.handleLogin)
 	mux.HandleFunc("/logout", shop.handleLogout)
@@ -115,6 +121,7 @@ func main() {
 
 	log.Printf("Nilgiri Post demo store serving %s", dir)
 	log.Printf("  agent gateway: %s", *agent)
+	log.Printf("  recovery: /recover/<token> and /restore/<token> proxied to the gateway")
 	log.Printf("  -> http://%s", *addr)
 	if err := http.ListenAndServe(*addr, logging(noCache(mux))); err != nil {
 		log.Fatal(err)

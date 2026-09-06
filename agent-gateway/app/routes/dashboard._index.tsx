@@ -81,8 +81,8 @@ export default function Features() {
       </div>
 
       <p className="note">
-        This console is not authenticated yet — it reads a single development merchant. That is the
-        next thing it needs, and saying so here is cheaper than discovering it in a demo.
+        Every feature above says the exact thing standing in its way, rather than &ldquo;coming
+        soon&rdquo; — a roadmap you can check is worth more than one you cannot.
       </p>
     </>
   );

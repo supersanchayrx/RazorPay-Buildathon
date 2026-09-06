@@ -107,7 +107,25 @@ step("initialize", Boolean(init.result?.serverInfo), init.result?.serverInfo?.na
 
 const tools = await rpc("tools/list", {});
 const names = (tools.result?.tools ?? []).map((t) => t.name);
-step("tools/list returns all thirteen Shopping methods", names.length === 13, names.join(", "));
+// The thirteen are the spec's and are checked BY NAME rather than by count, so
+// that adding one of our own — `get_promotions` — cannot mask a missing one.
+// A count is the assertion that passes for the wrong reason.
+const UCP_THIRTEEN = [
+  "search_catalog", "lookup_catalog", "get_product",
+  "create_cart", "get_cart", "update_cart", "cancel_cart",
+  "create_checkout", "get_checkout", "update_checkout", "complete_checkout", "cancel_checkout",
+  "get_order",
+];
+step(
+  "tools/list returns all thirteen Shopping methods",
+  UCP_THIRTEEN.every((m) => names.includes(m)),
+  names.join(", "),
+);
+step(
+  "...plus get_promotions, which is ours and not the spec's",
+  names.includes("get_promotions"),
+  `${names.length} tools advertised`,
+);
 
 /* -- 3. browse -------------------------------------------------------- */
 

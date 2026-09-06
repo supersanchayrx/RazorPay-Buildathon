@@ -111,8 +111,23 @@ export type ShopFindings = {
    * four answers as a finding by forgetting to check.
    */
   reasons: { total: number; enough: boolean; counts: Array<{ reason: string; count: number; share: number }> } | null;
+
+  /**
+   * When the reason counts were last refreshed, which is NOT when the analysis
+   * ran.
+   *
+   * One timestamp for a document with two writers would be a lie in whichever
+   * direction it was last written. A phone call refreshes the reasons and
+   * touches nothing else; if it moved `ranAt`, the console would report that
+   * the weekly analysis ran when in fact somebody answered the phone, and
+   * "detected four weeks ago" would quietly become "detected just now".
+   */
+  conversationsAt?: string | null;
   serviceNotices: ServiceNotice[];
 };
+
+/** A trailing newline, so the file ends the way every other one here does. */
+const NL = String.fromCharCode(10);
 
 const file = (shop: string) =>
   path.join(process.cwd(), "data", `findings-${shop.replace(/[^a-z0-9_]/gi, "_")}.json`);
@@ -221,6 +236,7 @@ export function publishFindings(input: {
     stopped: input.stopped,
     recovery: input.recovery,
     reasons: input.reasons ?? null,
+    conversationsAt: input.reasons ? asOf.toISOString() : (readFindings(input.shop, asOf)?.conversationsAt ?? null),
     serviceNotices: input.incidents
       .filter((i) => i.id.startsWith("payment_incident:"))
       .map((i) => noticeFor(i, until))
@@ -239,4 +255,51 @@ export function publishFindings(input: {
 /** Test seam. */
 export function _file(shop: string): string {
   return file(shop);
+}
+
+/**
+ * Refresh ONE part of the findings document, leaving the rest alone.
+ *
+ * `publishFindings` is what an analysis run calls: it writes the whole document
+ * because it computed the whole document. This is for the other writers — a
+ * phone call that just captured a reason, a recovery run that just recomputed
+ * who it would contact — and the distinction is load-bearing.
+ *
+ * THE BUG THIS EXISTS TO PREVENT. Calling `publishFindings` from a voice call
+ * with no incidents would write `incidents: []` and `serviceNotices: []`, and
+ * the assistant would stop telling shoppers that netbanking is failing —
+ * silently, in the middle of the outage, because somebody answered the phone.
+ * A partial writer that uses a whole-document API blanks everything it does not
+ * know about.
+ *
+ * `ranAt` is left exactly where the last analysis put it. A patch is not an
+ * analysis, and a document that claims to be fresher than its findings are is
+ * worse than an honestly stale one.
+ *
+ * Returns null when there is nothing to patch: with no analysis ever run there
+ * is no document, and inventing an empty one would make "never analysed" and
+ * "analysed and found nothing" look identical.
+ */
+export function updateFindings(
+  shop: string,
+  patch: Partial<Pick<ShopFindings, "reasons" | "recovery">>,
+  asOf = new Date(),
+): ShopFindings | null {
+  const current = readFindings(shop, asOf);
+  if (!current) return null;
+
+  const next: ShopFindings = {
+    ...current,
+    ...(patch.reasons !== undefined
+      ? { reasons: patch.reasons, conversationsAt: asOf.toISOString() }
+      : {}),
+    ...(patch.recovery !== undefined ? { recovery: patch.recovery } : {}),
+  };
+
+  try {
+    fs.writeFileSync(file(shop), JSON.stringify(next, null, 2) + NL, "utf8");
+  } catch {
+    return null;
+  }
+  return next;
 }

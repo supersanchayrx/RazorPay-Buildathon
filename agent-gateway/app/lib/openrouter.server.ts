@@ -29,6 +29,11 @@
  */
 
 import type { Reasoner, ReasonerContext, ReasonerResult } from "./reasoner.server";
+import { memoryBlock } from "./memory.server";
+
+/** Written this way so no build step or shell can mangle an escape. */
+const NL = String.fromCharCode(10);
+const NLNL = NL + NL;
 import type { CatalogProduct } from "./catalog.server";
 import { describeOrder } from "./orders.server";
 import { secret } from "./env.server";
@@ -82,6 +87,34 @@ export const MODELS = {
       "z-ai/glm-5.2:free",
       "nvidia/nemotron-3-super-120b-a12b:free",
       "openrouter/free",
+    ]),
+  /**
+   * Condensing what a shop remembers about one person.
+   *
+   * Unwatched, run over a handful of short sentences, and its output is
+   * checked against its input before anything is stored — so the job needs
+   * obedience and brevity rather than intelligence. Instruct models only: a
+   * reasoning model asked for four lines returns four lines and a paragraph
+   * explaining them, and the paragraph is indistinguishable from a memory.
+   */
+  summariser: () =>
+    chain("OPENROUTER_MODEL_SUMMARISER", [
+      // SMALL FIRST. Measured: a 26B head took 11 seconds to rewrite twelve
+      // one-line facts, which is absurd for a job whose entire input is under a
+      // hundred words and whose output is checked against that input anyway.
+      // Nothing here needs world knowledge or reasoning — it needs to merge
+      // overlapping sentences and stop.
+      "liquid/lfm-2.5-2.6b:free",
+      "minimax/minimax-m3:free",
+      "google/gemma-4-26b-a4b-it:free",
+      "openrouter/free",
+      // DELIBERATELY ABSENT: both nemotron models, which are otherwise the
+      // fastest things answering. They leak their chain of thought into
+      // `content` ("1. **Analyze User Input:**"), and this job's output is a
+      // list of lines where each line becomes something the shop believes about
+      // a person. Elsewhere a leaked preamble is ugly; here every line of it
+      // would be a candidate memory. The grounding guard would reject them and
+      // abandon the merge, so the failure is safe — it is just guaranteed.
     ]),
   // Binary classification. Smallest thing that can answer.
   grader: () =>
@@ -529,7 +562,26 @@ function buildMessages(ctx: ReasonerContext): Msg[] {
     "{VOICE}",
     ctx.voice ? VOICE_BLOCK(ctx.voice) : "",
   );
-  const msgs: Msg[] = [{ role: "system", content: `${system}\n\n---\nFACTS\n---\n${factsBlock(ctx)}` }];
+    /**
+   * Memory goes AFTER the facts, in its own block, with its own framing.
+   *
+   * Putting it inside FACTS would inherit "these are the only things you know,
+   * quote them as written" — which is precisely wrong for a sentence written
+   * six weeks ago that the shopper has never been shown. Separate block,
+   * explicitly fallible, explicitly not an answer to anything.
+   */
+  const memory = memoryBlock(
+    (ctx.memories ?? []).map((text) => ({ text })) as Parameters<typeof memoryBlock>[0],
+  );
+  const msgs: Msg[] = [
+    {
+      role: "system",
+      content:
+        `${system}` +
+        NLNL + `---` + NL + `FACTS` + NL + `---` + NL + factsBlock(ctx) +
+        (memory ? NLNL + `---` + NL + `MEMORY` + NL + `---` + NL + memory : ""),
+    },
+  ];
   // Recent turns only. A long history is mostly tokens, and the facts are
   // re-fetched every turn anyway, so an old one is a stale fact waiting to be
   // repeated.

@@ -48,12 +48,17 @@
  */
 
 import { checkReply } from "./bounds.server";
-import { addTurn, conversation } from "./conversations.server";
+import { addTurn, conversation, reasonHistogram } from "./conversations.server";
 import { classify, REASON_LABEL, type Reason } from "./reasons";
 import { complete, completeStream, isConfigured as modelConfigured, MODELS } from "./openrouter.server";
 import { standing } from "./loyalty.server";
 import { record } from "./ledger.server";
 import { readSettings } from "./settings.server";
+import { getCortex, shopperView } from "./cortex.server";
+import { jsonFeedCatalog } from "./catalog.server";
+import { findSite } from "./sites.server";
+import { learn, recall } from "./memory.server";
+import { updateFindings } from "./findings.server";
 import { config as voiceConfig, render, type Rendered, type VoiceConfig } from "./voice.server";
 import type { Draft } from "./outreach.server";
 import fs from "node:fs";
@@ -200,7 +205,85 @@ function sweep(): void {
  * The instruction not to invent a number is a seatbelt. The mechanism is that
  * there is no number here to invent toward.
  */
-export function systemPrompt(shopName: string, shopTone: string | null, draft: Draft): string {
+/**
+ * What the shop knows, projected down to what may be said out loud.
+ *
+ * Two sources, and neither of them widens what the model may CLAIM.
+ *
+ *   the cortex   the SHOPPER projection only: policies in the merchant's own
+ *                words, and any live service notice. Costs, margin floors,
+ *                order volumes and refusal counts are absent from that
+ *                projection entirely, so there is nothing here to leak.
+ *   memory       what this shop remembers about THIS person, which is durable
+ *                preferences and never a price, a stock level, an offer or an
+ *                order state -- enforced by `checkMemory` when it is WRITTEN,
+ *                not by asking the model nicely when it is read.
+ *
+ * Why give a phone call more context at all, when the whole point of this file
+ * is giving it less? Because what is being withheld is A NUMBER TO CONCEDE, not
+ * knowledge of the shop. A caller who asks "what is your returns policy?" and
+ * is told "I do not know" has been failed by a shop that does know, and the
+ * honest fix is the merchant's own sentence read back verbatim -- the same
+ * answer the widget gives, through the same projection. Rule 1 below is
+ * unchanged, `draft.facts` is still the only place a figure may come from, and
+ * every line still goes through `checkReply` before it is spoken.
+ */
+export type CallContext = {
+  /** Policy text, verbatim, from the shopper projection of the cortex. */
+  policies?: { returns?: string | null; shipping?: string | null; cod?: string | null };
+  /** Server-written, bounds-checked sentences. Repeatable, never paraphrasable. */
+  serviceNotices?: string[];
+  /** What this shop remembers about this caller. Durable facts only. */
+  memories?: string[];
+};
+
+export function systemPrompt(
+  shopName: string,
+  shopTone: string | null,
+  draft: Draft,
+  ctx: CallContext = {},
+): string {
+  const policyLines = [
+    ctx.policies?.returns ? `- Returns: ${ctx.policies.returns}` : null,
+    ctx.policies?.shipping ? `- Delivery: ${ctx.policies.shipping}` : null,
+    ctx.policies?.cod ? `- Cash on delivery: ${ctx.policies.cod}` : null,
+  ].filter(Boolean) as string[];
+
+  const shopBlock = policyLines.length
+    ? [
+        ``,
+        `THE SHOP'S OWN POLICY WORDING. If they ask, read one back exactly as written.`,
+        `Do not reword it: a reworded return window is a new promise.`,
+        ...policyLines,
+      ]
+    : [];
+
+  const noticeBlock = (ctx.serviceNotices ?? []).length
+    ? [
+        ``,
+        `IF THEY SAY A PAYMENT FAILED, you may say this, and nothing more about it:`,
+        ...(ctx.serviceNotices ?? []).map((n) => `- "${n}"`),
+      ]
+    : [];
+
+  /**
+   * Memory is the QUESTION, not the answer.
+   *
+   * Stated openly whenever it is used, because a shop that quietly knows things
+   * about you is unsettling on a screen and worse on a telephone, where there
+   * is nothing to scroll back through and no way to correct the record.
+   */
+  const memoryLines = (ctx.memories ?? []).length
+    ? [
+        ``,
+        `WHAT THIS SHOP REMEMBERS ABOUT THIS PERSON, from earlier conversations:`,
+        ...(ctx.memories ?? []).map((m) => `- ${m}`),
+        `These may be out of date. If you use one, SAY SO -- "last time you were after`,
+        `something low-caffeine, is that still right?" -- so they can correct you. Never`,
+        `treat one as a fact about price, stock, an offer or an order.`,
+      ]
+    : [];
+
   const facts = draft.facts.map((f) => `- ${f.label}: ${f.value}`).join("\n");
   return [
     `You are answering a phone call on behalf of ${shopName}.`,
@@ -208,6 +291,9 @@ export function systemPrompt(shopName: string, shopTone: string | null, draft: D
     ``,
     `THE ONLY FACTS YOU KNOW:`,
     facts,
+    ...shopBlock,
+    ...noticeBlock,
+    ...memoryLines,
     ``,
     `WHAT YOU ALREADY SAID TO THEM:`,
     `"${draft.text}"`,
@@ -283,7 +369,54 @@ export function openConversation(shop: string, draft: Draft): void {
   if (!r.ok) record({ shop, kind: "tool_error", message: `voice asked-turn refused: ${r.error}`, detail: { cartId: draft.cartId } });
 }
 
-export function beginSession(callSid: string, shop: string, draft: Draft): Session {
+/**
+ * Everything the shop knows that this call is allowed to draw on.
+ *
+ * Assembled ONCE, when the session opens, and never refreshed mid-call. Two
+ * reasons, and the second is the one that matters. A cortex build reads the
+ * catalogue feed and the ledger, and doing that between "hello" and the reply
+ * would spend the seconds Twilio is counting. And a set of facts that changed
+ * halfway through a conversation would let the shop contradict itself inside
+ * one call, which is indistinguishable from making things up.
+ *
+ * Failure is soft on purpose. No cortex, no memories, a slow feed — every one
+ * of them produces an empty context and a call that behaves exactly as it did
+ * before this existed. The call must not fail because the enrichment did.
+ */
+async function callContext(shop: string, draft: Draft): Promise<CallContext> {
+  const ctx: CallContext = {};
+
+  try {
+    const cortex = await getCortex({
+      site: { key: shop, name: draft.shop },
+      catalog: jsonFeedCatalog(findSite(shop)?.catalogFeedUrl ?? ""),
+    });
+    // The SHOPPER projection. `merchantView` holds unit costs and margin floors
+    // and is not reachable from here, which is the point of there being two.
+    const view = shopperView(cortex);
+    ctx.policies = {
+      returns: view.policies?.returns ?? null,
+      shipping: view.policies?.shipping ?? null,
+      cod: view.policies?.cod ?? null,
+    };
+    ctx.serviceNotices = view.serviceNotices.map((n) => n.text);
+  } catch {
+    // A shop with no cortex is a shop the caller can still be spoken to.
+  }
+
+  try {
+    // Keyed on the merchant's own customer id, which arrived on the draft and
+    // was never typed by anyone. Recall is scoped to (shop, sub) — there is no
+    // argument that widens it.
+    ctx.memories = recall({ shop, sub: draft.customerId, query: draft.text }).map((m) => m.text);
+  } catch {
+    /* memory is an enrichment, never a dependency */
+  }
+
+  return ctx;
+}
+
+export function beginSession(callSid: string, shop: string, draft: Draft, ctx: CallContext = {}): Session {
   sweep();
   const settings = readSettings(shop);
   const s: Session = {
@@ -291,12 +424,23 @@ export function beginSession(callSid: string, shop: string, draft: Draft): Sessi
     draft,
     turns: 0,
     silences: 0,
-    messages: [{ role: "system", content: systemPrompt(draft.shop, settings.voice, draft) }],
+    messages: [{ role: "system", content: systemPrompt(draft.shop, settings.voice, draft, ctx) }],
     reason: null,
     startedAt: Date.now(),
   };
   sessions.set(callSid, s);
   return s;
+}
+
+/**
+ * The async door into a session, used when there is time to open one properly.
+ *
+ * `beginSession` stays synchronous and context-free because `takeTurn` may have
+ * to create a session on a turn where Twilio is already waiting. This is the
+ * version the call setup uses, where a few hundred milliseconds is free.
+ */
+export async function openSession(callSid: string, shop: string, draft: Draft): Promise<Session> {
+  return beginSession(callSid, shop, draft, await callContext(shop, draft));
 }
 
 /**
@@ -420,6 +564,55 @@ async function captureReason(s: Session, callSid: string, said: string): Promise
       : `voice answer NOT recorded: ${r.error}`,
     detail: { cartId: s.draft.cartId, callSid },
   });
+
+  /**
+   * The aggregate, into the cortex. One call at a time, so it is never stale.
+   *
+   * The reason histogram already crossed into the cortex — but only when a
+   * merchant happened to open the Offers page, which is where the publish
+   * lived. So a call could capture the seventh person to say delivery was too
+   * slow and the assistant talking to a shopper an hour later still knew
+   * nothing. Publishing here closes that: the aggregate is refreshed by the
+   * event that changed it.
+   *
+   * COUNTS ONLY. `updateFindings` merges one section and leaves the incidents,
+   * the ranked actions and the service notices exactly as the last analysis
+   * wrote them — a call is not an analysis and must not be able to blank one.
+   * The shopper's own words stay in the conversation store, which is
+   * per-(merchant, shopper) and never projected to anybody.
+   */
+  try {
+    updateFindings(s.shop, { reasons: reasonHistogram(s.shop) });
+  } catch {
+    /* the aggregate is bookkeeping; it must never drop a live call */
+  }
+}
+
+/**
+ * What they told us about themselves, kept for next time.
+ *
+ * Separate from `captureReason` and deliberately so. A reason is about ONE
+ * BASKET and belongs to the recovery loop; a memory is about a PERSON and
+ * outlives it. Somebody who says "it was a gift for my father, and I only ever
+ * drink it black" has said one thing about this purchase and one thing that
+ * will still be true in March.
+ *
+ * Everything that makes this safe is in `memory.server.ts` and none of it is in
+ * the prompt: no verified id means nothing is written, and a candidate carrying
+ * a price, a stock level, an offer or an order state is refused by the same
+ * kind of gate that guards what the shop says out loud.
+ */
+function rememberFromCall(s: Session, said: string): void {
+  try {
+    learn({
+      shop: s.shop,
+      sub: s.draft.customerId,
+      said,
+      source: "voice",
+    });
+  } catch {
+    /* enrichment, never a dependency */
+  }
 }
 
 /**
@@ -452,6 +645,7 @@ export async function takeTurn(opts: {
    * on next week; a pleasant reply to one shopper expires with the call.
    */
   await captureReason(s, opts.callSid, opts.said);
+  rememberFromCall(s, opts.said);
 
   s.turns++;
   s.messages.push({ role: "user", content: opts.said });

@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { findSite } from "../lib/sites.server";
+import { liveCarts } from "../lib/carts.server";
 import { verifyRecoveryToken } from "../lib/identity.server";
 import { jsonFeedCatalog } from "../lib/catalog.server";
 import { addTurn, conversation } from "../lib/conversations.server";
@@ -10,6 +11,7 @@ import { chooseRemedy, type Remedy } from "../lib/remedies.server";
 import { readSettings } from "../lib/settings.server";
 import { readFindings } from "../lib/findings.server";
 import { findGrant, redeem } from "../lib/grants.server";
+import { learn } from "../lib/memory.server";
 import { buildQuote } from "../lib/quote.server";
 import { createOrder, isConfigured, toMinorUnits } from "../lib/razorpay.server";
 import { claim } from "../lib/reservations.server";
@@ -57,7 +59,18 @@ type CartRow = {
   subtotal?: number;
 };
 
-function readCart(cartId: string): CartRow | null {
+/**
+ * The basket this link names — seeded or real.
+ *
+ * Live baskets are folded in from their own store rather than read out of
+ * `carts.jsonl`, because `npm run seed` rewrites that file wholesale. A shopper
+ * following a link to a real basket the morning after somebody re-seeded the
+ * fixture would otherwise be told their basket no longer exists, which is true
+ * of our records and false of their shopping.
+ */
+function readCart(shop: string, cartId: string): CartRow | null {
+  const live = liveCarts(shop).find((c) => c.id === cartId);
+  if (live) return live as CartRow;
   try {
     return (
       fs
@@ -94,7 +107,7 @@ function open(params: { site?: string; token?: string }) {
           : ("This link isn't valid." as const),
     };
   }
-  const cart = readCart(v.claim.cart);
+  const cart = readCart(site.key, v.claim.cart);
   if (!cart) return { error: "We can't find that basket any more." as const };
   // The token names a customer; the cart names one too. They must agree, or a
   // token minted for one basket has been pointed at another.
@@ -161,6 +174,18 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
         ? `/pay/${site.key}/${grant.redeemedOrderId}`
         : null,
     choices: OFFERED_CHOICES.map((r) => ({ value: r, label: REASON_LABEL[r] })),
+    /**
+     * Back to the shop with the basket already in it.
+     *
+     * Only when the merchant has wired the restore route, because a link to a
+     * path their server does not serve is worse than no link. The token in the
+     * URL is the one they already followed to get here — it carries no more
+     * authority on the storefront than it does on this page.
+     */
+    restoreUrl:
+      site.restorePath && site.origins[0]
+        ? `${site.origins[0]}/?restore=${encodeURIComponent(params.token ?? "")}`
+        : null,
   };
 };
 
@@ -299,6 +324,28 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       tier: who.tier,
     },
   });
+
+  /**
+   * The reason is about this BASKET. What they said may also be about THEM.
+   *
+   * "I only ever drink it black and the delivery charge was too much" carries
+   * one fact for the recovery loop and one that will still be true in March,
+   * and the two belong in different stores — the reason is per-basket and
+   * finishes with it, a preference is per-person and outlives it.
+   *
+   * Third surface into the same memory, after the widget and the phone call.
+   * All the gates live in `learn`: no verified identity means nothing is
+   * written, and anything carrying a price, a stock level, an offer or an order
+   * state is refused. The one thing worth noting is the identity — `claim.sub`
+   * came out of a signed token, so this is not "whoever typed an email".
+   */
+  if (text) {
+    try {
+      learn({ shop: site.key, sub: claim.sub, said: text, route: "open", source: "recovery" });
+    } catch {
+      /* enrichment, never a dependency — the ANSWER is what must not be lost */
+    }
+  }
   if (!recorded.ok) {
     record({ shop: site.key, kind: "tool_error", message: `recovery answer not recorded: ${recorded.error}` });
     return { error: "Something went wrong saving that. Try once more?" };
@@ -444,6 +491,17 @@ export default function Recover() {
             <span>Subtotal</span>
             <span>₹{(d.subtotal ?? 0).toLocaleString("en-IN")}</span>
           </div>
+          {/*
+            One tap back to the shop with this basket already in it.
+            Under the answer form, not above it: the question is what this page
+            is for, and a "buy now" button at the top turns an apology into a
+            sales page. It is offered, never insisted on.
+          */}
+          {d.restoreUrl ? (
+            <p style={{ margin: "12px 0 0", fontSize: 13.5 }}>
+              <a href={d.restoreUrl}>Put this basket back on the shop →</a>
+            </p>
+          ) : null}
         </div>
 
         {!answered && (

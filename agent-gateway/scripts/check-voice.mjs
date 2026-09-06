@@ -43,6 +43,7 @@ const CNV = await load("app/lib/conversations.server.ts", "cnv-cv.mjs");
 const VTK = await load("app/lib/voicetalk.server.ts", "vtk-cv.mjs");
 const BND = await load("app/lib/bounds.server.ts", "bnd-cv.mjs");
 const TWM = await load("app/lib/twiml.server.ts", "twm-cv.mjs");
+const FND = await load("app/lib/findings.server.ts", "fnd-cv.mjs");
 
 let failed = 0;
 const check = (label, ok, detail) => {
@@ -234,6 +235,147 @@ check(
   "it does carry the facts the message already asserted",
   prompt.includes("Masala Chai Blend") && prompt.includes("43 hours ago"),
   "the same array the drafting layer bounds a written message by",
+);
+
+/* ---- what the shop knows, and what that must not widen ---- */
+console.log("\n--- the cortex on the telephone ---");
+
+const enriched = VTK.systemPrompt("Nilgiri Post", null, draft, {
+  policies: {
+    returns: "Unopened tea can be returned within 14 days.",
+    shipping: "Free delivery over 800 rupees, otherwise 60 rupees.",
+    cod: "Cash on delivery is not available.",
+  },
+  serviceNotices: ["Some HDFC netbanking payments have not been going through recently."],
+  memories: ["Prefers low-caffeine teas.", "Buys gifts for their father."],
+});
+
+check(
+  "the shop's own policy wording reaches the call",
+  enriched.includes("Unopened tea can be returned within 14 days."),
+  "a caller told 'I do not know' by a shop that does know has been failed by the design, not protected by it",
+);
+check(
+  "and it is instructed to read it back rather than reword it",
+  /Do not reword/i.test(enriched),
+  "a reworded return window is a new promise",
+);
+check(
+  "a live service notice is available if they say a payment failed",
+  enriched.includes("Some HDFC netbanking payments"),
+);
+check(
+  "what the shop remembers about this person reaches the call",
+  enriched.includes("Prefers low-caffeine teas."),
+);
+check(
+  "and it must SAY SO when it uses one",
+  /SAY SO/.test(enriched),
+  "on a call there is nothing to scroll back through, so silent memory cannot be corrected",
+);
+
+/**
+ * THE POINT OF THE WHOLE FILE, RESTATED AGAINST THE WIDER CONTEXT.
+ *
+ * Giving the call more knowledge of the SHOP must not give it a number to
+ * concede. Policy wording legitimately contains figures — a delivery threshold
+ * is a fact the widget states too — so the assertion is not "no digits", it is
+ * that nothing about discounts, depths, grants or this basket's margin has
+ * appeared.
+ */
+for (const leak of ["8%", "maxDepthPct", "grant", "monthlyMarginCap", "235", "% off"]) {
+  check(
+    `even with the cortex attached, the prompt never mentions “${leak}”`,
+    !enriched.toLowerCase().includes(leak.toLowerCase()),
+  );
+}
+/*
+ * NOT "the word discount never appears" — rule 1 IS "never state a discount",
+ * so that assertion fails on the very instruction it is meant to protect. The
+ * first version of this check did exactly that and would have been "fixed" by
+ * weakening rule 1, which is the wrong direction entirely.
+ *
+ * What matters is that no CONCEDEABLE FIGURE is in context. A shop policy may
+ * legitimately carry a percentage one day (a restocking fee, say); if one ever
+ * does, this check should be narrowed to the discount vocabulary around it
+ * rather than deleted.
+ */
+check(
+  "no percentage figure of any kind is in the model's context",
+  !/\d+\s*%/.test(enriched),
+  "there is nothing to concede, which is the mechanism — the instruction above it is only the seatbelt",
+);
+check(
+  "rule 1 is still rule 1",
+  /Never state a discount/i.test(enriched),
+  "the extra context is knowledge of the shop, not permission to concede",
+);
+check(
+  "an empty context produces exactly the prompt it always did",
+  VTK.systemPrompt("Nilgiri Post", null, draft, {}) === prompt,
+  "the enrichment is additive; a shop with no cortex is a shop the caller can still be spoken to",
+);
+
+/* ---- the aggregate that crosses back, and what it must not erase ---- */
+console.log("\n--- what a call writes into the shop's memory ---");
+
+const FSHOP = SHOP;
+/*
+ * The analysis is dated THREE DAYS AGO, explicitly.
+ *
+ * With both writes taking `new Date()`, they can land in the same millisecond
+ * and "the call did not move ranAt" becomes indistinguishable from "the call
+ * moved ranAt to now, which happens to equal then". That is not a theoretical
+ * flake: it failed exactly once, only when this suite ran straight after
+ * check-recovery had warmed the filesystem. An explicit gap makes the property
+ * either true or false rather than true-if-slow.
+ */
+const RAN_AT = new Date(Date.now() - 3 * 86_400_000);
+FND.publishFindings({
+  shop: FSHOP,
+  incidents: [
+    {
+      id: "payment_incident:netbanking/HDFC",
+      title: "HDFC netbanking failures",
+      facts: [
+        { label: "estimated onset", value: "2026-08-01" },
+        { label: "detected", value: "2026-08-20" },
+      ],
+    },
+  ],
+  actions: [{ id: "a1", title: "Pair the chai with the kettle", reach: 10, impact: 40 }],
+  stopped: 3,
+  recovery: { wouldContact: 12, suppressed: 214, marginAtStake: 4200, expectedValue: 500, enabled: true },
+  reasons: { total: 4, enough: false, counts: [{ reason: "price_too_high", count: 4, share: 1 }] },
+  asOf: RAN_AT,
+});
+
+const patched = FND.updateFindings(FSHOP, {
+  reasons: { total: 5, enough: false, counts: [{ reason: "price_too_high", count: 5, share: 1 }] },
+});
+
+check("a call refreshes the reason counts", patched.reasons.total === 5);
+check(
+  "A CALL DOES NOT ERASE THE SERVICE NOTICES",
+  patched.serviceNotices.length === 1,
+  "publishFindings writes the WHOLE document; calling it from a call with no incidents would silently stop the assistant warning shoppers mid-outage",
+);
+check("...nor the incidents", patched.incidents.length === 1);
+check("...nor the ranked actions", patched.topActions.length === 1);
+check(
+  "the analysis timestamp is NOT moved by a phone call",
+  patched.ranAt === RAN_AT.toISOString(),
+  "one timestamp for a document with two writers is a lie in whichever direction it was last written — the console would report that the weekly analysis ran when somebody answered the phone",
+);
+check(
+  "...and the conversation timestamp IS moved",
+  patched.conversationsAt > patched.ranAt,
+  "the two facts age differently, so they are dated differently",
+);
+check(
+  "patching a shop that has never been analysed does nothing",
+  FND.updateFindings("pk_never_analysed_xyz", { reasons: null }) === null,
+  "inventing an empty document makes 'never analysed' and 'analysed and found nothing' look identical",
 );
 
 /* ================= 6. press 9 really stops the calls ================= */

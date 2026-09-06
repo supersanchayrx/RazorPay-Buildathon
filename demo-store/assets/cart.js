@@ -32,6 +32,67 @@
       localStorage.setItem(KEY, JSON.stringify(items));
     } catch (e) {}
     paintCount();
+    capture(items);
+  }
+
+  /* ---------- basket capture: the merchant's half of recovery ----------
+   *
+   * Tell the gateway what is in the basket, so a basket that is never checked
+   * out can be recovered later. Three things this deliberately does NOT do:
+   *
+   *   - it does not send a price. Every line is {handle, sku, qty}, the same
+   *     shape the checkout uses, so there is no number here for the server to
+   *     be tempted to trust.
+   *   - it does not send a phone number or an email. Who this is comes from
+   *     the signed session token the merchant already puts on the page; how to
+   *     reach them is looked up server-to-server from the merchant's own
+   *     records. A page cannot nominate somebody else's handset.
+   *   - it does not block or warn. A shop whose cart flickers because a
+   *     background beacon was slow has been made worse by a feature the
+   *     shopper cannot see, so every failure here is swallowed.
+   *
+   * REF is this browser's own handle for its basket. The gateway hashes it
+   * with the site key before storing, so the id in their files is not a value
+   * this page can also read.
+   */
+  var REF_KEY = "np_cart_ref_v1";
+
+  function ref() {
+    try {
+      var v = localStorage.getItem(REF_KEY);
+      if (v) return v;
+      v = (Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+      localStorage.setItem(REF_KEY, v);
+      return v;
+    } catch (e) {
+      return "";
+    }
+  }
+
+  var captureTimer = null;
+
+  function beacon(op, lines) {
+    var r = ref();
+    if (!BASE || !SITE || !r) return;
+    var payload = { site: SITE, ref: r, op: op, lines: lines || [] };
+    if (window.CHAPMAN_SESSION) payload.session = window.CHAPMAN_SESSION;
+    try {
+      fetch(BASE + "/embed/cart", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
+  // Debounced, because a shopper nudging a quantity from 1 to 4 is one basket
+  // and not four. The last state within the window is the one that matters.
+  function capture(items) {
+    if (captureTimer) clearTimeout(captureTimer);
+    captureTimer = setTimeout(function () {
+      beacon("capture", items);
+    }, 800);
   }
   function count() {
     return read().reduce(function (n, l) {
@@ -64,7 +125,7 @@
   }
 
   function post(op, extra) {
-    var payload = { site: SITE, op: op, items: read() };
+    var payload = { site: SITE, op: op, items: read(), ref: ref() };
     if (window.CHAPMAN_SESSION) payload.session = window.CHAPMAN_SESSION;
     for (var k in extra || {}) payload[k] = extra[k];
     return fetch(BASE + "/embed/checkout", {
@@ -222,6 +283,9 @@
             razorpay_signature: r.razorpay_signature
           }).then(function (c) {
             if (c.body.ok) {
+              // Tell the gateway before the basket is cleared, so recovery
+              // never chases somebody for a thing already in their hallway.
+              beacon("recovered", []);
               write([]);
               body.innerHTML =
                 '<div class="np-done"><b>Payment confirmed</b>' +
@@ -269,10 +333,42 @@
     document.addEventListener("DOMContentLoaded", function () {
       build();
       wireBuyButton();
+      restore();
     });
   } else {
     build();
     wireBuyButton();
+    restore();
+  }
+
+  /* ---------- restore: the other end of a recovery message ----------
+   *
+   * A recovery message can now point at a basket rather than at a product
+   * page. `/restore` on the merchant's own origin asks the gateway what was in
+   * it, hands back {handle, sku, qty} — never a price — and this puts it back.
+   *
+   * Merging rather than replacing: somebody who has started a new basket since
+   * should not have it wiped by following a link about an old one.
+   */
+  function restore() {
+    var m = /[?&]restore=([^&]+)/.exec(window.location.search);
+    if (!m) return;
+    fetch("/restore/" + encodeURIComponent(m[1]), { headers: { Accept: "application/json" } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j || !j.lines || !j.lines.length) return;
+        var items = read();
+        j.lines.forEach(function (l) {
+          var hit = items.filter(function (x) {
+            return x.handle === l.handle && x.sku === l.sku;
+          })[0];
+          if (hit) hit.qty = Math.max(hit.qty, l.qty);
+          else items.push({ handle: l.handle, sku: l.sku, qty: l.qty });
+        });
+        write(items);
+        open();
+      })
+      .catch(function () {});
   }
 
   window.NP_CART = { add: add, open: open, read: read, clear: function () { write([]); } };

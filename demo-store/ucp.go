@@ -17,10 +17,20 @@ package main
 // handler and revokes it by deleting it, with no account to close and nobody to
 // ask. Every Shopify store already has the equivalent, served by Shopify.
 //
-// Proxy rather than redirect. A 302 works with most clients, but the ones that
-// do not follow cross-origin redirects on a well-known path fail invisibly, and
-// the merchant would be debugging someone else's HTTP client. Fetching and
-// echoing is fifteen lines and always works.
+// Proxy rather than redirect — and the reason changed on 2026-09-06.
+//
+// This comment used to argue that a 302 could not be relied on, because clients
+// that do not follow cross-origin redirects on a well-known path would fail
+// invisibly and the merchant would end up debugging someone else's HTTP client.
+// That was reasoning, not a measurement. The measurement now exists: the `ucp`
+// CLI v0.8.0 follows BOTH 301 and 302 across origins, and a merchant whose
+// entire install is one redirect rule discovers and transacts normally.
+//
+// So a redirect is the recommended install for most stores — one line, no file,
+// nothing to go stale. This proxy stays the default HERE because the demo store
+// is already running code, and terminating the request on the merchant's own
+// origin keeps their domain the only host an agent ever talks to for discovery.
+// Both paths are supported; neither is guessed at any more.
 
 import (
 	"io"
