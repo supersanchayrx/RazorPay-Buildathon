@@ -181,7 +181,13 @@ async function inner({ request, params }: LoaderFunctionArgs | ActionFunctionArg
    * merchant already approved.
    */
   const audio = `${c.origin}/voice/audio/${site.key}/${params.token}`;
-  const mode = readSettings(site.key).outreach.call.mode;
+  // An integration test proves transport only. Even if this shop configured
+  // conversational recovery, the test must play its fixed identification and
+  // hang up rather than asking a person why they abandoned an imaginary cart.
+  const mode =
+    draft.treatment === "integration_test"
+      ? "notice"
+      : readSettings(site.key).outreach.call.mode;
 
   record({
     shop: site.key,

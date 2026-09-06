@@ -3,8 +3,8 @@ package main
 // The merchant's half of basket recovery: two routes, both proxies.
 //
 // This is the same idea as ucp.go and for the same reason. A shopper who was on
-// nilgiripost.example and is asked why they didn't buy should be answering that
-// question on nilgiripost.example — not on a gateway domain they have never
+// monsoonmarket.example and is asked why they didn't buy should be answering that
+// question on monsoonmarket.example — not on a gateway domain they have never
 // heard of, which reads like a phishing link and gets closed. So the merchant
 // owns the URL and forwards the request; CHAPMAN owns everything behind it.
 //

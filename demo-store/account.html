@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Your account — Nilgiri Post</title>
+<title>Your account — Monsoon Market</title>
 <link rel="stylesheet" href="/assets/style.css">
 <style>
 .signin { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin: 18px 0 8px; }
@@ -25,7 +25,7 @@ table.orders td { padding: 8px 12px 8px 0; border-bottom: 1px solid #eef1ef; }
 
 <header>
   <div class="wrap bar">
-    <a class="brand" href="/">Nilgiri Post<span>Coonoor</span></a>
+    <a class="brand" href="/">Monsoon Market<span>Kochi</span></a>
     <nav>
       <a href="/">Shop</a>
       <a href="/#about">About</a>
@@ -41,21 +41,30 @@ table.orders td { padding: 8px 12px 8px 0; border-bottom: 1px solid #eef1ef; }
 </main>
 
 <footer class="wrap">
-  Nilgiri Post — demo storefront. Prices in INR. Not a real shop.
+  Monsoon Market — demo storefront. Prices in INR. Not a real shop.
 </footer>
 
 <script src="/assets/app.js"></script>
 
+<!-- CHAPMAN:BEGIN — the entire integration, and nothing outside these markers.
+     `npm run demo:clean-store` strips everything between BEGIN and END to build
+     the un-integrated copy of this shop used in the demo. Keeping the boundary
+     explicit is what makes that a bounded operation rather than a guess about
+     which script tag belongs to whom. -->
+<!-- The agent install: one tag. AGENT_BASE is rewritten by the dev server from
+     its -agent flag so the port can move; in production this is just the
+     gateway URL, typed once. -->
 <!-- Order access, the merchant half: this comment is replaced with a short-lived
      signed token when a shopper is logged in, and with nothing when they are not.
      CHAPMAN never receives a database credential. -->
 <!--CHAPMAN_SESSION-->
 
 <script src="AGENT_BASE/embed.js"
-        data-site="pk_nilgiripost_dev"
+        data-site="pk_monsoon_market"
         data-greeting="Ask me about our teas and coffees."
         data-accent="#1f4037"
         defer></script>
+<!-- CHAPMAN:END -->
 
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script src="/assets/cart.js" defer></script>

@@ -1,0 +1,7 @@
+# Shell scripts must be LF, always.
+#
+# The container entrypoint is authored on Windows and read by /bin/sh inside a
+# Linux image. A CRLF shebang fails as `/bin/sh\r: not found`, an error that
+# names neither the file nor the cause. The Dockerfile strips carriage returns
+# as a second line of defence; this is the first.
+*.sh text eol=lf

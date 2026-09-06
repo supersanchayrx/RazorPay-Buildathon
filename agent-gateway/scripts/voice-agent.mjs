@@ -52,6 +52,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { DATA_DIR, dataPath } from "./data-dir.mjs";
 import { pathToFileURL } from "node:url";
 import { WebSocketServer } from "ws";
 import * as esbuild from "esbuild";
@@ -102,7 +103,7 @@ if (!VERBS.includes(VERB)) {
   process.exit(1);
 }
 
-const TRANSCRIPT = path.join(process.cwd(), "data", "voice-transcripts.jsonl");
+const TRANSCRIPT = dataPath("voice-transcripts.jsonl");
 /**
  * The turn cap, chosen against Twilio's hop budget rather than picked round.
  *

@@ -27,13 +27,14 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { DATA_DIR, dataPath } from "./data-dir.mjs";
 
 const SEED = 20260905;
-const SHOP = "pk_nilgiripost_dev";
+const SHOP = "pk_monsoon_market";
 const TODAY = new Date("2026-09-05T00:00:00Z");
 const DAYS = 180;
 
-const OUT = path.join(process.cwd(), "data");
+const OUT = DATA_DIR;
 
 /* ------------------------------------------------------------------ *
  * PLANTED
@@ -204,11 +205,46 @@ const leadTable = (() => {
  * never resolve.
  * ------------------------------------------------------------------ */
 const NAMES = [
-  "arjun", "meera", "kabir", "divya", "rohan", "ananya", "vikram", "sneha",
-  "farhan", "ishita", "nikhil", "priya", "aditya", "tara", "imran", "lakshmi",
-  "gautam", "rhea", "sameer", "nandini", "veer", "aisha", "manav", "kavya",
-  "dev", "shreya", "arnav", "pooja", "yash", "riya", "omar", "juhi",
-  "siddharth", "neha", "raghav", "trisha", "aryan", "maya", "zain", "charu",
+  "arjun",
+  "meera",
+  "kabir",
+  "divya",
+  "rohan",
+  "ananya",
+  "vikram",
+  "sneha",
+  "farhan",
+  "ishita",
+  "nikhil",
+  "priya",
+  "aditya",
+  "tara",
+  "imran",
+  "lakshmi",
+  "gautam",
+  "rhea",
+  "sameer",
+  "nandini",
+  "veer",
+  "aisha",
+  "manav",
+  "kavya",
+  "dev",
+  "shreya",
+  "arnav",
+  "pooja",
+  "yash",
+  "riya",
+  "omar",
+  "juhi",
+  "siddharth",
+  "neha",
+  "raghav",
+  "trisha",
+  "aryan",
+  "maya",
+  "zain",
+  "charu",
 ];
 
 function makeCustomers(n) {
@@ -251,9 +287,21 @@ const BANKS = [
 
 /** Razorpay-shaped failure reasons. Real codes, so downstream logic is honest. */
 const FAILURES = [
-  { code: "BAD_REQUEST_ERROR", description: "Payment failed at the bank", source: "bank" },
-  { code: "GATEWAY_ERROR", description: "Gateway timed out", source: "gateway" },
-  { code: "BAD_REQUEST_ERROR", description: "Insufficient funds", source: "customer" },
+  {
+    code: "BAD_REQUEST_ERROR",
+    description: "Payment failed at the bank",
+    source: "bank",
+  },
+  {
+    code: "GATEWAY_ERROR",
+    description: "Gateway timed out",
+    source: "gateway",
+  },
+  {
+    code: "BAD_REQUEST_ERROR",
+    description: "Insufficient funds",
+    source: "customer",
+  },
 ];
 
 function payment(method, dayIndex, total) {
@@ -268,7 +316,11 @@ function payment(method, dayIndex, total) {
   let status = "captured";
   if (chance(failRate)) {
     const f = clustered
-      ? { code: "GATEWAY_ERROR", description: "Bank gateway unavailable", source: "bank" }
+      ? {
+          code: "GATEWAY_ERROR",
+          description: "Bank gateway unavailable",
+          source: "bank",
+        }
       : pick(FAILURES);
     attempts.push({ status: "failed", ...f, bank });
     // Some shoppers retry, most do not. The ones who do not are the voice
@@ -299,7 +351,8 @@ function payment(method, dayIndex, total) {
  * corrupt a dataset: nothing errors, and every metric computed by counting
  * orders instead of captures runs a few percent high forever.
  */
-const statusFor = (p) => (p.status === "captured" ? "placed" : "payment_failed");
+const statusFor = (p) =>
+  p.status === "captured" ? "placed" : "payment_failed";
 
 /* ------------------------------------------------------------------ *
  * Baskets and orders
@@ -343,7 +396,10 @@ function volumeFor(dayIndex) {
   d.setUTCDate(d.getUTCDate() - (DAYS - dayIndex));
   const weekend = d.getUTCDay() === 0 || d.getUTCDay() === 6;
   const trend = 3 + (dayIndex / DAYS) * 2.5;
-  return Math.max(1, Math.round(trend * (weekend ? 0.65 : 1) + (rand() * 2 - 1)));
+  return Math.max(
+    1,
+    Math.round(trend * (weekend ? 0.65 : 1) + (rand() * 2 - 1)),
+  );
 }
 
 const orders = [];
@@ -369,7 +425,11 @@ for (let day = 0; day <= DAYS; day++) {
       seed: SEED,
       shop: SHOP,
       ts: tsOn(day, between(8, 22)),
-      customer: { id: customer.id, phone: customer.phone, email: customer.email },
+      customer: {
+        id: customer.id,
+        phone: customer.phone,
+        email: customer.email,
+      },
       lines: ls,
       subtotal,
       shipping,
@@ -398,7 +458,11 @@ for (let day = 0; day <= DAYS; day++) {
       seed: SEED,
       shop: SHOP,
       ts: tsOn(day, between(9, 23)),
-      customer: { id: customer.id, phone: customer.phone, email: customer.email },
+      customer: {
+        id: customer.id,
+        phone: customer.phone,
+        email: customer.email,
+      },
       lines: ls,
       subtotal,
       currency: "INR",
@@ -426,7 +490,11 @@ for (const customer of REPLENISHERS) {
       seed: SEED,
       shop: SHOP,
       ts: tsOn(day, between(8, 20)),
-      customer: { id: customer.id, phone: customer.phone, email: customer.email },
+      customer: {
+        id: customer.id,
+        phone: customer.phone,
+        email: customer.email,
+      },
       lines: ls,
       subtotal,
       shipping,
@@ -476,7 +544,11 @@ for (let day = RAKHI.from; day <= RAKHI.to; day++) {
       seed: SEED,
       shop: SHOP,
       ts: tsOn(day, between(9, 21)),
-      customer: { id: customer.id, phone: customer.phone, email: customer.email },
+      customer: {
+        id: customer.id,
+        phone: customer.phone,
+        email: customer.email,
+      },
       lines: ls,
       subtotal,
       shipping,
@@ -523,7 +595,11 @@ carts.sort((a, b) => a.ts.localeCompare(b.ts));
 fs.mkdirSync(OUT, { recursive: true });
 
 const write = (name, rows) =>
-  fs.writeFileSync(path.join(OUT, name), rows.map((r) => JSON.stringify(r)).join("\n") + "\n", "utf8");
+  fs.writeFileSync(
+    path.join(OUT, name),
+    rows.map((r) => JSON.stringify(r)).join("\n") + "\n",
+    "utf8",
+  );
 
 write("orders.jsonl", orders);
 write("carts.jsonl", carts);
@@ -554,11 +630,19 @@ fs.writeFileSync(
 );
 
 const captured = orders.filter((o) => o.status === "placed");
-console.log(`seed        ${SEED}  (deterministic — re-running overwrites with identical bytes)`);
+console.log(
+  `seed        ${SEED}  (deterministic — re-running overwrites with identical bytes)`,
+);
 console.log(
   `orders      ${orders.length}  (${captured.length} placed, ${orders.length - captured.length} payment_failed)`,
 );
 console.log(`carts       ${carts.length} abandoned`);
-console.log(`revenue     INR ${captured.reduce((s, o) => s + o.total, 0).toLocaleString("en-IN")}`);
-console.log(`window      ${orders[0].ts.slice(0, 10)} .. ${orders[orders.length - 1].ts.slice(0, 10)}`);
-console.log(`written     data/orders.jsonl, data/carts.jsonl, data/merchant-inputs.json`);
+console.log(
+  `revenue     INR ${captured.reduce((s, o) => s + o.total, 0).toLocaleString("en-IN")}`,
+);
+console.log(
+  `window      ${orders[0].ts.slice(0, 10)} .. ${orders[orders.length - 1].ts.slice(0, 10)}`,
+);
+console.log(
+  `written     data/orders.jsonl, data/carts.jsonl, data/merchant-inputs.json`,
+);

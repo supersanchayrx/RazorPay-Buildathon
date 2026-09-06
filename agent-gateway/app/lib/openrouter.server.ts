@@ -614,13 +614,25 @@ const toolCallsFor = (ctx: ReasonerContext): string[] => [
   ...(ctx.orders.identified ? ["orders.forShopper(<verified>)"] : []),
 ];
 
+// This is a shopper-facing request with a 60-second browser deadline. Four
+// free-model attempts at the generic 45-second stream timeout can never reach
+// the deterministic fallback before that deadline. Eight seconds per model
+// leaves the normal fast path alone while keeping the default chain and its
+// fallback inside the time the widget is prepared to wait.
+const SHOPPER_MODEL_ATTEMPT_MS = 8_000;
+
 export function openRouterReasoner(model: string | string[] = MODELS.assistant()): Reasoner {
   const chainName = Array.isArray(model) ? model[0] : model;
   const reasoner: Reasoner = {
     name: `openrouter:${chainName}`,
 
     async run(ctx): Promise<ReasonerResult> {
-      const text = await complete({ model, messages: buildMessages(ctx), maxTokens: 320 });
+      const text = await complete({
+        model,
+        messages: buildMessages(ctx),
+        maxTokens: 320,
+        timeoutMs: SHOPPER_MODEL_ATTEMPT_MS,
+      });
       if (text === null) {
         // The caller decides what to do about it. Returning an empty reply
         // rather than throwing keeps the failure a routing decision instead of
@@ -632,22 +644,34 @@ export function openRouterReasoner(model: string | string[] = MODELS.assistant()
 
     stream(ctx) {
       let full = "";
+      let settle: ((result: ReasonerResult) => void) | null = null;
+      const result = new Promise<ReasonerResult>((resolve) => {
+        settle = resolve;
+      });
+      const finish = (value: ReasonerResult) => settle?.(value);
       const chunks = (async function* () {
-        for await (const piece of completeStream({ model, messages: buildMessages(ctx), maxTokens: 320 })) {
-          full += piece;
-          yield piece;
+        try {
+          for await (const piece of completeStream({
+            model,
+            messages: buildMessages(ctx),
+            maxTokens: 320,
+            timeoutMs: SHOPPER_MODEL_ATTEMPT_MS,
+          })) {
+            full += piece;
+            yield piece;
+          }
+        } finally {
+          // Resolve only after the generator has actually finished. The old
+          // async IIFE resolved immediately with `full === ""`, despite its
+          // comment claiming it waited for the chunks to be exhausted.
+          finish({
+            reply: full,
+            toolCalls: toolCallsFor(ctx),
+            products: full ? productsFor(ctx) : [],
+          });
         }
       })();
-      return {
-        chunks,
-        // Resolved by the pipeline only after `chunks` is exhausted, so `full`
-        // is complete by the time anything reads it.
-        result: (async () => ({
-          reply: full,
-          toolCalls: toolCallsFor(ctx),
-          products: full ? productsFor(ctx) : [],
-        }))(),
-      };
+      return { chunks, result };
     },
   };
   return reasoner;

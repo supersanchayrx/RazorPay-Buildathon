@@ -155,6 +155,85 @@ check(
   `sizes ${sizes.join(",")} — a gate that depends on how the model happens to chunk is not a gate`,
 );
 
+/* ---- the real model stream cannot deadlock ------------------------ */
+//
+// The fallback result settles only after its chunks are consumed. Awaiting that
+// result first is a circular wait which still returns HTTP 200, making it look
+// exactly like a slow model in the browser. Mock OpenRouter with a tiny valid
+// SSE response and exercise the complete assistant pipeline.
+const assistantOut = path.join(process.cwd(), "node_modules", ".cache", "assistant-stream.mjs");
+await esbuild.build({
+  entryPoints: ["app/lib/assistant.server.ts"],
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  outfile: assistantOut,
+  logLevel: "silent",
+});
+
+const oldKey = process.env.OPENROUTER_API_KEY;
+const oldDataDir = process.env.CHAPMAN_DATA_DIR;
+const oldFetch = globalThis.fetch;
+const streamDataDir = path.join(process.cwd(), "node_modules", ".cache", "assistant-stream-data");
+fs.mkdirSync(streamDataDir, { recursive: true });
+process.env.OPENROUTER_API_KEY = "test-only";
+process.env.CHAPMAN_DATA_DIR = streamDataDir;
+globalThis.fetch = async () =>
+  new Response(
+    'data: {"choices":[{"delta":{"content":"Hello from the model."}}]}\n\ndata: [DONE]\n\n',
+    { status: 200, headers: { "content-type": "text/event-stream" } },
+  );
+
+try {
+  const { runAssistantStream } = await import(pathToFileURL(assistantOut).href + `?v=${Date.now()}`);
+  const product = {
+    handle: "tea",
+    title: "Tea",
+    description: "A tea.",
+    productType: "Tea",
+    vendor: "Test",
+    tags: ["tea"],
+    url: "/tea",
+    image: null,
+    minPrice: "100",
+    maxPrice: "100",
+    currency: "INR",
+    totalInventory: 10,
+    variants: [],
+  };
+  const catalog = {
+    kind: "json-feed",
+    async search() { return [product]; },
+    async get() { return product; },
+    async complements() { return []; },
+    async policies() { return {}; },
+  };
+  const events = [];
+  const finished = (async () => {
+    for await (const event of runAssistantStream({
+      catalog,
+      shop: "pk_stream_test",
+      shopName: "Stream Test",
+      message: "hello",
+    })) events.push(event);
+  })();
+  const outcome = await Promise.race([
+    finished.then(() => "done"),
+    new Promise((resolve) => setTimeout(() => resolve("timeout"), 1_000)),
+  ]);
+  check(
+    "a model-backed assistant stream cannot wait on its own unconsumed chunks",
+    outcome === "done" && events.some((event) => event.type === "delta") && events.at(-1)?.type === "done",
+    outcome === "done" ? `${events.length} events` : "the result-before-chunks ordering deadlocked",
+  );
+} finally {
+  globalThis.fetch = oldFetch;
+  if (oldKey === undefined) delete process.env.OPENROUTER_API_KEY;
+  else process.env.OPENROUTER_API_KEY = oldKey;
+  if (oldDataDir === undefined) delete process.env.CHAPMAN_DATA_DIR;
+  else process.env.CHAPMAN_DATA_DIR = oldDataDir;
+}
+
 /* ================= the widget's own failure handling ================= */
 console.log("\n--- what the shopper sees when things go wrong ---");
 

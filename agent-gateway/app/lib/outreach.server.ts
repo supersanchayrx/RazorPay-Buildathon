@@ -36,7 +36,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { dataPath } from "./paths.server";
 import { record } from "./ledger.server";
+import { featureOn } from "./featureflags.server";
 import { quietNow, readSettings } from "./settings.server";
 import { mintVoiceToken } from "./identity.server";
 import { findSite } from "./sites.server";
@@ -95,8 +97,8 @@ export type Channel = {
   deliver?: (d: Draft) => Promise<{ ok: boolean; ref?: string; error?: string }>;
 };
 
-const DRAFT_FILE = path.join(process.cwd(), "data", "outreach-drafts.jsonl");
-const SEND_FILE = path.join(process.cwd(), "data", "outreach-log.jsonl");
+const DRAFT_FILE = dataPath("outreach-drafts.jsonl");
+const SEND_FILE = dataPath("outreach-log.jsonl");
 
 /**
  * The only channel with a delivery path today: write the message down.
@@ -377,6 +379,26 @@ export async function send(d: Draft): Promise<SendRecord> {
 
   if (!ch || !ch.available || !ch.deliver) {
     return { ...base, error: ch ? `${ch.label} has no delivery path: ${ch.unlockedBy ?? "not built"}` : "no such channel" };
+  }
+
+  /**
+   * The two feature switches, checked at the last possible moment.
+   *
+   * Here rather than in the console, because this function is what actually
+   * reaches a person and the console is only one of its callers. A switch
+   * enforced in the page it is rendered on is a switch that a script, a cron
+   * or next year's caller walks straight past.
+   *
+   * Both return a refusal instead of writing a send record, matching the
+   * branch above: nothing left, so nothing is logged as having left. The
+   * frequency cap counts sends, and a phantom row would silently consume a
+   * shopper's monthly allowance for a message they never got.
+   */
+  if (!featureOn(d.shop, "recovery")) {
+    return { ...base, error: "basket recovery is switched off for this shop" };
+  }
+  if (d.channel === "voice" && !featureOn(d.shop, "voice")) {
+    return { ...base, error: "voice outreach is switched off for this shop" };
   }
 
   /**

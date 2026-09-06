@@ -9,9 +9,36 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import * as esbuild from "esbuild";
+import { DATA_DIR, dataPath } from "./data-dir.mjs";
 
-const { mintSessionToken, verifySessionToken } = await import("../app/lib/identity.server.ts");
-const { seededOrders } = await import("../app/lib/orders.server.ts");
+/**
+ * These two used to be imported straight from source, which worked only for as
+ * long as neither reached for another module in `app/lib`. Node resolves the
+ * types away but not the extensionless specifiers the rest of the codebase is
+ * written in, so the first ordinary intra-lib import turned a security suite
+ * into ERR_MODULE_NOT_FOUND. Bundled the way every other check script does it.
+ */
+async function load(entry, name) {
+  const out = path.join(process.cwd(), "node_modules", ".cache", name);
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  await esbuild.build({
+    entryPoints: [entry],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    outfile: out,
+    logLevel: "silent",
+  });
+  return import(pathToFileURL(out).href);
+}
+
+const { mintSessionToken, verifySessionToken } = await load(
+  "app/lib/identity.server.ts",
+  "identity-check.mjs",
+);
+const { seededOrders } = await load("app/lib/orders.server.ts", "orders-identity.mjs");
 
 let failed = 0;
 const check = (label, ok, detail) => {
@@ -69,7 +96,7 @@ check(
 );
 
 /* ---- order scoping -------------------------------------------------- */
-const seedPath = path.join(process.cwd(), "data", "orders.jsonl");
+const seedPath = dataPath("orders.jsonl");
 if (!fs.existsSync(seedPath)) {
   console.log("SKIP  order scoping — run `npm run seed` first");
 } else {

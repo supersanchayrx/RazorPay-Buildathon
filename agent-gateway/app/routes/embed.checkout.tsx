@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { jsonFeedCatalog } from "../lib/catalog.server";
 import { findSite, allowedOrigin } from "../lib/sites.server";
+import { featureOn } from "../lib/featureflags.server";
 import { buildQuote, type CartLineRequest } from "../lib/quote.server";
 import { createOrder, publicKeyId, toMinorUnits, verifyPaymentSignature, fetchPayment } from "../lib/razorpay.server";
 import { verifySessionToken } from "../lib/identity.server";
@@ -78,6 +79,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!ok) return json({ error: "origin not allowed for this site" }, 403, origin);
 
   if (!site.razorpay) {
+    return json({ error: "payments are not enabled for this store" }, 501, ok);
+  }
+
+  // Payments switched off stops NEW checkouts and nothing else.
+  //
+  // Scoped to `start` deliberately. `quote` is arithmetic and stays available —
+  // pricing a basket is not taking money for it. `confirm` stays available
+  // because by the time it arrives Razorpay has already charged the buyer, and
+  // refusing it would not prevent the payment, only lose the order it belongs
+  // to. Same wording and status as an unconfigured store: from the caller's
+  // side "this shop does not take payments" is one fact, not two.
+  if (body.op === "start" && !featureOn(site.key, "payments")) {
     return json({ error: "payments are not enabled for this store" }, 501, ok);
   }
   const ref = site.razorpay;

@@ -48,6 +48,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { dataPath } from "./paths.server";
 
 /* ------------------------------------------------------------------ *
  * Configuration
@@ -120,7 +121,7 @@ export function config(): VoiceConfig | null {
  * Speech
  * ------------------------------------------------------------------ */
 
-const CACHE_DIR = path.join(process.cwd(), "data", "voice");
+const CACHE_DIR = dataPath("voice");
 
 /**
  * bulbul:v3 caps a request at 2500 characters. Recovery drafts run to a few

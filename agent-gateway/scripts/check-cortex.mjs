@@ -19,6 +19,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { DATA_DIR, dataPath } from "./data-dir.mjs";
 import { pathToFileURL } from "node:url";
 import * as esbuild from "esbuild";
 
@@ -40,7 +41,7 @@ await esbuild.build({
 });
 const { buildCortex, shopperView, isStale } = await import(pathToFileURL(out).href);
 
-const D = path.join(process.cwd(), "data");
+const D = DATA_DIR;
 const inputs = JSON.parse(fs.readFileSync(path.join(D, "merchant-inputs.json"), "utf8"));
 const feed = JSON.parse(
   fs.readFileSync(path.join(process.cwd(), "..", "demo-store", "catalog.json"), "utf8"),

@@ -36,7 +36,7 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
+import { dataPath } from "./paths.server";
 import type { ToolSpec } from "./tools.server";
 import type { CatalogSource } from "./catalog.server";
 import {
@@ -89,7 +89,7 @@ function history() {
   const read = <T,>(f: string): T[] => {
     try {
       return fs
-        .readFileSync(path.join(process.cwd(), "data", f), "utf8")
+        .readFileSync(dataPath(f), "utf8")
         .split("\n")
         .filter(Boolean)
         .map((l) => JSON.parse(l) as T);
@@ -99,7 +99,7 @@ function history() {
   };
   let inputs: MerchantInputs | null = null;
   try {
-    inputs = JSON.parse(fs.readFileSync(path.join(process.cwd(), "data", "merchant-inputs.json"), "utf8"));
+    inputs = JSON.parse(fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"));
   } catch {
     inputs = null;
   }

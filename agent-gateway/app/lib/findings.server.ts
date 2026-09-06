@@ -44,6 +44,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { dataPath } from "./paths.server";
 import { checkReply } from "./bounds.server";
 
 export type ServiceNotice = {
@@ -130,7 +131,7 @@ export type ShopFindings = {
 const NL = String.fromCharCode(10);
 
 const file = (shop: string) =>
-  path.join(process.cwd(), "data", `findings-${shop.replace(/[^a-z0-9_]/gi, "_")}.json`);
+  dataPath(`findings-${shop.replace(/[^a-z0-9_]/gi, "_")}.json`);
 
 /**
  * How long a finding is allowed to speak for itself.

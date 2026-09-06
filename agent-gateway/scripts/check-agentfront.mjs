@@ -129,6 +129,11 @@ const SITE = {
   razorpay: { keyIdEnv: "K", keySecretEnv: "S", webhookSecretEnv: "W" },
 };
 
+// This suite verifies a profile whose checkout is genuinely configured. The
+// values are test-only and are never sent to Razorpay here.
+process.env.K = "rzp_test_check";
+process.env.S = "check-secret";
+
 // Built from the real discovery document so the fixture cannot drift away from
 // what we actually serve — a fixture that has to be updated by hand is a
 // fixture that will eventually be testing last month's shape.

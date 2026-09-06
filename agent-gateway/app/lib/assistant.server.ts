@@ -16,6 +16,7 @@ import { announceable } from "./approvals.server";
 import type { CatalogProduct } from "./catalog.server";
 import { runHarness } from "./harness.server";
 import { SHOPPER_TOOLS } from "./tools.server";
+import { featureOn, filterShopperTools } from "./featureflags.server";
 import { isConfigured } from "./openrouter.server";
 import { record } from "./ledger.server";
 import { getCortex, shopperView } from "./cortex.server";
@@ -118,7 +119,13 @@ async function prepare(opts: AssistantOptions) {
    */
   let memories: string[] = [];
   try {
-    memories = recall({ shop: opts.shop, sub: opts.identity?.sub, query: opts.message }).map((m) => m.text);
+    // A merchant who switched memory off gets a shop that does not recall.
+    // Checked here rather than inside `recall` so the stored rows stay exactly
+    // as they were — off withholds them from the conversation, it does not
+    // reach into the store, and switching back on restores what was there.
+    if (featureOn(opts.shop, "memory")) {
+      memories = recall({ shop: opts.shop, sub: opts.identity?.sub, query: opts.message }).map((m) => m.text);
+    }
   } catch {
     /* enrichment, never a dependency */
   }
@@ -236,6 +243,10 @@ function writeLedger(
  * order state is refused. So there is nothing to decide here.
  */
 function learnFromTurn(opts: AssistantOptions, decided: ReturnType<typeof route>): void {
+  // The write half of the same switch. Off means nothing new is remembered,
+  // which is the half a merchant is actually asking for when they turn memory
+  // off — withholding recall while still collecting would be the worst of both.
+  if (!featureOn(opts.shop, "memory")) return;
   try {
     learn({
       shop: opts.shop,
@@ -312,7 +323,12 @@ async function tryHarness(
 
   const out = await runHarness({
     shop: opts.shop,
-    tools: SHOPPER_TOOLS,
+    // The shopper's tool set, minus whatever this shop switched off. A tool
+    // the merchant disabled must not be offered to the reasoner at all: given
+    // one, a model will call it, and the refusal would arrive as a tool error
+    // in the middle of a conversation rather than as a capability that was
+    // never advertised.
+    tools: filterShopperTools(opts.shop, SHOPPER_TOOLS),
     toolContext: {
       shop: opts.shop,
       shopName: ctx.shopName,
@@ -545,6 +561,17 @@ export async function* runAssistantStream(
   // The grounded stock numbers come from the products the reasoner resolved,
   // which are known before any text is released — so "only 3 left" can be
   // judged true or invented at the moment it is about to be shown.
+  // A fallback stream cannot settle its final result until it knows whether the
+  // primary stream produced anything. That fact is only known after `chunks`
+  // has been consumed. Awaiting `pending` first creates a circular wait:
+  //
+  //   pipeline waits for result -> result waits for chunks -> nobody reads chunks
+  //
+  // Buffer the model output first, then obtain the catalogue-backed result and
+  // run every buffered piece through the same sentence guard. Nothing reaches
+  // the shopper before the grounding required to check it is available.
+  const buffered: string[] = [];
+  for await (const chunk of chunks) buffered.push(chunk);
   const settled = await pending;
   const guard = createStreamGuard({
     groundedStockClaims: groundedStock(settled.products),
@@ -554,7 +581,7 @@ export async function* runAssistantStream(
   });
 
   let violations: Violation[] = [];
-  for await (const chunk of chunks) {
+  for (const chunk of buffered) {
     const step = guard.push(chunk);
     if (step.violations.length) {
       violations = step.violations;

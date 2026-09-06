@@ -1,9 +1,9 @@
 {
   "shop": {
-    "name": "Nilgiri Post",
+    "name": "Monsoon Market",
     "tagline": "Single-estate tea and coffee, shipped from the hills.",
     "currency": "INR",
-    "domain": "nilgiripost.example",
+    "domain": "monsoonmarket.example",
     "policies": {
       "returns": "Unopened packs may be returned within 7 days of delivery. Return shipping is paid by the customer unless the item arrived damaged. Brewing equipment is non-returnable once used.",
       "shipping": "Dispatched within 2 working days from Coonoor. Delivery typically 3-6 working days depending on pincode.",
@@ -16,7 +16,7 @@
       "title": "Nilgiri Frost Green Tea",
       "description": "Hand-plucked during the frost season in the Nilgiris, when the leaf sugars concentrate. Bright, faintly sweet, with a clean finish. Brews pale gold. Best at 80C for two minutes.",
       "type": "Green Tea",
-      "vendor": "Nilgiri Post",
+      "vendor": "Monsoon Market",
       "tags": ["tea", "green", "single-estate", "caffeine-low"],
       "image": "/assets/img/nilgiri-frost-green-tea.svg",
       "variants": [
@@ -29,7 +29,7 @@
       "title": "Araku Valley Filter Coffee",
       "description": "Arabica grown at 900m by cooperatives in the Araku Valley, roasted medium-dark and ground for the South Indian filter. Chicory-free. Chocolate and dried fig, low acidity.",
       "type": "Coffee",
-      "vendor": "Nilgiri Post",
+      "vendor": "Monsoon Market",
       "tags": ["coffee", "arabica", "filter", "single-origin"],
       "image": "/assets/img/araku-valley-filter-coffee.svg",
       "variants": [
@@ -42,7 +42,7 @@
       "title": "Masala Chai Blend",
       "description": "Strong Assam CTC cut with green cardamom, ginger, clove and a little black pepper. Made to stand up to milk and a long boil. The house blend, and the one people reorder.",
       "type": "Black Tea",
-      "vendor": "Nilgiri Post",
+      "vendor": "Monsoon Market",
       "tags": ["tea", "chai", "masala", "bestseller"],
       "image": "/assets/img/masala-chai-blend.svg",
       "variants": [
@@ -55,7 +55,7 @@
       "title": "Single Estate Assam CTC",
       "description": "Second flush CTC from one garden in Upper Assam. Malty, brisk and dark in the cup. Built for chai rather than for drinking plain.",
       "type": "Black Tea",
-      "vendor": "Nilgiri Post",
+      "vendor": "Monsoon Market",
       "tags": ["tea", "black", "assam", "single-estate"],
       "image": "/assets/img/single-estate-assam-ctc.svg",
       "variants": [
@@ -68,7 +68,7 @@
       "title": "Cardamom Green Tea",
       "description": "Nilgiri green leaf scented with crushed Idukki cardamom. Lighter than a masala chai and drunk without milk. Good in the evening.",
       "type": "Green Tea",
-      "vendor": "Nilgiri Post",
+      "vendor": "Monsoon Market",
       "tags": ["tea", "green", "cardamom", "caffeine-low"],
       "image": "/assets/img/cardamom-green-tea.svg",
       "variants": [
@@ -80,7 +80,7 @@
       "title": "Cold Brew Concentrate",
       "description": "Araku arabica steeped 18 hours and bottled at 4x strength. Dilute one part to three. Keeps two weeks refrigerated. Made in small batches, so it goes in and out of stock.",
       "type": "Coffee",
-      "vendor": "Nilgiri Post",
+      "vendor": "Monsoon Market",
       "tags": ["coffee", "cold-brew", "small-batch"],
       "image": "/assets/img/cold-brew-concentrate.svg",
       "variants": [
@@ -104,7 +104,7 @@
       "title": "Ceramic Cupping Set",
       "description": "Five stoneware cupping bowls and a lidded brewing cup, glazed matte white. What we use on the table when deciding what to buy.",
       "type": "Equipment",
-      "vendor": "Nilgiri Post",
+      "vendor": "Monsoon Market",
       "tags": ["equipment", "ceramic", "tasting"],
       "image": "/assets/img/ceramic-cupping-set.svg",
       "variants": [

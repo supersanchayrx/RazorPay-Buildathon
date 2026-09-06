@@ -63,12 +63,13 @@ import { config as voiceConfig, render, type Rendered, type VoiceConfig } from "
 import type { Draft } from "./outreach.server";
 import fs from "node:fs";
 import path from "node:path";
+import { dataPath } from "./paths.server";
 
 /* ------------------------------------------------------------------ *
  * The transcript
  * ------------------------------------------------------------------ */
 
-const TRANSCRIPT = path.join(process.cwd(), "data", "voice-transcripts.jsonl");
+const TRANSCRIPT = dataPath("voice-transcripts.jsonl");
 
 export type TranscriptRow = {
   at: string;

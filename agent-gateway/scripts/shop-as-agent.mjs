@@ -20,7 +20,7 @@
  *
  * Usage:
  *   node scripts/shop-as-agent.mjs
- *   node scripts/shop-as-agent.mjs --gateway http://localhost:3000 --site pk_nilgiripost_dev
+ *   node scripts/shop-as-agent.mjs --gateway http://localhost:3000 --site pk_monsoon_market
  *   node scripts/shop-as-agent.mjs --store http://127.0.0.1:4000      # discover the way an agent does
  *   node scripts/shop-as-agent.mjs --query "green tea" --qty 2
  *   node scripts/shop-as-agent.mjs --code grn_XXXX                    # redeem a recovery grant
@@ -42,7 +42,7 @@ const flag = (name) => process.argv.includes(`--${name}`);
 
 const STORE = arg("store");
 let GATEWAY = arg("gateway", "http://localhost:3000");
-let SITE = arg("site", "pk_nilgiripost_dev");
+let SITE = arg("site", "pk_monsoon_market");
 const QUERY = arg("query", "tea");
 const QTY = Number(arg("qty", "1"));
 const CODE = arg("code");
@@ -90,7 +90,8 @@ const profileServer = http.createServer((req, res) => {
         },
       },
       name: "shop-as-agent (local test harness)",
-      description: "A developer driving this store's agent surface from a terminal.",
+      description:
+        "A developer driving this store's agent surface from a terminal.",
     }),
   );
 });
@@ -122,14 +123,18 @@ async function rpc(method, params) {
   // Streamable HTTP may frame the reply as SSE, so the JSON is located rather
   // than assumed to begin at byte zero.
   const start = text.indexOf("{");
-  if (start < 0) die(`${method}: no JSON in reply (HTTP ${res.status})\n${text.slice(0, 300)}`);
+  if (start < 0)
+    die(
+      `${method}: no JSON in reply (HTTP ${res.status})\n${text.slice(0, 300)}`,
+    );
   let env;
   try {
     env = JSON.parse(text.slice(start));
   } catch {
     die(`${method}: reply did not parse\n${text.slice(0, 300)}`);
   }
-  if (env.error) die(`${method}: ${env.error.message ?? JSON.stringify(env.error)}`);
+  if (env.error)
+    die(`${method}: ${env.error.message ?? JSON.stringify(env.error)}`);
   return env.result;
 }
 
@@ -140,18 +145,27 @@ async function tool(name, args) {
     arguments: { meta: { "ucp-agent": { profile: PROFILE } }, ...args },
   });
   const text = r?.content?.[0]?.text;
-  if (typeof text !== "string") die(`${name}: unexpected envelope ${JSON.stringify(r).slice(0, 200)}`);
+  if (typeof text !== "string")
+    die(`${name}: unexpected envelope ${JSON.stringify(r).slice(0, 200)}`);
   return JSON.parse(text);
 }
 
 /** UCP puts problems in `messages`; print them rather than discovering them later. */
 function showMessages(payload, indent = "   ") {
   for (const m of payload.messages ?? []) {
-    const paint = m.severity === "unrecoverable" ? c.r : m.severity === "recoverable" ? c.y : c.dim;
+    const paint =
+      m.severity === "unrecoverable"
+        ? c.r
+        : m.severity === "recoverable"
+          ? c.y
+          : c.dim;
     // `content` is a plain string on this wire, not { plain }. Written the wrong
     // way first, which printed a severity and an empty line — the message that
     // explains WHY a checkout escalated is the one thing an agent most needs.
-    const body = typeof m.content === "string" ? m.content : (m.content?.plain ?? m.message ?? "");
+    const body =
+      typeof m.content === "string"
+        ? m.content
+        : (m.content?.plain ?? m.message ?? "");
     console.log(`${indent}${paint(`[${m.severity}] ${m.code}`)} ${body}`);
   }
 }
@@ -167,7 +181,9 @@ step(1, "Discovery");
 if (STORE) {
   // The path a real agent takes: it is given a STORE, not a gateway. Everything
   // else is read out of the merchant's own well-known document.
-  say(`fetching ${STORE}/.well-known/ucp ${c.dim("(what an agent is actually given)")}`);
+  say(
+    `fetching ${STORE}/.well-known/ucp ${c.dim("(what an agent is actually given)")}`,
+  );
   let doc;
   try {
     const res = await fetch(`${STORE}/.well-known/ucp`, {
@@ -175,28 +191,46 @@ if (STORE) {
       headers: { accept: "application/json" },
       signal: AbortSignal.timeout(10000),
     });
-    if (!res.ok) die(`the store returned ${res.status}. An agent concludes it does not sell online.`);
+    if (!res.ok)
+      die(
+        `the store returned ${res.status}. An agent concludes it does not sell online.`,
+      );
     doc = await res.json();
   } catch (e) {
     die(`could not reach the store: ${e.message}`);
   }
   ENDPOINT = doc?.ucp?.services?.["dev.ucp.shopping"]?.[0]?.endpoint;
-  if (!ENDPOINT) die("the profile names no dev.ucp.shopping endpoint — discovery led nowhere");
+  if (!ENDPOINT)
+    die(
+      "the profile names no dev.ucp.shopping endpoint — discovery led nowhere",
+    );
   say(`version    ${doc.ucp.version}`);
-  say(`capabilities ${Object.keys(doc.ucp.capabilities ?? {}).length}: ${Object.keys(doc.ucp.capabilities ?? {}).map((k) => k.replace("dev.ucp.shopping.", "")).join(", ")}`);
+  say(
+    `capabilities ${Object.keys(doc.ucp.capabilities ?? {}).length}: ${Object.keys(
+      doc.ucp.capabilities ?? {},
+    )
+      .map((k) => k.replace("dev.ucp.shopping.", ""))
+      .join(", ")}`,
+  );
   const handlers = Object.entries(doc.ucp.payment_handlers ?? {});
   if (handlers.length === 0) {
     say(c.y("no payment handler — this store cannot take an agent checkout"));
   } else {
     for (const [id, [h]] of handlers) {
-      say(`payment    ${id} — ${(h?.config?.payment_methods ?? []).join(", ")}`);
+      say(
+        `payment    ${id} — ${(h?.config?.payment_methods ?? []).join(", ")}`,
+      );
     }
   }
   say(`endpoint   ${ENDPOINT}`);
 } else {
   ENDPOINT = `${GATEWAY}/ucp/${SITE}/mcp`;
   say(`skipping the well-known and going straight to ${ENDPOINT}`);
-  say(c.dim("pass --store http://your-store to exercise discovery the way an agent does"));
+  say(
+    c.dim(
+      "pass --store http://your-store to exercise discovery the way an agent does",
+    ),
+  );
 }
 
 const tools = await rpc("tools/list", {});
@@ -210,10 +244,17 @@ step(2, "Offers");
 const promos = await tool("get_promotions", {});
 if ((promos.promotions ?? []).length === 0) {
   say(c.dim(promos.notice ?? "no offers"));
-  say(c.dim("approve one in the console (Offers) to see a discount flow through to the total"));
+  say(
+    c.dim(
+      "approve one in the console (Offers) to see a discount flow through to the total",
+    ),
+  );
 } else {
   for (const p of promos.promotions) {
-    say(c.g(`${p.value}% off ${p.applies_to?.title ?? p.title}`) + c.dim(`  until ${p.ends_at.slice(0, 10)}`));
+    say(
+      c.g(`${p.value}% off ${p.applies_to?.title ?? p.title}`) +
+        c.dim(`  until ${p.ends_at.slice(0, 10)}`),
+    );
   }
   say(c.dim(promos.notice));
 }
@@ -226,21 +267,29 @@ step(3, `Search for "${QUERY}"`);
 const found = await tool("search_catalog", { catalog: { query: QUERY } });
 showMessages(found);
 const products = found.products ?? [];
-if (products.length === 0) die(`nothing matched "${QUERY}". Try --query with something in the catalogue.`);
+if (products.length === 0)
+  die(
+    `nothing matched "${QUERY}". Try --query with something in the catalogue.`,
+  );
 
 for (const p of products.slice(0, 6)) {
   const promo = p["dev.ucp.shopping.discount"]?.promotions?.[0];
   say(
     `${p.title.padEnd(32)} ${rupees(p.price_range.min.amount).padStart(9)}` +
       (promo ? `  ${c.g(`${promo.value}% off`)}` : "") +
-      (p.variants.some((v) => v.availability?.available) ? "" : `  ${c.dim("(out of stock)")}`),
+      (p.variants.some((v) => v.availability?.available)
+        ? ""
+        : `  ${c.dim("(out of stock)")}`),
   );
 }
 
 // Prefer something on offer, so the discount is visible in the total below.
 const pick =
-  products.find((p) => p["dev.ucp.shopping.discount"] && p.variants.some((v) => v.availability?.available)) ??
-  products.find((p) => p.variants.some((v) => v.availability?.available));
+  products.find(
+    (p) =>
+      p["dev.ucp.shopping.discount"] &&
+      p.variants.some((v) => v.availability?.available),
+  ) ?? products.find((p) => p.variants.some((v) => v.availability?.available));
 if (!pick) die("everything matching is out of stock");
 const variant = pick.variants.find((v) => v.availability?.available);
 say("");
@@ -278,14 +327,15 @@ if (NO_CHECKOUT) {
 ${c.dim("--no-checkout: stopping before anything is held. Nothing was reserved.")}
 `);
 } else {
-
   /* ================================================================== *
    * 5. Checkout
    * ================================================================== */
 
   step(5, "Checkout");
   say(c.dim("this holds stock for fifteen minutes and opens a payment order"));
-  const checkout = await tool("create_checkout", { checkout: { cart_id: cart.id } });
+  const checkout = await tool("create_checkout", {
+    checkout: { cart_id: cart.id },
+  });
   showMessages(checkout);
 
   if (!checkout.id) {
@@ -294,7 +344,9 @@ ${c.dim("--no-checkout: stopping before anything is held. Nothing was reserved."
 
   const total = (checkout.totals ?? []).find((t) => t.type === "total");
   say(`checkout ${checkout.id}`);
-  say(`status   ${checkout.status === "completed" ? c.g(checkout.status) : c.y(checkout.status)}`);
+  say(
+    `status   ${checkout.status === "completed" ? c.g(checkout.status) : c.y(checkout.status)}`,
+  );
   say(`total    ${c.b(rupees(total.amount))}`);
 
   if (checkout.status !== "completed") {
@@ -317,15 +369,25 @@ ${c.dim("--no-checkout: stopping before anything is held. Nothing was reserved."
    * ================================================================== */
 
   step(6, "Waiting for the payment to settle");
-  say(c.dim(`polling get_checkout every 3s for up to ${POLL_SECONDS}s — ctrl-C to stop`));
+  say(
+    c.dim(
+      `polling get_checkout every 3s for up to ${POLL_SECONDS}s — ctrl-C to stop`,
+    ),
+  );
 
   const deadline = Date.now() + POLL_SECONDS * 1000;
   let final = checkout;
   let spins = 0;
-  while (final.status !== "completed" && final.status !== "canceled" && Date.now() < deadline) {
+  while (
+    final.status !== "completed" &&
+    final.status !== "canceled" &&
+    Date.now() < deadline
+  ) {
     await new Promise((r) => setTimeout(r, 3000));
     final = await tool("get_checkout", { id: checkout.id });
-    process.stdout.write(`\r   ${["⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][spins++ % 8]} ${final.status}   `);
+    process.stdout.write(
+      `\r   ${["⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][spins++ % 8]} ${final.status}   `,
+    );
   }
   process.stdout.write("\r" + " ".repeat(40) + "\r");
 
@@ -335,7 +397,9 @@ ${c.dim("--no-checkout: stopping before anything is held. Nothing was reserved."
     const order = await tool("get_order", { id: final.order.id });
     say(`order    ${c.b(order.id)}`);
     for (const li of order.line_items ?? []) {
-      say(`  ${li.quantity.total} × ${li.item.title} — ${rupees(li.totals[0].amount)}`);
+      say(
+        `  ${li.quantity.total} × ${li.item.title} — ${rupees(li.totals[0].amount)}`,
+      );
     }
     const t = (order.totals ?? []).find((x) => x.type === "total");
     say(`total    ${c.b(rupees(t.amount))}`);
@@ -350,13 +414,27 @@ ${c.dim("--no-checkout: stopping before anything is held. Nothing was reserved."
     showMessages(final);
   } else {
     say(c.y("still unpaid when the timer ran out."));
-    say(c.dim(`the hold expires on its own. Re-run get_checkout later with id ${checkout.id},`));
+    say(
+      c.dim(
+        `the hold expires on its own. Re-run get_checkout later with id ${checkout.id},`,
+      ),
+    );
     say(c.dim("or run with --wait 900 to wait longer."));
     say("");
-    say(c.dim("If you DID pay and it still says this, the settlement did not land:"));
-    say(c.dim("  · the browser confirm fires on the success page — did you close the tab early?"));
-    say(c.dim("  · the webhook is the backstop, and it needs RAZORPAY_WEBHOOK_SECRET1 set"));
+    say(
+      c.dim(
+        "If you DID pay and it still says this, the settlement did not land:",
+      ),
+    );
+    say(
+      c.dim(
+        "  · the browser confirm fires on the success page — did you close the tab early?",
+      ),
+    );
+    say(
+      c.dim(
+        "  · the webhook is the backstop, and it needs RAZORPAY_WEBHOOK_SECRET1 set",
+      ),
+    );
   }
-
-
 }

@@ -19,6 +19,19 @@
   var BASE = tag ? tag.src.replace(/\/embed\.js.*$/, "") : "";
   var SITE = tag ? tag.getAttribute("data-site") : "";
 
+  // WITH NO TAG ON THE PAGE, THIS CART CANNOT PRICE ANYTHING.
+  //
+  // Not a defensive nicety. Every total in this cart is fetched from CHAPMAN,
+  // because the cart holds no prices — that is the point of the file. Take the
+  // tag away and BASE is "", so every fetch goes to this store's own origin and
+  // 404s: a buy button that looks alive, does nothing, and says nothing.
+  //
+  // So the shop degrades on purpose and out loud. The buttons go quiet and the
+  // reason is on the page. It is also the honest "before" for a demo: the
+  // difference the one tag makes is a dead button becoming a live one, which is
+  // visible from across a room.
+  var LIVE = !!(tag && BASE && SITE);
+
   function read() {
     try {
       var v = JSON.parse(localStorage.getItem(KEY) || "[]");
@@ -144,6 +157,8 @@
   var panel, body, btn, badge;
 
   function build() {
+    if (!LIVE) return buildInert();
+
     btn = document.createElement("button");
     btn.className = "np-cart-btn";
     btn.type = "button";
@@ -268,7 +283,7 @@
         order_id: d.orderId,
         amount: d.amount,
         currency: d.currency,
-        name: "Nilgiri Post",
+        name: "Monsoon Market",
         description: d.quote.lines.length + " item(s)",
         prefill: window.NP_CUSTOMER ? { name: window.NP_CUSTOMER } : {},
         theme: { color: "#1f4037" },
@@ -316,9 +331,35 @@
     });
   }
 
+  /* ---------- no tag: say so, and stop ---------- */
+
+  /**
+   * What the shop looks like before the integration.
+   *
+   * Disable rather than hide. A missing button reads as a shop that never sold
+   * anything; a disabled one with a reason next to it reads as the thing that
+   * is one line of HTML away from working — which is what it is.
+   */
+  function buildInert() {
+    [].forEach.call(document.querySelectorAll(".buy"), function (b) {
+      b.disabled = true;
+      b.title = "No agent gateway configured on this page.";
+      if (!/unavailable/i.test(b.textContent)) b.textContent = "Unavailable";
+    });
+
+    var note = document.createElement("div");
+    note.className = "np-cart-btn np-inert";
+    note.setAttribute("role", "status");
+    note.style.cursor = "default";
+    note.style.opacity = "0.75";
+    note.textContent = "Cart offline — no gateway tag on this page";
+    document.body.appendChild(note);
+  }
+
   /* ---------- wire the product page ---------- */
 
   function wireBuyButton() {
+    if (!LIVE) return;
     document.addEventListener("click", function (e) {
       var b = e.target.closest ? e.target.closest(".buy") : null;
       if (!b || b.disabled) return;

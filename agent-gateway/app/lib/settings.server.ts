@@ -32,6 +32,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { dataPath } from "./paths.server";
 // Types only — erased at build, so this file stays as cheap to import as it was.
 import type { Reason } from "./reasons";
 import type { Tier } from "./loyalty.server";
@@ -205,7 +206,7 @@ export const DEFAULTS: MerchantSettings = {
 };
 
 const file = (shop: string) =>
-  path.join(process.cwd(), "data", `settings-${shop.replace(/[^a-z0-9_]/gi, "_")}.json`);
+  dataPath(`settings-${shop.replace(/[^a-z0-9_]/gi, "_")}.json`);
 
 /**
  * Read, with the defaults filled in field by field.

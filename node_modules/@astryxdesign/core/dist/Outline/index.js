@@ -1,0 +1,16 @@
+// Copyright (c) Meta Platforms, Inc. and affiliates.
+
+'use client';
+
+/**
+ * @file index.ts
+ * @input Imports Outline, outline hooks, parser utility, and types
+ * @output Exports Outline component, OutlineItem type, and outline helpers
+ * @position Component entry point for Outline
+ *
+ * SYNC: When modified, update /packages/core/src/Outline/Outline.doc.mjs
+ */
+export { Outline } from "./Outline.js";
+export { parseOutlineFromMarkdown } from "./parseOutlineFromMarkdown.js";
+export { useOutlineFromMarkdown } from "./useOutlineFromMarkdown.js";
+export { useOutlineFromDOM } from "./useOutlineFromDOM.js";

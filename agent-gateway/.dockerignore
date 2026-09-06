@@ -1,3 +1,48 @@
-.cache
-build
+# What must never reach an image layer.
+#
+# The Dockerfile does `COPY . .`, and a layer cannot be edited after the fact.
+# An image built on a laptop and pushed anywhere carries whatever was in this
+# directory at build time, in a layer that `docker rm` does not reach.
+#
+# The two entries that matter are `data` and `.env`. Everything else here is
+# build output that the image rebuilds anyway.
+
+# Everything CHAPMAN writes: the decision ledger, placed orders, shopper
+# memory, and merchants.json — which holds hashed console passwords. In a
+# container this belongs in a mounted volume (CHAPMAN_DATA_DIR), never in the
+# image. See app/lib/paths.server.ts.
+data
+
+# Secrets are passed in at run time, by the orchestrator or by the entrypoint.
+# `!.env.example` is deliberate: the template is documentation and holds no
+# values.
+.env
+.env.*
+!.env.example
+
+# The merchant's own registry, if one exists on the build host. The container
+# gets its config from CHAPMAN_CONFIG in a volume; baking one host's origins
+# into a shared image is how a shop ends up serving somebody else's shop.
+chapman.config.json
+chapman.config.json.bak
+
+# Build output and caches — rebuilt inside the image.
 node_modules
+build
+.cache
+.react-router
+extensions/*/dist
+
+# Shopify session storage, and the CLI's local state. Prisma runs in the
+# container only when SHOPIFY_API_KEY is set; a host's dev database is never
+# the right starting point.
+prisma/dev.sqlite
+prisma/dev.sqlite-journal
+database.sqlite
+.shopify
+
+# Editor and tooling noise.
+.DS_Store
+.cursor
+.gemini
+.eslintcache

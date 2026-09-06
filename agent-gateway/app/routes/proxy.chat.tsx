@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import { runAssistant } from "../lib/assistant.server";
+import { featureOn } from "../lib/featureflags.server";
 import { shopifyCatalog } from "../lib/catalog.server";
 
 /**
@@ -46,6 +47,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ error: "expected a JSON body" }, 400);
   }
   if (!message) return json({ error: "message is required" }, 400);
+
+  // The Shopify twin of the check in `embed.chat`. Keyed on the myshopify
+  // domain, which is how `settings.server.ts` already keys a Shopify shop —
+  // one shop, one identity, whichever front door it came through.
+  //
+  // Memory and the tool set need no check here: both are enforced inside
+  // `runAssistant`, so this path inherits them rather than repeating them.
+  if (!featureOn(shop, "assistant")) {
+    return json({
+      reply: "Chat isn't available on this store at the moment.",
+      bounded: false,
+      gates: [],
+      toolCalls: [],
+    });
+  }
 
   try {
     const result = await runAssistant({

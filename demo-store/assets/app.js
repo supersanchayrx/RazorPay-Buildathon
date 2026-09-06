@@ -1,5 +1,5 @@
 /*
- * Nilgiri Post — demo storefront.
+ * Monsoon Market — demo storefront.
  *
  * Deliberately plain: no framework, no build step. catalog.json is the single
  * source of truth, so when the agent gateway reads this store it reads the

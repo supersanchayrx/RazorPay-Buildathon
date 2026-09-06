@@ -35,7 +35,10 @@
 
 import type { CatalogProduct, ShopPolicies } from "./catalog.server";
 import type { Site } from "./sites.server";
-import { DEFAULT_PAYMENT_METHODS } from "./razorpay.server";
+import {
+  DEFAULT_PAYMENT_METHODS,
+  isConfigured as razorpayConfigured,
+} from "./razorpay.server";
 
 export const UCP_VERSION = "2026-08-25";
 const SPEC = `https://ucp.dev/${UCP_VERSION}`;
@@ -176,7 +179,7 @@ export function capabilities(): Registry {
  * in that list and never will be, which is the gap this handler exists to fill.
  */
 export function paymentHandlers(site: Site): Registry {
-  if (!site.razorpay) return {};
+  if (!site.razorpay || !razorpayConfigured(site.razorpay)) return {};
   return {
     "in.razorpay.checkout": [
       {

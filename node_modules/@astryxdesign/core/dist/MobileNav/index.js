@@ -1,0 +1,12 @@
+// Copyright (c) Meta Platforms, Inc. and affiliates.
+
+'use client';
+
+/**
+ * @file index.ts
+ * @input Imports from MobileNav.tsx, MobileNavToggle.tsx
+ * @output Re-exports MobileNav components and types
+ * @position Barrel export; consumed by packages/core/src/index.ts
+ */
+export { MobileNav } from "./MobileNav.js";
+export { MobileNavToggle } from "./MobileNavToggle.js";

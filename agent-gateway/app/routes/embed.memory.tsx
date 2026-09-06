@@ -1,5 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { allowedOrigin, findSite } from "../lib/sites.server";
+import { featureOn } from "../lib/featureflags.server";
 import { verifySessionToken } from "../lib/identity.server";
 import { forget, memories } from "../lib/memory.server";
 
@@ -77,9 +78,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const sub = verified.identity.sub;
 
   if (body.op === "forget") {
+    // Deliberately ABOVE the feature check.
+    //
+    // Switching memory off stops collection. It must never stop deletion: a
+    // shopper asking to be forgotten is exercising a right that does not
+    // depend on a merchant's switch, and the rows are still on disk whether or
+    // not the feature is reachable. Refusing here would be the one refusal in
+    // CHAPMAN that leaves data behind rather than declining to create it.
+    //
     // An id deletes one; its absence deletes everything about this person.
     const done = forget(site.key, sub, typeof body.id === "string" && body.id ? body.id : undefined);
     return json({ ok: done, signedIn: true, memories: done ? [] : undefined }, done ? 200 : 500, ok);
+  }
+
+  // Off means nothing is recalled. What is stored stays stored, untouched, and
+  // is readable again the moment the merchant switches this back on — so this
+  // reports an empty list rather than claiming there was never anything.
+  if (!featureOn(site.key, "memory")) {
+    return json({ ok: true, signedIn: true, memories: [], enabled: false }, 200, ok);
   }
 
   return json(

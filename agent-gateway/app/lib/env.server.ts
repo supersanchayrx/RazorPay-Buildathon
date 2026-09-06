@@ -30,8 +30,15 @@ let loaded = false;
 export function loadRootEnv(root = path.join(process.cwd(), "..")): void {
   if (loaded) return;
   loaded = true;
+  // CHAPMAN_ENV_FILE names the file outright, for the case where the repository
+  // root is not a durable place: in a container `..` is `/`, which is a layer,
+  // so the generated secrets live in the mounted data volume instead. Unset —
+  // which is every non-container install — this resolves to the repo-root .env
+  // exactly as before. `npm run init` writes to the same variable.
+  const explicit = process.env.CHAPMAN_ENV_FILE?.trim();
+  const file = explicit ? path.resolve(explicit) : path.join(root, ".env");
   try {
-    const text = fs.readFileSync(path.join(root, ".env"), "utf8");
+    const text = fs.readFileSync(file, "utf8");
     for (const line of text.split(/\r?\n/)) {
       const t = line.trim();
       if (!t || t.startsWith("#")) continue;

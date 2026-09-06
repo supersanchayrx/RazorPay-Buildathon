@@ -9,8 +9,8 @@ package main
 //
 // WHY IT MUST BE ON THE MERCHANT'S ORIGIN, AND CANNOT BE ON OURS:
 //
-// An agent told to shop at nilgiripost.example fetches
-// nilgiripost.example/.well-known/ucp and nowhere else. There is no registry to
+// An agent told to shop at monsoonmarket.example fetches
+// monsoonmarket.example/.well-known/ucp and nowhere else. There is no registry to
 // be listed in and no directory to join — the merchant's own domain is the
 // authority on who may transact on their behalf. That is a good property, not
 // an inconvenience: it means the merchant grants agent access by adding this

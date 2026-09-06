@@ -39,6 +39,9 @@ const REAL = process.cwd();
 const SANDBOX = path.join(REAL, "node_modules", ".cache", "approvals-sandbox");
 fs.rmSync(SANDBOX, { recursive: true, force: true });
 fs.mkdirSync(path.join(SANDBOX, "data"), { recursive: true });
+// Isolation used to rest on cwd alone. An inherited CHAPMAN_DATA_DIR would
+// have walked straight past it and into the merchant's real data.
+process.env.CHAPMAN_DATA_DIR = path.join(SANDBOX, "data");
 
 const B = await load("app/lib/bounds.server.ts", "bounds-appr.mjs");
 process.chdir(SANDBOX);

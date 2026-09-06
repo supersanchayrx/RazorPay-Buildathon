@@ -11,6 +11,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { dataPath } from "./paths.server";
 
 export type LedgerEntry = {
   ts: string;
@@ -36,7 +37,46 @@ export type LedgerEntry = {
   detail?: unknown;
 };
 
-const FILE = path.join(process.cwd(), "decision-ledger.jsonl");
+/**
+ * The ledger moved, and an existing one is carried across.
+ *
+ * It used to be written to the repo root, which put a shop's audit trail
+ * inside a git working tree and left it behind whenever a container was
+ * replaced. It now lives with everything else CHAPMAN writes, under
+ * `CHAPMAN_DATA_DIR`.
+ *
+ * The move happens here, once, rather than in a migration script a merchant
+ * has to know to run. This is the record of every refusal made on their
+ * behalf — the one file in CHAPMAN whose worth is precisely that it is
+ * complete — so quietly starting a fresh one and orphaning the old is the
+ * worst outcome available. It is skipped when a ledger already exists at the
+ * destination, so it can never overwrite, and it is silent on failure because
+ * a logging module must not be the reason a shop fails to boot.
+ */
+function resolveLedgerFile(): string {
+  const current = dataPath("decision-ledger.jsonl");
+  const legacy = path.join(process.cwd(), "decision-ledger.jsonl");
+  if (path.resolve(legacy) !== path.resolve(current)) {
+    try {
+      if (fs.existsSync(legacy) && !fs.existsSync(current)) {
+        try {
+          fs.renameSync(legacy, current);
+        } catch {
+          // A rename cannot cross a filesystem, and a mounted data volume is
+          // very often a different one. Copy first and only then drop the
+          // original, so an interruption leaves two ledgers rather than none.
+          fs.copyFileSync(legacy, current);
+          fs.rmSync(legacy);
+        }
+      }
+    } catch {
+      // Nothing can be done from in here. `npm run doctor` reports it instead.
+    }
+  }
+  return current;
+}
+
+const FILE = resolveLedgerFile();
 
 export function record(entry: Omit<LedgerEntry, "ts">) {
   const row: LedgerEntry = { ts: new Date().toISOString(), ...entry };

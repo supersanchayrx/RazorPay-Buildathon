@@ -23,6 +23,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { dataPath } from "./paths.server";
 
 export type Merchant = {
   id: string;
@@ -35,7 +36,7 @@ export type Merchant = {
   createdAt: string;
 };
 
-const FILE = path.join(process.cwd(), "data", "merchants.json");
+const FILE = dataPath("merchants.json");
 
 /**
  * The secret that signs console sessions.
@@ -46,7 +47,7 @@ const FILE = path.join(process.cwd(), "data", "merchants.json");
  */
 function sessionSecret(): string {
   if (process.env.CONSOLE_SESSION_SECRET) return process.env.CONSOLE_SESSION_SECRET;
-  const p = path.join(process.cwd(), "data", ".session-secret");
+  const p = dataPath(".session-secret");
   try {
     return fs.readFileSync(p, "utf8").trim();
   } catch {
@@ -138,6 +139,31 @@ export function createMerchant(opts: {
     createdAt: new Date().toISOString(),
   };
   writeMerchants([...rows, m]);
+  return m;
+}
+
+/**
+ * Give an existing account access to another storefront.
+ *
+ * Exists because `npm run init` adds a second shop to a config that already
+ * has one, and the account that will manage it is usually the account that is
+ * already there. Without this the merchant finishes setup, signs in, and
+ * cannot see the shop they just configured -- which reads as setup having
+ * failed rather than as a permission they were never given.
+ *
+ * Idempotent, and returns the merchant either way. Granting a site that is not
+ * in the config is legal: the console shows nothing for it, and the grant
+ * starts working the moment the site is added.
+ */
+export function grantSite(email: string, siteKey: string): Merchant {
+  const rows = readMerchants();
+  const e = email.trim().toLowerCase();
+  const m = rows.find((x) => x.email === e);
+  if (!m) throw new Error(`${e} does not exist`);
+  if (!m.sites.includes(siteKey)) {
+    m.sites = [...m.sites, siteKey];
+    writeMerchants(rows);
+  }
   return m;
 }
 

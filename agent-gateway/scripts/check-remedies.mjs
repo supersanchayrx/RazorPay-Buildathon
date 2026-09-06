@@ -19,6 +19,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { DATA_DIR, dataPath } from "./data-dir.mjs";
 import { pathToFileURL } from "node:url";
 import * as esbuild from "esbuild";
 
@@ -57,7 +58,7 @@ const AS_OF = new Date("2026-09-05T11:00:00.000Z");
 
 /* ---- a catalogue, and the merchant's real costs ---------------------- */
 const feed = JSON.parse(fs.readFileSync(path.join(process.cwd(), "..", "demo-store", "catalog.json"), "utf8"));
-const inputs = JSON.parse(fs.readFileSync(path.join(process.cwd(), "data", "merchant-inputs.json"), "utf8"));
+const inputs = JSON.parse(fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"));
 
 const products = feed.products.map((p) => ({
   handle: p.handle,

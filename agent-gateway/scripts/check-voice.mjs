@@ -25,6 +25,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { DATA_DIR, dataPath } from "./data-dir.mjs";
 import { pathToFileURL } from "node:url";
 import * as esbuild from "esbuild";
 
@@ -160,7 +161,7 @@ check(
 check(
   "a corrupted mode falls back to the smaller thing",
   (() => {
-    const f = path.join(process.cwd(), "data", `settings-${SHOP}.json`);
+    const f = dataPath(`settings-${SHOP}.json`);
     const raw = JSON.parse(fs.readFileSync(f, "utf8"));
     raw.outreach.call = { mode: "conversatoin", maxTurns: 6 };
     fs.writeFileSync(f, JSON.stringify(raw));
@@ -171,7 +172,7 @@ check(
 check(
   "an older settings file keeps every call ceiling",
   (() => {
-    const f = path.join(process.cwd(), "data", `settings-${SHOP}.json`);
+    const f = dataPath(`settings-${SHOP}.json`);
     const raw = JSON.parse(fs.readFileSync(f, "utf8"));
     delete raw.outreach.call;
     fs.writeFileSync(f, JSON.stringify(raw));
@@ -543,7 +544,7 @@ check(
 console.log("\n--- leaving nothing behind ---");
 
 try {
-  fs.unlinkSync(path.join(process.cwd(), "data", `settings-${SHOP}.json`));
+  fs.unlinkSync(dataPath(`settings-${SHOP}.json`));
 } catch {
   /* already gone */
 }
@@ -563,7 +564,7 @@ try {
 }
 check(
   "the suite cleans up after itself",
-  !fs.existsSync(path.join(process.cwd(), "data", `settings-${SHOP}.json`)) &&
+  !fs.existsSync(dataPath(`settings-${SHOP}.json`)) &&
     CNV.conversations(SHOP).length === 0 &&
     VTK.transcript(SHOP).length === 0,
   "no test conversations, transcripts or settings left on any store",

@@ -1,0 +1,233 @@
+# CHAPMAN, in containers.
+#
+#   docker compose up -d                     the gateway on its own. What a merchant runs.
+#   docker compose --profile demo up -d       ...plus a storefront to point it at.
+#   docker compose --profile tunnel up -d     ...plus a public URL, for webhooks and phone calls.
+#
+# Secrets come from a `.env` beside this file. Copy `.env.docker.example` to
+# `.env` and paste in what you have; every one of them is optional and the
+# gateway starts without any of them.
+#
+# WHAT IS NOT HERE, deliberately: any secret with a value, and any path into a
+# developer's checkout other than the storefront being served. The signing
+# secrets are generated inside the container at first boot and kept in the
+# volume — see agent-gateway/docker/entrypoint.sh.
+
+services:
+  # ------------------------------------------------------------------ #
+  # The gateway. This is the product.
+  # ------------------------------------------------------------------ #
+  gateway:
+    build: ./agent-gateway
+    image: chapman-gateway:local
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+
+      # Everything CHAPMAN writes goes in the volume, and nothing it writes
+      # should survive only in a layer. The config lives there too, so that
+      # `docker compose run --rm -it gateway npm run init` writes something the
+      # next `up` still has.
+      CHAPMAN_DATA_DIR: /data
+      CHAPMAN_CONFIG: /data/chapman.config.json
+      CHAPMAN_ENV_FILE: /data/.env
+
+      # A fresh install starts with a merchant account and no storefront. The
+      # dashboard owns first-site onboarding. Set this to true only for an
+      # unattended deployment whose CHAPMAN_SITE_* answers are already known.
+      CHAPMAN_AUTO_INIT: ${CHAPMAN_AUTO_INIT:-false}
+
+      # Synthetic history is useful for screenshots, but a real new merchant
+      # must start with no orders or analytics. Opt in explicitly for a demo.
+      CHAPMAN_SEED: ${CHAPMAN_SEED:-false}
+
+      # Where the gateway answers, as a BROWSER reaches it. It goes into the
+      # embed tag and into every recovery link, so it has to be an address the
+      # shopper can resolve — not a compose service name.
+      GATEWAY_ORIGIN: ${GATEWAY_ORIGIN:-http://localhost:3000}
+
+      # The publicly reachable origin, when there is one. Twilio fetches TwiML
+      # from it and Razorpay posts webhooks to it, so localhost is no use to
+      # either. `--profile tunnel` is one way to get one.
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-}
+
+      # ---- optional first-site suggestions / unattended setup ------------
+      #
+      # With the default CHAPMAN_AUTO_INIT=false these values are merely form
+      # suggestions: no site is registered and no catalog is fetched until the
+      # signed-in merchant submits the setup page. With AUTO_INIT=true they are
+      # consumed by the CLI interview on first boot.
+      #
+      # Two URLs for the same storefront, and this is the container trap in one
+      # place: ORIGINS is what the BROWSER sends (localhost:4000), CATALOG is
+      # what THIS CONTAINER fetches (store:4000). Point either at the other and
+      # it fails with a CORS error or a connection refused, neither of which
+      # names the cause.
+      CHAPMAN_SITE_NAME: ${CHAPMAN_SITE_NAME:-Monsoon Market}
+      CHAPMAN_SITE_KEY: ${CHAPMAN_SITE_KEY:-pk_monsoon_market}
+      CHAPMAN_SITE_ORIGINS: ${CHAPMAN_SITE_ORIGINS:-http://localhost:4000,http://127.0.0.1:4000}
+      CHAPMAN_SITE_CATALOG: ${CHAPMAN_SITE_CATALOG:-http://store:4000/catalog.json}
+      CHAPMAN_SITE_PRODUCT_URL: ${CHAPMAN_SITE_PRODUCT_URL:-/product.html?handle={handle}}
+      # Orders are a separate permission/integration step. The clean demo store
+      # does not publish this endpoint, so first-store onboarding must not claim
+      # it until the merchant explicitly supplies one.
+      CHAPMAN_SITE_ORDERS_FEED: ${CHAPMAN_SITE_ORDERS_FEED:-}
+      CHAPMAN_SITE_RECOVER_PATH: ${CHAPMAN_SITE_RECOVER_PATH:-/recover}
+      CHAPMAN_SITE_RESTORE_PATH: ${CHAPMAN_SITE_RESTORE_PATH:-/restore}
+      CHAPMAN_SITE_GREETING: ${CHAPMAN_SITE_GREETING:-Ask me about our teas and coffees.}
+      CHAPMAN_SITE_ACCENT: ${CHAPMAN_SITE_ACCENT:-#1f4037}
+
+      # The console account made at first boot. Leave the password unset and one
+      # is generated and printed once, to the container log.
+      CHAPMAN_CONSOLE_EMAIL: ${CHAPMAN_CONSOLE_EMAIL:-merchant@example.com}
+      CHAPMAN_CONSOLE_PASSWORD: ${CHAPMAN_CONSOLE_PASSWORD:-}
+
+      # ---- payments: paste two values into .env and you are done ----------
+      #
+      # No merchant token. The gateway builds the Basic auth header from these
+      # two itself. A webhook secret is strongly recommended and needs a public
+      # URL to register against — see --profile tunnel.
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+      # The names a local development .env happens to use. The entrypoint falls
+      # back to these so an existing checkout works with nothing renamed.
+      RAZORPAY_TEST_API_KEY_ID1: ${RAZORPAY_TEST_API_KEY_ID1:-}
+      RAZORPAY_TEST_API_KEY_SECRET1: ${RAZORPAY_TEST_API_KEY_SECRET1:-}
+      RAZORPAY_WEBHOOK_SECRET1: ${RAZORPAY_WEBHOOK_SECRET1:-}
+
+      # ---- the model ------------------------------------------------------
+      #
+      # Optional. Without it a deterministic reasoner answers instead: the shop
+      # still works and still stays in bounds, and the replies are templated
+      # rather than written.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL_ASSISTANT: ${OPENROUTER_MODEL_ASSISTANT:-}
+      OPENROUTER_MODEL_ANALYST: ${OPENROUTER_MODEL_ANALYST:-}
+      OPENROUTER_MODEL_SUMMARISER: ${OPENROUTER_MODEL_SUMMARISER:-}
+      OPENROUTER_MODEL_GRADER: ${OPENROUTER_MODEL_GRADER:-}
+
+      # ---- recovery phone calls -------------------------------------------
+      #
+      # All of these together, or none. A half-configured voice setup fails at
+      # call time rather than at start.
+      SARVAM_API_KEY: ${SARVAM_API_KEY:-}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_FROM: ${TWILIO_FROM:-}
+      VOICE_QUIET_HOURS_TEST_NUMBER: ${VOICE_QUIET_HOURS_TEST_NUMBER:-}
+
+      # ---- Shopify --------------------------------------------------------
+      #
+      # Only for a Shopify dev store. Left unset, Prisma never runs: the
+      # entrypoint checks this variable before touching a migration, because on
+      # the custom-storefront path that migration can only fail.
+      SHOPIFY_API_KEY: ${SHOPIFY_API_KEY:-}
+      SHOPIFY_API_SECRET: ${SHOPIFY_API_SECRET:-}
+      SHOPIFY_APP_URL: ${SHOPIFY_APP_URL:-}
+      SCOPES: ${SCOPES:-}
+    volumes:
+      - chapman-data:/data
+    healthcheck:
+      # /embed.js resolves no site and touches no model, so it answers while the
+      # rest is still warming up — which is what a dependency needs to wait on.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:3000/embed.js"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------ #
+  # A storefront to point it at. Demo only — not part of the product.
+  # ------------------------------------------------------------------ #
+  store:
+    profiles: ["demo"]
+    build: ./demo-store
+    image: chapman-demo-store:local
+    ports:
+      - "4000:4000"
+    environment:
+      STORE_ADDR: "0.0.0.0:4000"
+      STORE_DIR: /store
+
+      # Again: browser-facing, then server-facing. AGENT_BASE_URL is substituted
+      # into the pages; AGENT_UPSTREAM_URL is what this process dials for the
+      # discovery, recovery and legibility proxies.
+      AGENT_BASE_URL: ${GATEWAY_ORIGIN:-http://localhost:3000}
+      AGENT_UPSTREAM_URL: http://gateway:3000
+
+      SITE_KEY: ${CHAPMAN_SITE_KEY:-pk_monsoon_market}
+      # Dashboard onboarding generates the signing secret when the merchant
+      # connects this store and writes it into the shared volume. The clean,
+      # unconfigured store does not need one before that transition.
+      SITE_SECRET: ${SITE_SECRET:-}
+      SITE_SECRET_FILE: /data/.env
+      ORDERS_PATH: /data/orders.jsonl
+
+      # OFF. This is the shop BEFORE the integration: no /.well-known/ucp, no
+      # recovery routes, no order feed, no legibility layer — unregistered, so
+      # the 404 is a real one. Set CHAPMAN=true (and restart the store) to turn
+      # the agent surface on.
+      CHAPMAN: ${DEMO_STORE_CHAPMAN:-false}
+    volumes:
+      # Bind-mounted, NOT baked in, and this is what makes the live integration
+      # possible: the server re-reads the HTML on every request and sets
+      # Cache-Control: no-store, so pasting the embed tag into this directory on
+      # the host is live on the next refresh, with no restart and no rebuild.
+      #
+      # Generate it first:  cd agent-gateway && npm run demo:clean-store
+      - ./demo-store-clean:/store
+      # Read-only: the store reads the generated signing secret and the seeded
+      # site secret and optional order history, and must never be able to write
+      # into the gateway's data.
+      - chapman-data:/data:ro
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ------------------------------------------------------------------ #
+  # A public URL, for the two things localhost cannot do.
+  # ------------------------------------------------------------------ #
+  #
+  # Razorpay webhooks and Twilio voice calls are both INBOUND: somebody else's
+  # server has to reach yours. Without a public origin, settlement falls back to
+  # the browser return path (a buyer who closes the tab after paying gets no
+  # order) and recovery calls cannot be placed at all.
+  #
+  #   1. put NGROK_AUTHTOKEN in .env            (free account, ngrok.com)
+  #   2. docker compose --profile tunnel up -d
+  #   3. read the URL:  curl -s http://localhost:4040/api/tunnels
+  #   4. put it in .env as PUBLIC_ORIGIN and GATEWAY_ORIGIN, then
+  #      docker compose up -d gateway
+  #
+  # Step 4 is a restart because both values are baked into pages and links, and
+  # a link built from the wrong origin is worse than no link.
+  ngrok:
+    profiles: ["tunnel"]
+    image: ngrok/ngrok:3-alpine
+    command: ["http", "gateway:3000", "--log", "stdout"]
+    environment:
+      # Plain `${VAR:-}`, not `${VAR:?...}`. Compose interpolates EVERY service
+      # before it filters by profile, so a required-variable marker here makes
+      # `docker compose up` fail for everyone who never asked for a tunnel.
+      # Unset, ngrok itself says what is missing, which is the right place for
+      # ngrok's error to come from.
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    ports:
+      # The ngrok agent's own inspector. `curl -s http://localhost:4040/api/tunnels`
+      # is where the public URL comes from.
+      - "4040:4040"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  # Named, so `docker compose down` keeps it and `docker compose down -v`
+  # deliberately does not. Losing it loses the console account, the decision
+  # ledger and every placed order — and the generated signing secret, which
+  # signs every shopper out.
+  chapman-data:

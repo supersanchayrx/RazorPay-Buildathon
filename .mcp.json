@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "nilgiri-post": {
+    "monsoon-market": {
       "type": "http",
-      "url": "http://[::1]:3000/ucp/pk_nilgiripost_dev/mcp"
+      "url": "http://[::1]:3000/ucp/pk_monsoon_market/mcp"
     }
   }
 }

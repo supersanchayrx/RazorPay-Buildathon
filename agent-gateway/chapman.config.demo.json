@@ -1,0 +1,73 @@
+// CHAPMAN — demo site registry.
+//
+// This file is committed as an explicit development fixture. The runtime never
+// selects it automatically: set CHAPMAN_CONFIG=chapman.config.demo.json when
+// you intentionally want the preconfigured reference store.
+//
+// A normal first run has no site registry and opens merchant onboarding.
+{
+  "sites": [
+    {
+      "key": "pk_monsoon_market",
+      "name": "Monsoon Market",
+
+      // Exact origins allowed to embed the widget. Scheme and host only.
+      // The browser sets `Origin` itself and page JavaScript cannot forge it,
+      // which is why this list is the actual check and the key above is only
+      // an identifier.
+      "origins": [
+        "http://127.0.0.1:4000",
+        "http://localhost:4000",
+        "http://127.0.0.1:4100"
+      ],
+
+      "catalogFeedUrl": "http://127.0.0.1:4000/catalog.json",
+
+      // {handle} is substituted per product. Anything we write that has to
+      // point somewhere a shopper can act — a recovery message, an agent
+      // handoff, a card in the widget — is built from this.
+      "productUrlTemplate": "/product.html?handle={handle}",
+
+      // Paths on the merchant's own origin that proxy our recovery and restore
+      // pages, so a shopper who was on the shop's domain is asked the question
+      // on the shop's domain. Both optional.
+      "recoverPath": "/recover",
+      "restorePath": "/restore",
+
+      "greeting": "Ask me about our teas and coffees.",
+      "accent": "#1f4037",
+
+      // The signing secret is named, not written. `devSecret` is the throwaway
+      // this demo falls back to when the variable is unset; the loader refuses
+      // to honour it when NODE_ENV=production, so it cannot reach a live shop.
+      "secretEnv": "SITE_SECRET_MONSOON_MARKET",
+      "devSecret": "dev-secret-monsoonmarket-do-not-ship",
+
+      // Order access is opt-in. Omitting this whole block is a perfectly good
+      // state: the assistant answers from the catalogue and declines anything
+      // personal.
+      "orders": { "feedUrl": "http://127.0.0.1:4000/api/orders" },
+
+      // Key set 1 belongs to the custom-site path.
+      //
+      // `methods` is deliberately ABSENT, which means the conservative default:
+      // card, netbanking, wallet — and no UPI. That is not a preference, it is
+      // this account's actual state. Probed 2026-09-06:
+      //
+      //   POST /payments/create/ajax -> "UPI transactions are not enabled for
+      //   the merchant"
+      //
+      // UPI needs KYC. When that clears, add
+      // "methods": ["upi", "card", "netbanking", "wallet"]
+      // here and the discovery document, the escalation message and the
+      // checkout page all follow from the one edit. Until then, advertising UPI
+      // would have an agent tell a buyer to pay by a method the checkout page
+      // will not offer them.
+      "razorpay": {
+        "keyIdEnv": "RAZORPAY_TEST_API_KEY_ID1",
+        "keySecretEnv": "RAZORPAY_TEST_API_KEY_SECRET1",
+        "webhookSecretEnv": "RAZORPAY_WEBHOOK_SECRET1"
+      }
+    }
+  ]
+}

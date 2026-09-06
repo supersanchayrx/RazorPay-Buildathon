@@ -1,7 +1,9 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { findSite } from "../lib/sites.server";
+import { featureOn } from "../lib/featureflags.server";
 import { jsonFeedCatalog } from "../lib/catalog.server";
 import { agentView } from "../lib/agentview.server";
+import { selfOrigin } from "../lib/origin.server";
 
 /**
  * One call, everything the merchant's Tier C middleware needs for one page.
@@ -23,7 +25,10 @@ import { agentView } from "../lib/agentview.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const site = findSite(params.site ?? null);
-  if (!site) {
+  // Switched off is indistinguishable from absent, on purpose. A merchant who
+  // turned the agent surface off has no agent surface, and an agent told "404"
+  // stops asking rather than retrying with better credentials.
+  if (!site || !featureOn(site.key, "agent_front")) {
     return new Response(JSON.stringify({ error: "unknown store" }), {
       status: 404,
       headers: { "content-type": "application/json" },
@@ -31,8 +36,6 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 
   const u = new URL(request.url);
-  const proto = request.headers.get("x-forwarded-proto") ?? u.protocol.replace(":", "");
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? u.host;
 
   // A path is required rather than defaulted to "/". A middleware that forgot to
   // send one would otherwise get the homepage view injected into every product
@@ -50,7 +53,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     catalog: jsonFeedCatalog(site.catalogFeedUrl),
     path,
     askedOrigin: u.searchParams.get("origin"),
-    gatewayBaseUrl: `${proto}://${host}`,
+    gatewayBaseUrl: selfOrigin(request),
   });
 
   return new Response(

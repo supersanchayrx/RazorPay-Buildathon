@@ -19,7 +19,7 @@ import { savePending } from "../lib/orderstore.server";
 import { record } from "../lib/ledger.server";
 import { complete, isConfigured as modelConfigured, MODELS } from "../lib/openrouter.server";
 import fs from "node:fs";
-import path from "node:path";
+import { dataPath } from "../lib/paths.server";
 
 /**
  * The page a recovery message points at — the inbound half of the loop.
@@ -74,7 +74,7 @@ function readCart(shop: string, cartId: string): CartRow | null {
   try {
     return (
       fs
-        .readFileSync(path.join(process.cwd(), "data", "carts.jsonl"), "utf8")
+        .readFileSync(dataPath("carts.jsonl"), "utf8")
         .split("\n")
         .filter(Boolean)
         .map((l) => JSON.parse(l) as CartRow)
@@ -87,7 +87,7 @@ function readCart(shop: string, cartId: string): CartRow | null {
 
 function readInputs() {
   try {
-    return JSON.parse(fs.readFileSync(path.join(process.cwd(), "data", "merchant-inputs.json"), "utf8"));
+    return JSON.parse(fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"));
   } catch {
     return null;
   }

@@ -6,7 +6,7 @@ import { jsonFeedContact } from "../lib/orders.server";
 import { captureCart, liveCarts, markRecovered, type CaptureLine } from "../lib/carts.server";
 import { record } from "../lib/ledger.server";
 import fs from "node:fs";
-import path from "node:path";
+import { dataPath } from "../lib/paths.server";
 
 /**
  * Basket capture for custom sites — the missing wire into the recovery loop.
@@ -81,7 +81,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 function unitCosts(): Record<string, number> {
   try {
     const raw = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), "data", "merchant-inputs.json"), "utf8"),
+      fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"),
     ) as { unitCost?: Record<string, number> };
     return raw.unitCost ?? {};
   } catch {

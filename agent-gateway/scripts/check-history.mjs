@@ -14,8 +14,9 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { DATA_DIR, dataPath } from "./data-dir.mjs";
 
-const D = path.join(process.cwd(), "data");
+const D = DATA_DIR;
 const read = (f) =>
   fs.readFileSync(path.join(D, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
 

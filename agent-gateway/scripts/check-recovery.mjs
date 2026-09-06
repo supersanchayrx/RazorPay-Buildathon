@@ -25,6 +25,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { DATA_DIR, dataPath } from "./data-dir.mjs";
 import { pathToFileURL } from "node:url";
 import * as esbuild from "esbuild";
 
@@ -141,12 +142,12 @@ check(
  * abandoned and nothing in it knows about the order that followed.
  */
 const carts = fs
-  .readFileSync(path.join(process.cwd(), "data", "carts.jsonl"), "utf8")
+  .readFileSync(dataPath("carts.jsonl"), "utf8")
   .split("\n")
   .filter(Boolean)
   .map((l) => JSON.parse(l));
 const orders = fs
-  .readFileSync(path.join(process.cwd(), "data", "orders.jsonl"), "utf8")
+  .readFileSync(dataPath("orders.jsonl"), "utf8")
   .split("\n")
   .filter(Boolean)
   .map((l) => JSON.parse(l))
@@ -489,7 +490,7 @@ check(
 /* ================= 6. the numbers agree with the proposer ================= */
 console.log("\n--- the recovery page and the offers page must quote the same money ---");
 
-const inputs = JSON.parse(fs.readFileSync(path.join(process.cwd(), "data", "merchant-inputs.json"), "utf8"));
+const inputs = JSON.parse(fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"));
 const detCandidates = DET.abandonment({ orders, carts, inputs, asOf: AS_OF });
 const detAssumed = Number(
   (detCandidates[0]?.facts.find((f) => f.label === "assumed recovery")?.value ?? "").replace("%", ""),

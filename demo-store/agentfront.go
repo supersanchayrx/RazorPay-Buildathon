@@ -346,8 +346,8 @@ func inject(page []byte, v agentView) []byte {
 /*
 /llms.txt, proxied.
 
-It has to be on THIS origin. A model handed nilgiripost.example guesses
-nilgiripost.example/llms.txt and nowhere else — the same reason discovery cannot
+It has to be on THIS origin. A model handed monsoonmarket.example guesses
+monsoonmarket.example/llms.txt and nowhere else — the same reason discovery cannot
 live on the gateway. The content is generated where the offers and the catalogue
 are, and this end just forwards it.
 

@@ -1,5 +1,30 @@
+import { useState } from "react";
+import type { ReactNode } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, Link, useLoaderData, useNavigation } from "react-router";
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
+import { Card } from "@astryxdesign/core/Card";
+import { CheckboxInput } from "@astryxdesign/core/CheckboxInput";
+import { Code } from "@astryxdesign/core/Code";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
+import { Divider } from "@astryxdesign/core/Divider";
+import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { HStack } from "@astryxdesign/core/HStack";
+import { Heading } from "@astryxdesign/core/Heading";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { NumberInput } from "@astryxdesign/core/NumberInput";
+import { RadioList, RadioListItem } from "@astryxdesign/core/RadioList";
+import { Selector } from "@astryxdesign/core/Selector";
+import { Switch } from "@astryxdesign/core/Switch";
+import { Table, pixel, proportional } from "@astryxdesign/core/Table";
+import { Text } from "@astryxdesign/core/Text";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { Token } from "@astryxdesign/core/Token";
+import { VStack } from "@astryxdesign/core/VStack";
+
+import { Block, Eyebrow, Figure, Figures, Note, Page, PageHead, Setup } from "../components/console";
+import { IntegrationSetup } from "../components/integration-setup";
 import { requireMerchant } from "../lib/auth.server";
 import { sitesForMerchant } from "../lib/sites.server";
 import { runRecovery, toDraft, recoverySummary, type RecoveryTarget } from "../lib/recovery.server";
@@ -11,6 +36,8 @@ import { REASON_LABEL, REASONS } from "../lib/reasons";
 import { allGrants, monthlySpend } from "../lib/grants.server";
 import { liveCarts } from "../lib/carts.server";
 import { updateFindings } from "../lib/findings.server";
+import { voiceSetup } from "../lib/integration-setup.server";
+import { placeVoiceTestCall } from "../lib/voice-test.server";
 
 /**
  * The recovery campaign, as a merchant sees it before anything goes out.
@@ -38,7 +65,15 @@ import { updateFindings } from "../lib/findings.server";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const merchant = requireMerchant(request);
   const site = sitesForMerchant(merchant.sites)[0] ?? null;
-  if (!site) return { site: null, run: null, drafts: [], sent: 0, channels: CHANNELS };
+  if (!site)
+    return {
+      site: null,
+      run: null,
+      drafts: [],
+      sent: 0,
+      channels: CHANNELS,
+      voiceSetup: voiceSetup(),
+    };
 
   const run = runRecovery({
     shop: site.key,
@@ -154,6 +189,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       .map((c) => ({ ...c, lines: callTranscript(site.key, c.callSid) })),
     sent: readSends(site.key).filter((s) => s.ok).length,
     channels: CHANNELS.map((c) => ({ id: c.id, label: c.label, available: c.available, unlockedBy: c.unlockedBy, note: c.note })),
+    voiceSetup: voiceSetup(),
   };
 };
 
@@ -165,6 +201,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!merchant.sites.includes(shop)) return { ok: false, error: "not your store" };
 
   const act = String(form.get("act") ?? "");
+
+  if (act === "test_call") {
+    if (form.get("confirmExpected") !== "on") {
+      return {
+        ok: false,
+        error: "Confirm that the person who owns this number is expecting the test call.",
+      };
+    }
+    const site = sitesForMerchant(merchant.sites).find((entry) => entry.key === shop);
+    if (!site) return { ok: false, error: "not your store" };
+    const result = await placeVoiceTestCall(site, String(form.get("phone") ?? ""));
+    return result.ok
+      ? { ok: true, message: result.message }
+      : { ok: false, error: result.error };
+  }
 
   if (act === "settings") {
     const res = writeSettings(
@@ -339,769 +390,1165 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return { ok: false, error: "unknown action" };
 };
 
+
 const inr = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
 
-const TREATMENT: Record<RecoveryTarget["treatment"], { label: string; colour: string }> = {
-  service: { label: "Service", colour: "#8a6d2f" },
-  offer: { label: "Approved offer", colour: "#1f4037" },
-  reminder: { label: "Reminder", colour: "#6b7a72" },
+/**
+ * Three reasons to write to somebody, coloured once.
+ *
+ * Service is a problem you are fixing, an approved offer is money, and a
+ * reminder is neither — they read differently and should look different.
+ */
+const TREATMENT: Record<RecoveryTarget["treatment"], { label: string; tone: "yellow" | "green" | "gray" }> = {
+  service: { label: "Service", tone: "yellow" },
+  offer: { label: "Approved offer", tone: "green" },
+  reminder: { label: "Reminder", tone: "gray" },
 };
+
+/** A settings row: what the limit is, what it means, and the control. */
+function Limit({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <HStack gap={5} hAlign="between" vAlign="center" wrap="wrap">
+      <VStack gap={0.5} maxWidth={440}>
+        <Text weight="semibold">{label}</Text>
+        <Text type="supporting" color="secondary">
+          {hint}
+        </Text>
+      </VStack>
+      {children}
+    </HStack>
+  );
+}
+
+/**
+ * The outreach limits, as one controlled form.
+ *
+ * Astryx inputs are controlled, so the values live in state and reach the
+ * action through `htmlName` — the same field names the native form posted, so
+ * the server half did not have to change.
+ */
+function LimitsForm({
+  shop,
+  o,
+  busy,
+}: {
+  shop: string;
+  o: {
+    enabled: boolean;
+    cooldownDays: number;
+    maxPerRun: number;
+    minMarginAtStake: number;
+    cartAgeHours: { min: number; max: number };
+    quietHours: { fromHour: number; toHour: number; tz: string };
+    consentBasis: string;
+  };
+  busy: boolean;
+}) {
+  const [enabled, setEnabled] = useState(o.enabled);
+  const [cooldown, setCooldown] = useState<number | null>(o.cooldownDays);
+  const [maxPerRun, setMaxPerRun] = useState<number | null>(o.maxPerRun);
+  const [minMargin, setMinMargin] = useState<number | null>(o.minMarginAtStake);
+  const [ageMin, setAgeMin] = useState<number | null>(o.cartAgeHours.min);
+  const [ageMax, setAgeMax] = useState<number | null>(Math.round(o.cartAgeHours.max / 24));
+
+  return (
+    <Card>
+      <Form method="post">
+        <input type="hidden" name="shop" value={shop} />
+        <input type="hidden" name="act" value="settings" />
+        <VStack gap={5}>
+          <Limit
+            label="Outreach"
+            hint="Off means this page is a dry run: it drafts everything and sends nothing."
+          >
+            <Switch
+              label="On"
+              htmlName="enabled"
+              value={enabled}
+              onChange={setEnabled}
+            />
+          </Limit>
+          <Divider />
+          <Limit label="Cooldown" hint="Days before the same person hears from you again.">
+            <NumberInput
+              label="Days"
+              isLabelHidden
+              htmlName="cooldownDays"
+              size="sm"
+              width={110}
+              min={1}
+              max={365}
+              value={cooldown}
+              onChange={setCooldown}
+            />
+          </Limit>
+          <Divider />
+          <Limit
+            label="Messages per run"
+            hint="A ceiling, so a data problem cannot become a broadcast."
+          >
+            <NumberInput
+              label="Messages"
+              isLabelHidden
+              htmlName="maxPerRun"
+              size="sm"
+              width={110}
+              min={1}
+              max={500}
+              value={maxPerRun}
+              onChange={setMaxPerRun}
+            />
+          </Limit>
+          <Divider />
+          <Limit label="Margin floor" hint="Below this, a basket is not worth a message.">
+            <NumberInput
+              label="Rupees"
+              isLabelHidden
+              htmlName="minMarginAtStake"
+              size="sm"
+              width={130}
+              min={0}
+              value={minMargin}
+              onChange={setMinMargin}
+            />
+          </Limit>
+          <Divider />
+          <Limit
+            label="Age window"
+            hint="Wait at least this many hours — they may still be checking out — and give up after this many days."
+          >
+            <HStack gap={2} vAlign="center">
+              <NumberInput
+                label="Hours"
+                isLabelHidden
+                htmlName="ageMin"
+                size="sm"
+                width={92}
+                min={1}
+                value={ageMin}
+                onChange={setAgeMin}
+              />
+              <Text type="supporting" color="secondary">
+                h to
+              </Text>
+              <NumberInput
+                label="Days"
+                isLabelHidden
+                htmlName="ageMax"
+                size="sm"
+                width={92}
+                min={1}
+                value={ageMax}
+                onChange={setAgeMax}
+              />
+              <Text type="supporting" color="secondary">
+                d
+              </Text>
+            </HStack>
+          </Limit>
+          <Divider />
+          <Limit
+            label="Quiet hours"
+            hint={`Fixed. Nothing unsolicited between ${o.quietHours.fromHour}:00 and ${o.quietHours.toHour}:00, ${o.quietHours.tz}.`}
+          >
+            <Token size="sm" color="gray" label="not editable" />
+          </Limit>
+          <Divider />
+          <Limit
+            label="Consent basis"
+            hint={`${o.consentBasis} — they handed you this number during a checkout they started themselves. That justifies one message about that checkout, and nothing else.`}
+          >
+            <Token size="sm" color="gray" label="needs an opt-in to change" />
+          </Limit>
+          <Divider />
+          <HStack>
+            <Button type="submit" variant="primary" isDisabled={busy} label="Save limits" />
+          </HStack>
+        </VStack>
+      </Form>
+    </Card>
+  );
+}
+
+/**
+ * The discount policy.
+ *
+ * Kept as its own form because it is the one approval in CHAPMAN that spends
+ * money without a per-case decision, and saving it should be a separate act
+ * from saving a send ceiling.
+ */
+function PolicyForm({
+  shop,
+  policy,
+  busy,
+}: {
+  shop: string;
+  policy: {
+    enabled: boolean;
+    maxDepthPct: number;
+    requiresTier: string;
+    discountFor: string[];
+    monthlyGrantCap: number;
+    monthlyMarginCap: number;
+    grantTtlHours: number;
+  };
+  busy: boolean;
+}) {
+  const [enabled, setEnabled] = useState(policy.enabled);
+  const [depth, setDepth] = useState<number | null>(policy.maxDepthPct);
+  const [tier, setTier] = useState(policy.requiresTier);
+  const [reasons, setReasons] = useState<string[]>(policy.discountFor);
+  const [grantCap, setGrantCap] = useState<number | null>(policy.monthlyGrantCap);
+  const [marginCap, setMarginCap] = useState<number | null>(policy.monthlyMarginCap);
+  const [ttl, setTtl] = useState<number | null>(policy.grantTtlHours);
+
+  return (
+    <Card>
+      <Form method="post">
+        <input type="hidden" name="shop" value={shop} />
+        <input type="hidden" name="act" value="policy" />
+        {/* The reason set is a multi-select, and `getAll` reads repeated
+            fields — so each chosen reason travels as its own hidden input. */}
+        {reasons.map((r) => (
+          <input key={r} type="hidden" name="discountFor" value={r} />
+        ))}
+        <VStack gap={5}>
+          <Limit
+            label="Recovery discounts"
+            hint="Off means the agent answers with facts and alternatives only."
+          >
+            <Switch label="On" htmlName="rec_enabled" value={enabled} onChange={setEnabled} />
+          </Limit>
+          <Divider />
+          <Limit
+            label="Most it may take off"
+            hint="Capped again by your own discount ceiling, and refused outright if the discounted basket would fall through your margin floor."
+          >
+            <HStack gap={2} vAlign="center">
+              <NumberInput
+                label="Percent"
+                isLabelHidden
+                htmlName="maxDepthPct"
+                size="sm"
+                width={100}
+                min={1}
+                max={50}
+                value={depth}
+                onChange={setDepth}
+              />
+              <Text type="supporting" color="secondary">
+                %
+              </Text>
+            </HStack>
+          </Limit>
+          <Divider />
+          <Limit
+            label="Only for"
+            hint="First-time shoppers can never qualify — that is refused when you save, not defaulted. Money for whoever complains teaches everybody to complain."
+          >
+            <Selector
+              label="Tier"
+              isLabelHidden
+              htmlName="requiresTier"
+              size="sm"
+              width={230}
+              value={tier}
+              onChange={setTier}
+              options={[
+                { value: "returning", label: "shoppers with 2+ orders" },
+                { value: "regular", label: "shoppers with 4+ orders" },
+              ]}
+            />
+          </Limit>
+          <Divider />
+          <VStack gap={3}>
+            <VStack gap={0.5}>
+              <Text weight="semibold">Only in answer to</Text>
+              <Text type="supporting" color="secondary">
+                Discounting someone who said delivery was too slow does not answer what they told
+                you.
+              </Text>
+            </VStack>
+            <HStack gap={4} wrap="wrap">
+              {REASONS.filter((r) => r !== "unknown").map((r) => (
+                <CheckboxInput
+                  key={r}
+                  label={REASON_LABEL[r]}
+                  value={reasons.includes(r)}
+                  onChange={(on) =>
+                    setReasons((prev) => (on ? [...prev, r] : prev.filter((x) => x !== r)))
+                  }
+                />
+              ))}
+            </HStack>
+          </VStack>
+          <Divider />
+          <Limit
+            label="Monthly caps"
+            hint="Counted at issue, not at redemption — the exposure exists the moment a grant does."
+          >
+            <HStack gap={2} vAlign="center">
+              <NumberInput
+                label="Grants"
+                isLabelHidden
+                htmlName="monthlyGrantCap"
+                size="sm"
+                width={100}
+                min={1}
+                max={500}
+                value={grantCap}
+                onChange={setGrantCap}
+              />
+              <Text type="supporting" color="secondary">
+                grants, ₹
+              </Text>
+              <NumberInput
+                label="Margin"
+                isLabelHidden
+                htmlName="monthlyMarginCap"
+                size="sm"
+                width={130}
+                min={1}
+                value={marginCap}
+                onChange={setMarginCap}
+              />
+            </HStack>
+          </Limit>
+          <Divider />
+          <Limit label="Each one lasts" hint="It answers a conversation. It is not a coupon.">
+            <HStack gap={2} vAlign="center">
+              <NumberInput
+                label="Hours"
+                isLabelHidden
+                htmlName="grantTtlHours"
+                size="sm"
+                width={100}
+                min={1}
+                max={168}
+                value={ttl}
+                onChange={setTtl}
+              />
+              <Text type="supporting" color="secondary">
+                hours
+              </Text>
+            </HStack>
+          </Limit>
+          <Divider />
+          <HStack>
+            <Button type="submit" variant="primary" isDisabled={busy} label="Save discount policy" />
+          </HStack>
+        </VStack>
+      </Form>
+    </Card>
+  );
+}
+
+/** How a call behaves. Its own form, because it changes the kind of thing that goes out. */
+function CallForm({
+  shop,
+  call,
+  busy,
+}: {
+  shop: string;
+  call: { mode: string; maxTurns: number; speaker: string; language: string };
+  busy: boolean;
+}) {
+  const [mode, setMode] = useState(call.mode === "conversation" ? "conversation" : "notice");
+  const [maxTurns, setMaxTurns] = useState<number | null>(call.maxTurns);
+  const [speaker, setSpeaker] = useState(call.speaker);
+  const [language, setLanguage] = useState(call.language);
+
+  return (
+    <Card>
+      <Form method="post">
+        <input type="hidden" name="shop" value={shop} />
+        <input type="hidden" name="act" value="call" />
+        <VStack gap={5}>
+          <RadioList label="How the call behaves" htmlName="callMode" value={mode} onChange={setMode}>
+            <RadioListItem
+              value="notice"
+              label="Read a notice"
+              description="Speaks the message below, then hangs up. No model anywhere near the call — the shopper hears the exact sentence you can read on this page."
+            />
+            <RadioListItem
+              value="conversation"
+              label="Hold a conversation"
+              description="Same opening sentence, then asks what put them off and answers what they say. It cannot offer a discount — it is never told one exists. Every reply is checked by the same gate as your storefront assistant before it is spoken, and both sides are transcribed below."
+            />
+          </RadioList>
+          <Divider />
+          <HStack gap={4} vAlign="end" wrap="wrap">
+            <NumberInput
+              label="Exchanges at most"
+              htmlName="maxTurns"
+              size="sm"
+              width={150}
+              min={1}
+              max={8}
+              value={maxTurns}
+              onChange={setMaxTurns}
+            />
+            <TextInput
+              label="Voice"
+              htmlName="speaker"
+              size="sm"
+              width={140}
+              value={speaker}
+              onChange={setSpeaker}
+            />
+            <TextInput
+              label="Language"
+              htmlName="language"
+              size="sm"
+              width={140}
+              value={language}
+              onChange={setLanguage}
+            />
+            <Button type="submit" variant="primary" isDisabled={busy} label="Save" />
+          </HStack>
+          <Text type="supporting" color="secondary">
+            Callers can press 9 at any point to stop these calls for good. That is recorded against
+            them the moment they press it, and every future run reads it.
+          </Text>
+        </VStack>
+      </Form>
+    </Card>
+  );
+}
+
+/** One basket, its message, and the two decisions available on it. */
+function TargetCard({
+  t,
+  shop,
+  channels,
+  busy,
+}: {
+  t: RecoveryTarget;
+  shop: string;
+  channels: Array<{ id: string; label: string; available: boolean }>;
+  busy: boolean;
+}) {
+  const [channel, setChannel] = useState("draft");
+  const treat = TREATMENT[t.treatment];
+
+  return (
+    <Card>
+      <VStack gap={4}>
+        <HStack gap={3} hAlign="between" vAlign="start" wrap="wrap">
+          <VStack gap={1.5}>
+            <Heading level={3}>{t.items.map((i) => i.title).join(", ")}</Heading>
+            <Text type="supporting" color="secondary">
+              {inr(t.marginAtStake)} margin · abandoned {Math.round(t.ageHours / 24)}d ago at the{" "}
+              {t.lastStep} step · {t.to.phone ? "phone" : "email"} on file
+            </Text>
+          </VStack>
+          <Token size="sm" color={treat.tone} label={treat.label} />
+        </HStack>
+
+        <Text color="secondary">{t.because}</Text>
+
+        {/* The exact sentence, not a template. If a merchant would not send it
+            themselves they should find that out here. */}
+        <Card variant="muted">
+          <Text style={{ whiteSpace: "pre-wrap" }}>{t.text}</Text>
+        </Card>
+
+        <Divider />
+
+        <HStack gap={3} vAlign="end" wrap="wrap">
+          <Form method="post">
+            <input type="hidden" name="shop" value={shop} />
+            <input type="hidden" name="act" value="send_one" />
+            <input type="hidden" name="cartId" value={t.cartId} />
+            <input type="hidden" name="channel" value={channel} />
+            <HStack gap={3} vAlign="end" wrap="wrap">
+              <Selector
+                label="Channel"
+                isLabelHidden
+                size="sm"
+                width={210}
+                value={channel}
+                onChange={setChannel}
+                options={channels.map((c) => ({
+                  value: c.id,
+                  label: c.available ? c.label : `${c.label} — not available`,
+                  disabled: !c.available,
+                }))}
+              />
+              <Button
+                type="submit"
+                variant="primary"
+                size="sm"
+                isDisabled={busy}
+                label="Send to this one"
+              />
+            </HStack>
+          </Form>
+          <Form method="post">
+            <input type="hidden" name="shop" value={shop} />
+            <input type="hidden" name="act" value="skip_one" />
+            <input type="hidden" name="cartId" value={t.cartId} />
+            <input type="hidden" name="customerId" value={t.customerId} />
+            <Button
+              type="submit"
+              variant="secondary"
+              size="sm"
+              isDisabled={busy}
+              label="Leave this one alone"
+            />
+          </Form>
+        </HStack>
+
+        <Text type="supporting" color="secondary">
+          Leaving them alone closes this basket for good — the same record a shopper writes by
+          pressing 9, so every future run on every channel reads it.
+        </Text>
+      </VStack>
+    </Card>
+  );
+}
+
+function TestCallForm({
+  shop,
+  busy,
+  available,
+}: {
+  shop: string;
+  busy: boolean;
+  available: boolean;
+}) {
+  const [phone, setPhone] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+
+  return (
+    <Block
+      title="Test the voice connection"
+      hint="Pre-renders one fixed identification with Sarvam, then asks Twilio to call the number you enter. It does not select a basket or contact a shopper from your records."
+    >
+      <Card>
+        <Form method="post">
+          <input type="hidden" name="shop" value={shop} />
+          <input type="hidden" name="act" value="test_call" />
+          <VStack gap={4}>
+            <TextInput
+              label="Number to call"
+              description="Use international E.164 format, including the country code."
+              htmlName="phone"
+              value={phone}
+              onChange={setPhone}
+              placeholder="+919876543210"
+              width="min(420px, 100%)"
+            />
+            <CheckboxInput
+              label="This number belongs to me or to someone who is expecting this test call"
+              htmlName="confirmExpected"
+              value={confirmed}
+              onChange={setConfirmed}
+            />
+            <HStack gap={3} vAlign="center" wrap="wrap">
+              <Button
+                type="submit"
+                variant="primary"
+                label={busy ? "Queueing test call…" : "Place test call"}
+                isLoading={busy}
+                isDisabled={busy || !available || !confirmed || phone.trim().length === 0}
+              />
+              {!available ? (
+                <Text type="supporting" color="secondary">
+                  Add every required voice variable above before testing.
+                </Text>
+              ) : null}
+            </HStack>
+            <Text type="supporting" color="secondary">
+              The test says it is a Chapman integration test and then hangs up. One call is allowed
+              every 30 seconds. Ordinary quiet-hour protection still applies.
+            </Text>
+          </VStack>
+        </Form>
+      </Card>
+    </Block>
+  );
+}
 
 export default function Recovery() {
   const d = useLoaderData<typeof loader>();
+  const a = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
+  const [sendChannel, setSendChannel] = useState("draft");
 
   if (!d.site || !d.run) {
     return (
-      <>
-        <h1>Basket recovery</h1>
-        <p className="lede">No store is connected to this account yet.</p>
-      </>
+      <Page>
+        <PageHead title="Basket recovery" />
+        <Card>
+          <EmptyState
+            title="No store is connected to this account yet"
+            description="Recovery reads one shop's baskets, so it needs a storefront to read."
+          />
+        </Card>
+      </Page>
     );
   }
 
   const { run } = d;
   const o = run.settings.outreach;
+  const shop = d.site.key;
 
   return (
-    <>
-      <p className="muted" style={{ marginTop: 22, fontSize: 13.5 }}>
-        <Link to="/dashboard" style={{ textDecoration: "none" }}>
-          ← Features
-        </Link>
-      </p>
-      <h1>Basket recovery</h1>
-      <p className="lede">
-        Baskets that were never completed, and what — if anything — is worth saying about them. Every
-        message below is the exact text that would go out, already through the same checks that guard
-        your storefront assistant. Nothing is sent by opening this page.
-      </p>
+    <Page>
+      <PageHead
+        title="Basket recovery"
+        lede="Baskets that were never completed, and what — if anything — is worth saying about them. Every message below is the exact text that would go out. Nothing is sent by opening this page."
+      >
+        <Figures>
+          <Figure value={run.totals.cartsConsidered} label="baskets considered" />
+          <Figure value={run.targets.length} label="would be written to" tone="accent" />
+          <Figure value={run.suppressed.length} label="left alone" />
+          <Figure value={inr(run.totals.marginAtStake)} label="margin at stake" />
+          <Figure
+            value={inr(run.totals.expectedValue)}
+            label={`at an assumed ${(run.totals.assumedRecovery * 100).toFixed(0)}%`}
+          />
+        </Figures>
+      </PageHead>
 
-      <div className="stats">
-        <div className="stat">
-          <b>{run.totals.cartsConsidered}</b>
-          <span>baskets considered</span>
-        </div>
-        <div className="stat">
-          <b>{run.targets.length}</b>
-          <span>would be written to</span>
-        </div>
-        <div className="stat">
-          <b>{run.suppressed.length}</b>
-          <span>left alone</span>
-        </div>
-        <div className="stat">
-          <b>{inr(run.totals.marginAtStake)}</b>
-          <span>margin at stake</span>
-        </div>
-        <div className="stat">
-          <b>{inr(run.totals.expectedValue)}</b>
-          <span>at an assumed {(run.totals.assumedRecovery * 100).toFixed(0)}%</span>
-        </div>
-      </div>
+      {a && "error" in a && a.error ? (
+        <Banner status="warning" title="Nothing was sent" description={String(a.error)} />
+      ) : null}
+      {a && "message" in a && a.message ? (
+        <Banner status="success" title={String(a.message)} isDismissable />
+      ) : null}
+      {a && "sent" in a && typeof a.sent === "number" ? (
+        <Banner
+          status="success"
+          title={`${a.sent} sent, ${a.failed ?? 0} failed`}
+          isDismissable
+        />
+      ) : null}
 
-      {/* ---------------- real baskets ---------------- */}
-      <div className="panel">
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 600 }}>From your live storefront</span>
-          <span className={`pill ${d.live.total ? "available" : "planned"}`}>
-            {d.live.total} of {run.totals.cartsConsidered} baskets are real
-          </span>
-        </div>
-        <p className="muted" style={{ fontSize: 13.5, margin: "8px 0 0", maxWidth: "62ch" }}>
-          {d.live.total === 0 ? (
-            <>
-              Everything below came from <code>npm run seed</code>. Real baskets appear here as soon
-              as somebody puts something in a cart on your shop — the widget script already posts
-              them; there is nothing else to install.
-            </>
-          ) : (
-            <>
-              <b>{d.live.recoverable}</b> of them can actually be recovered. The rest were built by
-              somebody who was not signed in, so there is no way to reach them and no message will
-              be sent — you will find them below under <i>no way to reach them</i>. That is the
-              honest number, and it is the one most abandoned-cart tools do not show you.
-              {d.live.newestAt ? ` Most recent: ${new Date(d.live.newestAt).toLocaleString("en-IN")}.` : ""}
-            </>
-          )}
-        </p>
-        {!d.live.captureConfigured ? (
-          <p className="muted" style={{ fontSize: 12.5, margin: "8px 0 0" }}>
-            This shop has not connected an order source, so even a signed-in shopper has no contact
-            details on file. Contact is looked up from your own records, server to server — it is
-            never taken from the page, because a page that could name a phone number could name
-            anybody&rsquo;s.
-          </p>
-        ) : null}
-      </div>
-
-      <p className="note">
-        {run.emptyReason ??
-          `Margin, not basket value — chasing revenue you do not keep is how a recovery campaign
-           costs more than it returns. The ${(run.totals.assumedRecovery * 100).toFixed(0)}% is an
-           ASSUMPTION, not a measurement: this outreach has never run here, so there is no rate to
-           cite. Treat ${inr(run.totals.expectedValue)} as an order of magnitude.`}
-      </p>
-
-      {/* ---------------- what people said ---------------- */}
-      <h2>Why they didn&rsquo;t buy</h2>
-      <p className="muted" style={{ fontSize: 13.5, margin: "0 0 10px", maxWidth: "62ch" }}>
-        The only thing in your data that answers <i>why</i> rather than <i>what</i>. Nothing else can:
-        the reason never touched your server, so the only way to have it is to ask. One answer is often
-        worth more than the basket it came from, because it applies to every basket.
-      </p>
-
-      {d.histogram.total === 0 ? (
-        <p className="note">
-          Nobody has answered yet &mdash; {d.answered.asked} basket{d.answered.asked === 1 ? " has" : "s have"} been
-          asked about. This is the number worth waiting for.
-        </p>
-      ) : (
-        <div className="panel">
-          {!d.histogram.enough && (
-            <p className="note" style={{ marginTop: 0 }}>
-              Only {d.histogram.total} answers so far. Shown as counts, not shares, and deliberately not
-              as a finding &mdash; four people are not a pattern, and the temptation to act on the first
-              three replies is the whole reason this floor exists.
-            </p>
-          )}
-          <table>
-            <thead>
-              <tr>
-                <th>Reason</th>
-                <th style={{ width: 80 }}>Answers</th>
-                {d.histogram.enough && <th style={{ width: 90 }}>Share</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {d.histogram.counts.map((c) => (
-                <tr key={c.reason}>
-                  <td>{REASON_LABEL[c.reason]}</td>
-                  <td>{c.count}</td>
-                  {d.histogram.enough && <td>{(c.share * 100).toFixed(0)}%</td>}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="muted" style={{ fontSize: 12.5, marginBottom: 0 }}>
-            {d.answered.answered} of {d.answered.asked} asked replied
-            {d.answered.asked ? ` (${Math.round(d.answered.rate * 100)}%)` : ""}.
-          </p>
-        </div>
-      )}
-
-      {d.conversations.length > 0 && (
-        <>
-          <h3>In their own words</h3>
-          <p className="muted" style={{ fontSize: 13.5, margin: "0 0 8px" }}>
-            Kept so you can tell whether the classifier is failing or the answers are genuinely vague.
-            Only you see this.
-          </p>
-          <div className="panel">
-            <table>
-              <tbody>
-                {d.conversations.map((c) => (
-                  <tr key={c.cartId}>
-                    <td style={{ width: 150 }}>
-                      <b>{c.reasonLabel ?? "no answer yet"}</b>
-                      <div className="muted" style={{ fontSize: 12 }}>
-                        {c.state}
-                        {c.by ? ` · by ${c.by}` : ""}
-                      </div>
-                    </td>
-                    <td>
-                      {c.text ? <div style={{ fontSize: 13.5 }}>&ldquo;{c.text}&rdquo;</div> : null}
-                      {c.remedy ? (
-                        <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
-                          &rarr; {c.remedy}
-                        </div>
-                      ) : null}
-                      {/* Merchant-only, always. A shopper told what they nearly
-                          got has been handed a strategy for next time. */}
-                      {c.blocked.length ? (
-                        <div className="muted" style={{ fontSize: 12, marginTop: 4, fontStyle: "italic" }}>
-                          no discount: {c.blocked.join("; ")}
-                        </div>
-                      ) : null}
-                      {/*
-                        The whole exchange, folded away.
-                        Collapsed because the summary above answers the usual
-                        question and this answers the one that follows it —
-                        "why did it decide that?" — which is exactly when a
-                        merchant wants the sequence rather than the verdict.
-                      */}
-                      {c.turns.length > 1 ? (
-                        <details style={{ marginTop: 6 }}>
-                          <summary className="muted" style={{ fontSize: 12, cursor: "pointer" }}>
-                            {c.turns.length} steps
-                          </summary>
-                          <ol style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 12.5 }}>
-                            {c.turns.map((t, i) => (
-                              <li key={i} style={{ margin: "3px 0" }}>
-                                <b>{t.kind}</b> — {t.detail}
-                                <span className="muted"> · {new Date(t.ts).toLocaleString("en-IN")}</span>
-                              </li>
-                            ))}
-                          </ol>
-                        </details>
-                      ) : null}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-
-      {/* ---------------- what would be sent ---------------- */}
-      <h2>What would go out</h2>
-      {run.targets.length === 0 ? (
-        <p className="muted" style={{ fontSize: 13.5 }}>
-          Nothing. The table below says why.
-        </p>
-      ) : (
-        run.targets.map((t) => (
-          <div
-            key={t.cartId}
-            className="panel"
-            style={{ borderLeft: `3px solid ${TREATMENT[t.treatment].colour}` }}
-          >
-            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-              <span style={{ fontWeight: 600 }}>{t.items.map((i) => i.title).join(", ")}</span>
-              <span className="pill" style={{ background: "var(--off-soft)", color: TREATMENT[t.treatment].colour }}>
-                {TREATMENT[t.treatment].label}
-              </span>
-              <span className="muted" style={{ fontSize: 12.5 }}>
-                {inr(t.marginAtStake)} margin · abandoned {Math.round(t.ageHours / 24)}d ago at the{" "}
-                {t.lastStep} step · {t.to.phone ? "phone" : "email"} on file
-              </span>
-            </div>
-
-            <p style={{ fontSize: 13.5, margin: "10px 0 6px", color: "#3a4a43" }}>{t.because}</p>
-
-            <div
-              style={{
-                background: "var(--off-soft)",
-                borderRadius: 8,
-                padding: "12px 14px",
-                fontSize: 13.5,
-                whiteSpace: "pre-wrap",
-                margin: "8px 0 0",
-              }}
-            >
-              {t.text}
-            </div>
-
-            {/*
-              One person at a time.
-              Bulk send is a campaign; this is a merchant reading a message and
-              deciding about the human it is addressed to. It matters most on
-              voice, where "send" previously meant ringing everybody at once —
-              which is not a thing anyone should be able to do by accident.
-              Every one of these re-runs the whole pipeline server-side and
-              re-checks this cart is still eligible, so a button clicked five
-              minutes after the page rendered cannot send a message about a
-              basket that has since been bought.
-            */}
-            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
-              <Form method="post" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                <input type="hidden" name="shop" value={d.site!.key} />
-                <input type="hidden" name="act" value="send_one" />
-                <input type="hidden" name="cartId" value={t.cartId} />
-                <select name="channel" defaultValue="draft" className="mono" style={{ fontSize: 12.5, padding: "6px 8px", borderRadius: 7, border: "1px solid var(--line)" }}>
-                  {d.channels.map((c) => (
-                    <option key={c.id} value={c.id} disabled={!c.available}>
-                      {c.label}
-                      {c.available ? "" : " — not available"}
-                    </option>
-                  ))}
-                </select>
-                <button className="btn-primary" type="submit" disabled={busy}>
-                  Send to this one
-                </button>
-              </Form>
-              <Form method="post">
-                <input type="hidden" name="shop" value={d.site!.key} />
-                <input type="hidden" name="act" value="skip_one" />
-                <input type="hidden" name="cartId" value={t.cartId} />
-                <input type="hidden" name="customerId" value={t.customerId} />
-                <button className="btn-secondary" type="submit" disabled={busy}>
-                  Leave this one alone
-                </button>
-              </Form>
-              <span className="muted" style={{ fontSize: 12.5 }}>
-                Leaving them alone closes this basket for good — the same record a shopper
-                writes by pressing 9, so every future run on every channel reads it.
-              </span>
-            </div>
-          </div>
-        ))
-      )}
-
-      {/* ---------------- what was suppressed ---------------- */}
-      <h2>What was left alone, and why</h2>
-      <p className="muted" style={{ fontSize: 13.5, margin: "0 0 10px" }}>
-        The more interesting half. A campaign tool that only shows you its reach has hidden the
-        number that can embarrass you.
-      </p>
-      <div className="panel">
-        <table>
-          <thead>
-            <tr>
-              <th>Reason</th>
-              <th style={{ width: 90 }}>Baskets</th>
-              <th style={{ width: 130 }}>Margin not chased</th>
-            </tr>
-          </thead>
-          <tbody>
-            {run.suppressedBy.map((s) => (
-              <tr key={s.reason}>
-                <td>
-                  {s.label}
-                  <div className="muted" style={{ fontSize: 12.5, marginTop: 3 }}>
-                    {run.suppressed.find((x) => x.reason === s.reason)?.detail}
-                  </div>
-                </td>
-                <td>{s.count}</td>
-                <td>{inr(s.margin)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* ---------------- limits ---------------- */}
-      <h2>Your limits</h2>
-      <p className="muted" style={{ fontSize: 13.5, margin: "0 0 10px" }}>
-        Every one of these can only reduce what goes out. There is no setting here that increases
-        it, on purpose — a dial that turns up is a dial that gets turned up.
-      </p>
-      <Form method="post" className="panel">
-        <input type="hidden" name="shop" value={d.site.key} />
-        <input type="hidden" name="act" value="settings" />
-        <table>
-          <tbody>
-            <tr>
-              <td style={{ width: 300 }}>
-                <b>Outreach</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>
-                  Off means this page is a dry run: it drafts everything and sends nothing.
-                </div>
-              </td>
-              <td>
-                <label style={{ fontSize: 13.5 }}>
-                  <input type="checkbox" name="enabled" defaultChecked={o.enabled} /> On
-                </label>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <b>Cooldown</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>Days before the same person hears from you again.</div>
-              </td>
-              <td>
-                <input type="number" name="cooldownDays" defaultValue={o.cooldownDays} min={1} max={365} style={{ width: 90 }} />
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <b>Messages per run</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>A ceiling, so a data problem cannot become a broadcast.</div>
-              </td>
-              <td>
-                <input type="number" name="maxPerRun" defaultValue={o.maxPerRun} min={1} max={500} style={{ width: 90 }} />
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <b>Margin floor</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>Below this, a basket is not worth a message.</div>
-              </td>
-              <td>
-                ₹<input type="number" name="minMarginAtStake" defaultValue={o.minMarginAtStake} min={0} style={{ width: 90 }} />
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <b>Age window</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>
-                  Wait at least this many hours — they may still be checking out — and give up after
-                  this many days.
-                </div>
-              </td>
-              <td>
-                <input type="number" name="ageMin" defaultValue={o.cartAgeHours.min} min={1} style={{ width: 70 }} /> h to{" "}
-                <input type="number" name="ageMax" defaultValue={Math.round(o.cartAgeHours.max / 24)} min={1} style={{ width: 70 }} /> d
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <b>Quiet hours</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>
-                  Fixed. Nothing unsolicited between {o.quietHours.fromHour}:00 and {o.quietHours.toHour}:00,{" "}
-                  {o.quietHours.tz}.
-                </div>
-              </td>
-              <td className="muted" style={{ fontSize: 13 }}>
-                not editable
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <b>Consent basis</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>
-                  <code>{o.consentBasis}</code> — they handed you this number during a checkout they
-                  started themselves. That justifies one message about that checkout, and nothing else.
-                </div>
-              </td>
-              <td className="muted" style={{ fontSize: 13 }}>
-                needs an opt-in to change
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <button type="submit" className="btn-primary" disabled={busy} style={{ marginTop: 12 }}>
-          Save limits
-        </button>
-      </Form>
-
-      {/* ---------------- recovery discounts ---------------- */}
-      <h2>Recovery discounts</h2>
-      <p className="muted" style={{ fontSize: 13.5, margin: "0 0 10px", maxWidth: "64ch" }}>
-        This is the one thing in CHAPMAN that lets an agent give money away without you approving each
-        one, so read it as an approval with a cap rather than as a setting. The agent never chooses a
-        depth &mdash; it reads the number below, or offers nothing. A shopper who pushes back gets the
-        <b> same</b> grant returned, never a better one.
-      </p>
-      <div className="stats">
-        <div className="stat">
-          <b>{d.spend.count}</b>
-          <span>of {d.policy.monthlyGrantCap} this month</span>
-        </div>
-        <div className="stat">
-          <b>{inr(d.spend.margin)}</b>
-          <span>of {inr(d.policy.monthlyMarginCap)} margin given</span>
-        </div>
-        <div className="stat">
-          <b>{d.grants.filter((g) => g.state === "redeemed").length}</b>
-          <span>actually used</span>
-        </div>
-      </div>
-
-      <Form method="post" className="panel">
-        <input type="hidden" name="shop" value={d.site.key} />
-        <input type="hidden" name="act" value="policy" />
-        <table>
-          <tbody>
-            <tr>
-              <td style={{ width: 300 }}>
-                <b>Recovery discounts</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>Off means the agent answers with facts and alternatives only.</div>
-              </td>
-              <td>
-                <label style={{ fontSize: 13.5 }}>
-                  <input type="checkbox" name="rec_enabled" defaultChecked={d.policy.enabled} /> On
-                </label>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <b>Most it may take off</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>
-                  Capped again by your own discount ceiling, and refused outright if the discounted
-                  basket would fall through your margin floor.
-                </div>
-              </td>
-              <td>
-                <input type="number" name="maxDepthPct" defaultValue={d.policy.maxDepthPct} min={1} max={50} style={{ width: 80 }} /> %
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <b>Only for</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>
-                  First-time shoppers can never qualify &mdash; that is refused when you save, not
-                  defaulted. Money for whoever complains teaches everybody to complain.
-                </div>
-              </td>
-              <td>
-                <select name="requiresTier" defaultValue={d.policy.requiresTier} style={{ font: "inherit", fontSize: 13.5, padding: "6px 8px", borderRadius: 7, border: "1px solid var(--line)" }}>
-                  <option value="returning">shoppers with 2+ orders</option>
-                  <option value="regular">shoppers with 4+ orders</option>
-                </select>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <b>Only in answer to</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>
-                  Discounting someone who said delivery was too slow does not answer what they told you.
-                </div>
-              </td>
-              <td>
-                {REASONS.filter((r) => r !== "unknown").map((r) => (
-                  <label key={r} style={{ display: "block", fontSize: 13 }}>
-                    <input
-                      type="checkbox"
-                      name="discountFor"
-                      value={r}
-                      defaultChecked={d.policy.discountFor.includes(r)}
-                    />{" "}
-                    {REASON_LABEL[r]}
-                  </label>
-                ))}
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <b>Monthly caps</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>
-                  Counted at issue, not at redemption &mdash; the exposure exists the moment a grant does.
-                </div>
-              </td>
-              <td>
-                <input type="number" name="monthlyGrantCap" defaultValue={d.policy.monthlyGrantCap} min={1} max={500} style={{ width: 80 }} /> grants,
-                {" "}₹<input type="number" name="monthlyMarginCap" defaultValue={d.policy.monthlyMarginCap} min={1} style={{ width: 100 }} /> of margin
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <b>Each one lasts</b>
-                <div className="muted" style={{ fontSize: 12.5 }}>It answers a conversation. It is not a coupon.</div>
-              </td>
-              <td>
-                <input type="number" name="grantTtlHours" defaultValue={d.policy.grantTtlHours} min={1} max={168} style={{ width: 80 }} /> hours
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <button type="submit" className="btn-primary" disabled={busy} style={{ marginTop: 12 }}>
-          Save discount policy
-        </button>
-      </Form>
-
-      {d.grants.length > 0 && (
-        <div className="panel">
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: 90 }}>State</th>
-                <th>Grant</th>
-                <th style={{ width: 110 }}>Costs you</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.grants.map((g) => (
-                <tr key={g.id}>
-                  <td>{g.state}</td>
-                  <td>
-                    {Math.round(g.depth * 100)}% off {g.title}, up to {g.qtyCap}
-                    <div className="muted" style={{ fontSize: 12.5 }}>
-                      {g.tier} shopper, said &ldquo;{g.reason}&rdquo;, expires {g.expiresAt.slice(0, 16).replace("T", " ")}
-                    </div>
-                  </td>
-                  <td>{inr(g.marginCost)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* ---------------- channels ---------------- */}
-      <h2>Channels</h2>
-      <div className="panel">
-        <table>
-          <tbody>
-            {d.channels.map((c) => (
-              <tr key={c.id}>
-                <td style={{ width: 180 }}>
-                  <b>{c.label}</b>
-                </td>
-                <td style={{ width: 90 }}>
-                  <span className={`pill ${c.available ? "available" : "planned"}`}>
-                    {c.available ? "Live" : "Locked"}
-                  </span>
-                </td>
-                <td className="muted" style={{ fontSize: 13 }}>
-                  {c.unlockedBy ?? c.note}
-                  {c.unlockedBy && c.note ? <div style={{ marginTop: 4 }}>{c.note}</div> : null}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* ---------------- the phone ---------------- */}
-      <h2>On the telephone</h2>
-      <p className="muted" style={{ fontSize: 13.5, margin: "0 0 10px" }}>
-        A call is the only channel where nothing is left behind for the shopper to re-read, and the
-        only one where a mistake cannot be screenshotted. So it starts as a one-way notice, and
-        becomes a conversation only if you say so.
-      </p>
-      <Form method="post" className="panel" style={{ padding: 16 }}>
-        <input type="hidden" name="shop" value={d.site.key} />
-        <input type="hidden" name="act" value="call" />
-
-        <label style={{ display: "block", marginBottom: 10 }}>
-          <input type="radio" name="callMode" value="notice" defaultChecked={o.call.mode !== "conversation"} />{" "}
-          <b>Read a notice</b>
-          <div className="muted" style={{ fontSize: 13, marginLeft: 22 }}>
-            Speaks the message below, then hangs up. No model anywhere near the call — the shopper
-            hears the exact sentence you can read on this page.
-          </div>
-        </label>
-
-        <label style={{ display: "block", marginBottom: 10 }}>
-          <input
-            type="radio"
-            name="callMode"
-            value="conversation"
-            defaultChecked={o.call.mode === "conversation"}
-          />{" "}
-          <b>Hold a conversation</b>
-          <div className="muted" style={{ fontSize: 13, marginLeft: 22 }}>
-            Same opening sentence, then asks what put them off and answers what they say. It cannot
-            offer a discount — it is never told one exists. Every reply is checked by the same gate
-            as your storefront assistant before it is spoken, and both sides are transcribed below.
-          </div>
-        </label>
-
-        <div style={{ display: "flex", gap: 14, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
-          <label style={{ fontSize: 13.5 }}>
-            Exchanges at most{" "}
-            <input
-              type="number"
-              name="maxTurns"
-              min={1}
-              max={8}
-              defaultValue={o.call.maxTurns}
-              style={{ width: 60 }}
+      <Block
+        title="What would go out"
+        hint="One person at a time. Each button re-checks the basket is still eligible before anything is sent."
+      >
+        {run.targets.length === 0 ? (
+          <Card>
+            <EmptyState
+              isCompact
+              title="Nothing would go out"
+              description="The table below says why, basket by basket."
             />
-          </label>
-          <label style={{ fontSize: 13.5 }}>
-            Voice{" "}
-            <input name="speaker" defaultValue={o.call.speaker} style={{ width: 90 }} />
-          </label>
-          <label style={{ fontSize: 13.5 }}>
-            Language{" "}
-            <input name="language" defaultValue={o.call.language} style={{ width: 80 }} />
-          </label>
-          <button type="submit" disabled={busy}>
-            Save
-          </button>
-        </div>
-        <p className="muted" style={{ fontSize: 12.5, margin: "10px 0 0" }}>
-          Callers can press 9 at any point to stop these calls for good. That is recorded against
-          them the moment they press it, and every future run reads it.
-        </p>
-      </Form>
-
-      {/* ---------------- send ---------------- */}
-      <h2>Run it</h2>
-      <p className="muted" style={{ fontSize: 13.5, margin: "0 0 10px" }}>
-        The campaign is re-computed when you click, not taken from what is on this screen — between
-        rendering and clicking, somebody may have bought the thing.
-        {d.sent > 0 ? ` ${d.sent} messages have gone out from this store so far.` : ""}
-      </p>
-      <Form method="post">
-        <input type="hidden" name="shop" value={d.site.key} />
-        <input type="hidden" name="act" value="send" />
-        <label style={{ fontSize: 13.5, marginRight: 12 }}>
-          Send by{" "}
-          <select name="channel" defaultValue={o.channels[0] ?? "draft"}>
-            {d.channels
-              .filter((c) => c.available)
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-          </select>
-        </label>
-        <button type="submit" className="btn-primary" disabled={busy || !o.enabled}>
-          {o.enabled ? `Send ${run.targets.length} messages` : "Outreach is off"}
-        </button>
-      </Form>
-
-      {/* ---------------- transcripts ---------------- */}
-      {d.calls.length > 0 && (
-        <>
-          <h3>What was actually said</h3>
-          <p className="muted" style={{ fontSize: 13.5, margin: "0 0 10px" }}>
-            On every other channel the draft is the record. On a call a model wrote half the words,
-            so this is — and it is written down before it is spoken, not after.
-          </p>
-          {d.calls.map((c) => (
-            <div className="panel" key={c.callSid} style={{ padding: 14, marginBottom: 10 }}>
-              <div className="muted mono" style={{ fontSize: 12, marginBottom: 8 }}>
-                {c.at.slice(0, 16).replace("T", " ")} · {c.cartId}
-              </div>
-              {c.lines.map((l, i) => (
-                <div key={i} style={{ margin: "4px 0", fontSize: 13.5 }}>
-                  <b style={{ color: l.who === "shop" ? "#1f4037" : "#6b7a72" }}>
-                    {l.who === "shop" ? "Shop" : "Them"}
-                  </b>{" "}
-                  {l.text}
-                  {l.source && l.source !== "template" && l.source !== "model" ? (
-                    <span className="pill planned" style={{ marginLeft: 8, fontSize: 11 }}>
-                      {l.source === "bounds_refused"
-                        ? "blocked, safe line spoken"
-                        : l.source === "model_unavailable"
-                          ? "model unavailable"
-                          : l.source}
-                    </span>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          ))}
-        </>
-      )}
-
-      {d.drafts.length > 0 && (
-        <>
-          <h3>Last written</h3>
-          <div className="panel">
-            <table>
-              <tbody>
-                {d.drafts.map((x) => (
-                  <tr key={x.id}>
-                    <td className="mono" style={{ width: 190 }}>
-                      {x.at.slice(0, 16).replace("T", " ")}
-                    </td>
-                    <td style={{ width: 110 }}>{x.treatment}</td>
-                    <td className="muted" style={{ fontSize: 13 }}>
-                      {x.text.slice(0, 90)}…
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-
-      {/* ---------------- gaps ---------------- */}
-      <h2>What would make this better</h2>
-      <div className="panel">
-        <table>
-          <tbody>
-            {run.gaps.map((g) => (
-              <tr key={g.what}>
-                <td style={{ width: 340 }}>
-                  <b>{g.what}</b>
-                  <div className="muted" style={{ fontSize: 12.5 }}>{g.who === "merchant" ? "you" : "us"}</div>
-                </td>
-                <td className="muted" style={{ fontSize: 13 }}>{g.unlocks}</td>
-              </tr>
+          </Card>
+        ) : (
+          <VStack gap={3}>
+            {run.targets.map((t) => (
+              <TargetCard key={t.cartId} t={t} shop={shop} channels={d.channels} busy={busy} />
             ))}
-          </tbody>
-        </table>
-      </div>
-    </>
+          </VStack>
+        )}
+      </Block>
+
+      <Block
+        title="Run it"
+        hint={`The campaign is re-computed when you click, not taken from what is on this screen — between rendering and clicking, somebody may have bought the thing.${d.sent > 0 ? ` ${d.sent} messages have gone out from this store so far.` : ""}`}
+      >
+        <Card>
+          <Form method="post">
+            <input type="hidden" name="shop" value={shop} />
+            <input type="hidden" name="act" value="send" />
+            <input type="hidden" name="channel" value={sendChannel} />
+            <HStack gap={3} vAlign="end" wrap="wrap">
+              <Selector
+                label="Send by"
+                size="sm"
+                width={220}
+                value={sendChannel}
+                onChange={setSendChannel}
+                options={d.channels
+                  .filter((c) => c.available)
+                  .map((c) => ({ value: c.id, label: c.label }))}
+              />
+              <Button
+                type="submit"
+                variant="primary"
+                isDisabled={busy || !o.enabled}
+                label={o.enabled ? `Send ${run.targets.length} messages` : "Outreach is off"}
+              />
+            </HStack>
+          </Form>
+        </Card>
+      </Block>
+
+      <Block
+        title="What was left alone, and why"
+        hint="The more interesting half."
+      >
+        <Card padding={0}>
+          <Table
+            data={run.suppressedBy.map((s) => ({
+              id: s.reason,
+              label: s.label,
+              detail: run.suppressed.find((x) => x.reason === s.reason)?.detail ?? "",
+              count: s.count,
+              margin: inr(s.margin),
+            }))}
+            idKey="id"
+            density="balanced"
+            dividers="rows"
+            columns={[
+              {
+                key: "label",
+                header: "Reason",
+                width: proportional(1),
+                renderCell: (s) => (
+                  <VStack gap={1}>
+                    <Text>{String(s.label)}</Text>
+                    <Text type="supporting" color="secondary">
+                      {String(s.detail)}
+                    </Text>
+                  </VStack>
+                ),
+              },
+              { key: "count", header: "Baskets", width: pixel(100), align: "end" },
+              { key: "margin", header: "Margin not chased", width: pixel(170), align: "end" },
+            ]}
+          />
+        </Card>
+      </Block>
+
+      <Block
+        title="Why they didn’t buy"
+        hint="The only thing in your data that answers why rather than what — because it was asked for."
+      >
+        {d.histogram.total === 0 ? (
+          <Card>
+            <EmptyState
+              isCompact
+              title="Nobody has answered yet"
+              description={`${d.answered.asked} basket${d.answered.asked === 1 ? " has" : "s have"} been asked about. This is the number worth waiting for.`}
+            />
+          </Card>
+        ) : (
+          <VStack gap={3}>
+            {!d.histogram.enough ? (
+              <Banner
+                status="info"
+                container="card"
+                title={`Only ${d.histogram.total} answers so far`}
+                description="Shown as counts, not shares, and deliberately not as a finding — four people are not a pattern, and the temptation to act on the first three replies is the whole reason this floor exists."
+              />
+            ) : null}
+            <Card padding={0}>
+              <Table
+                data={d.histogram.counts.map((c) => ({
+                  id: c.reason,
+                  reason: REASON_LABEL[c.reason],
+                  count: c.count,
+                  share: `${(c.share * 100).toFixed(0)}%`,
+                }))}
+                idKey="id"
+                density="compact"
+                dividers="rows"
+                columns={
+                  d.histogram.enough
+                    ? [
+                        { key: "reason", header: "Reason", width: proportional(1) },
+                        { key: "count", header: "Answers", width: pixel(100), align: "end" },
+                        { key: "share", header: "Share", width: pixel(100), align: "end" },
+                      ]
+                    : [
+                        { key: "reason", header: "Reason", width: proportional(1) },
+                        { key: "count", header: "Answers", width: pixel(100), align: "end" },
+                      ]
+                }
+              />
+            </Card>
+            <Text type="supporting" color="secondary">
+              {d.answered.answered} of {d.answered.asked} asked replied
+              {d.answered.asked ? ` (${Math.round(d.answered.rate * 100)}%)` : ""}.
+            </Text>
+          </VStack>
+        )}
+      </Block>
+
+      {d.conversations.length > 0 ? (
+        <Block
+          title="In their own words"
+          hint="Only you see this."
+        >
+          <VStack gap={3}>
+            {d.conversations.map((c) => (
+              <Card key={c.cartId}>
+                <VStack gap={3}>
+                  <HStack gap={3} hAlign="between" vAlign="center" wrap="wrap">
+                    <Text weight="semibold">{c.reasonLabel ?? "no answer yet"}</Text>
+                    <HStack gap={2}>
+                      <Token size="sm" color="gray" label={c.state} />
+                      {c.by ? <Token size="sm" color="gray" label={c.by} /> : null}
+                    </HStack>
+                  </HStack>
+                  {c.text ? <Text>&ldquo;{c.text}&rdquo;</Text> : null}
+                  {c.remedy ? (
+                    <Text type="supporting" color="secondary">
+                      → {c.remedy}
+                    </Text>
+                  ) : null}
+                  {/* Merchant-only, always. A shopper told what they nearly got
+                      has been handed a strategy for next time. */}
+                  {c.blocked.length ? (
+                    <HStack gap={2} vAlign="center" wrap="wrap">
+                      <Eyebrow>No discount</Eyebrow>
+                      {c.blocked.map((b) => (
+                        <Token key={b} size="sm" color="yellow" label={b} />
+                      ))}
+                    </HStack>
+                  ) : null}
+                  {/*
+                    The whole exchange, folded away. Collapsed because the
+                    summary above answers the usual question and this answers
+                    the one that follows it — "why did it decide that?" — which
+                    is exactly when a merchant wants the sequence.
+                  */}
+                  {c.turns.length > 1 ? (
+                    <Collapsible
+                      trigger={
+                        <Text type="supporting" color="secondary">
+                          {c.turns.length} steps
+                        </Text>
+                      }
+                    >
+                      <List listStyle="decimal" density="compact">
+                        {c.turns.map((t, i) => (
+                          <ListItem
+                            key={i}
+                            label={`${t.kind} — ${t.detail}`}
+                            description={new Date(t.ts).toLocaleString("en-IN")}
+                          />
+                        ))}
+                      </List>
+                    </Collapsible>
+                  ) : null}
+                </VStack>
+              </Card>
+            ))}
+          </VStack>
+        </Block>
+      ) : null}
+
+      <Block
+        title="From your live storefront"
+        actions={
+          <Token
+            size="sm"
+            color={d.live.total ? "green" : "gray"}
+            label={`${d.live.total} of ${run.totals.cartsConsidered} baskets are real`}
+          />
+        }
+      >
+        <Card>
+          <VStack gap={3}>
+            {d.live.total === 0 ? (
+              <Text color="secondary">
+                Everything below came from <Code>npm run seed</Code>. Real baskets appear here as
+                soon as somebody puts something in a cart on your shop — the widget script already
+                posts them; there is nothing else to install.
+              </Text>
+            ) : (
+              <Text color="secondary">
+                <Text as="span" weight="semibold">
+                  {d.live.recoverable}
+                </Text>{" "}
+                of them can actually be recovered. The rest were built by somebody who was not
+                signed in, so there is no way to reach them and no message will be sent — you will
+                find them below under &ldquo;no way to reach them&rdquo;. That is the honest number,
+                and it is the one most abandoned-cart tools do not show you.
+                {d.live.newestAt
+                  ? ` Most recent: ${new Date(d.live.newestAt).toLocaleString("en-IN")}.`
+                  : ""}
+              </Text>
+            )}
+            {!d.live.captureConfigured ? (
+              <Text type="supporting" color="secondary">
+                This shop has not connected an order source, so even a signed-in shopper has no
+                contact details on file. Contact is looked up from your own records, server to
+                server — it is never taken from the page, because a page that could name a phone
+                number could name anybody&rsquo;s.
+              </Text>
+            ) : null}
+          </VStack>
+        </Card>
+      </Block>
+
+      <Note>
+        {run.emptyReason ??
+          `Margin, not basket value — chasing revenue you do not keep is how a recovery campaign costs more than it returns. The ${(run.totals.assumedRecovery * 100).toFixed(0)}% is an assumption, not a measurement: this outreach has never run here, so there is no rate to cite. Treat ${inr(run.totals.expectedValue)} as an order of magnitude.`}
+      </Note>
+
+      <Setup title="Limits, discounts and channels">
+      <IntegrationSetup guide={d.voiceSetup} />
+
+      <TestCallForm
+        shop={shop}
+        busy={busy}
+        available={d.voiceSetup.status === "ready"}
+      />
+
+      <Divider />
+
+      <Block
+        title="Your limits"
+        hint="Every one of these can only reduce what goes out."
+      >
+        <LimitsForm shop={shop} o={o} busy={busy} />
+      </Block>
+
+      <Block
+        title="Recovery discounts"
+        hint="The one place an agent can give money away without a per-case approval. Read it as an approval with a cap. It never chooses a depth — it reads the number below, or offers nothing."
+      >
+        <VStack gap={4}>
+          <Figures>
+            <Figure value={d.spend.count} label={`of ${d.policy.monthlyGrantCap} this month`} />
+            <Figure
+              value={inr(d.spend.margin)}
+              label={`of ${inr(d.policy.monthlyMarginCap)} margin given`}
+            />
+            <Figure
+              value={d.grants.filter((g) => g.state === "redeemed").length}
+              label="actually used"
+              tone="accent"
+            />
+          </Figures>
+
+          <PolicyForm shop={shop} policy={d.policy} busy={busy} />
+
+          {d.grants.length > 0 ? (
+            <Card padding={0}>
+              <Table
+                data={d.grants.map((g) => ({
+                  id: g.id,
+                  state: g.state,
+                  grant: `${Math.round(g.depth * 100)}% off ${g.title}, up to ${g.qtyCap}`,
+                  detail: `${g.tier} shopper, said “${g.reason}”, expires ${g.expiresAt.slice(0, 16).replace("T", " ")}`,
+                  cost: inr(g.marginCost),
+                }))}
+                idKey="id"
+                density="balanced"
+                dividers="rows"
+                columns={[
+                  {
+                    key: "state",
+                    header: "State",
+                    width: pixel(110),
+                    renderCell: (g) => (
+                      <Token
+                        size="sm"
+                        color={g.state === "redeemed" ? "green" : "gray"}
+                        label={String(g.state)}
+                      />
+                    ),
+                  },
+                  {
+                    key: "grant",
+                    header: "Grant",
+                    width: proportional(1),
+                    renderCell: (g) => (
+                      <VStack gap={1}>
+                        <Text>{String(g.grant)}</Text>
+                        <Text type="supporting" color="secondary">
+                          {String(g.detail)}
+                        </Text>
+                      </VStack>
+                    ),
+                  },
+                  { key: "cost", header: "Costs you", width: pixel(120), align: "end" },
+                ]}
+              />
+            </Card>
+          ) : null}
+        </VStack>
+      </Block>
+
+      <Block title="Channels">
+        <Card padding={0}>
+          <Table
+            data={d.channels.map((c) => ({
+              id: c.id,
+              label: c.label,
+              available: c.available,
+              note: [c.unlockedBy, c.note].filter(Boolean).join(" "),
+            }))}
+            idKey="id"
+            density="balanced"
+            dividers="rows"
+            columns={[
+              { key: "label", header: "Channel", width: pixel(190) },
+              {
+                key: "available",
+                header: "Status",
+                width: pixel(110),
+                renderCell: (c) => (
+                  <Token
+                    size="sm"
+                    color={c.available ? "green" : "gray"}
+                    label={c.available ? "Live" : "Locked"}
+                  />
+                ),
+              },
+              {
+                key: "note",
+                header: "",
+                width: proportional(1),
+                renderCell: (c) => <Text color="secondary">{String(c.note)}</Text>,
+              },
+            ]}
+          />
+        </Card>
+      </Block>
+
+      <Block
+        title="On the telephone"
+        hint="A call leaves nothing behind to re-read, so it starts as a one-way notice and becomes a conversation only if you say so."
+      >
+        <CallForm shop={shop} call={o.call} busy={busy} />
+      </Block>
+
+      </Setup>
+
+      {d.calls.length > 0 ? (
+        <Block
+          title="What was actually said"
+          hint="Written down before it was spoken, not after."
+        >
+          <VStack gap={3}>
+            {d.calls.map((c) => (
+              <Card key={c.callSid}>
+                <VStack gap={3}>
+                  <Text type="code" size="2xs" color="secondary">
+                    {c.at.slice(0, 16).replace("T", " ")} · {c.cartId}
+                  </Text>
+                  <Divider />
+                  <VStack gap={2}>
+                    {c.lines.map((l, i) => (
+                      <HStack key={i} gap={3} vAlign="start">
+                        <Text
+                          type="code"
+                          size="2xs"
+                          color={l.who === "shop" ? "accent" : "secondary"}
+                          style={{ minWidth: 48 }}
+                        >
+                          {l.who === "shop" ? "SHOP" : "THEM"}
+                        </Text>
+                        <VStack gap={1}>
+                          <Text>{l.text}</Text>
+                          {l.source && l.source !== "template" && l.source !== "model" ? (
+                            <HStack>
+                              <Token
+                                size="sm"
+                                color="yellow"
+                                label={
+                                  l.source === "bounds_refused"
+                                    ? "blocked, safe line spoken"
+                                    : l.source === "model_unavailable"
+                                      ? "model unavailable"
+                                      : l.source
+                                }
+                              />
+                            </HStack>
+                          ) : null}
+                        </VStack>
+                      </HStack>
+                    ))}
+                  </VStack>
+                </VStack>
+              </Card>
+            ))}
+          </VStack>
+        </Block>
+      ) : null}
+
+      {d.drafts.length > 0 ? (
+        <Block title="Last written">
+          <Card padding={0}>
+            <Table
+              data={d.drafts.map((x) => ({
+                id: x.id,
+                at: x.at.slice(0, 16).replace("T", " "),
+                treatment: x.treatment,
+                text: `${x.text.slice(0, 110)}…`,
+              }))}
+              idKey="id"
+              density="compact"
+              dividers="rows"
+              columns={[
+                {
+                  key: "at",
+                  header: "When",
+                  width: pixel(150),
+                  renderCell: (x) => (
+                    <Text type="code" size="2xs" color="secondary">
+                      {String(x.at)}
+                    </Text>
+                  ),
+                },
+                {
+                  key: "treatment",
+                  header: "Kind",
+                  width: pixel(130),
+                  renderCell: (x) => <Token size="sm" color="gray" label={String(x.treatment)} />,
+                },
+                {
+                  key: "text",
+                  header: "Text",
+                  width: proportional(1),
+                  renderCell: (x) => <Text color="secondary">{String(x.text)}</Text>,
+                },
+              ]}
+            />
+          </Card>
+        </Block>
+      ) : null}
+
+      <Block title="What would make this better">
+        <Card padding={0}>
+          <Table
+            data={run.gaps.map((g) => ({
+              id: g.what,
+              what: g.what,
+              who: g.who === "merchant" ? "you" : "us",
+              unlocks: g.unlocks,
+            }))}
+            idKey="id"
+            density="balanced"
+            dividers="rows"
+            columns={[
+              {
+                key: "who",
+                header: "Who",
+                width: pixel(84),
+                renderCell: (g) => (
+                  <Token size="sm" color={g.who === "you" ? "yellow" : "gray"} label={String(g.who)} />
+                ),
+              },
+              { key: "what", header: "What", width: proportional(1) },
+              {
+                key: "unlocks",
+                header: "Unlocks",
+                width: proportional(1.3),
+                renderCell: (g) => <Text color="secondary">{String(g.unlocks)}</Text>,
+              },
+            ]}
+          />
+        </Card>
+      </Block>
+    </Page>
   );
 }

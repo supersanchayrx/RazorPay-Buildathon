@@ -1,7 +1,9 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { findSite } from "../lib/sites.server";
+import { featureOn } from "../lib/featureflags.server";
 import { jsonFeedCatalog } from "../lib/catalog.server";
 import { llmsTxt } from "../lib/agentview.server";
+import { selfOrigin } from "../lib/origin.server";
 
 /**
  * `/llms.txt` for one store, generated.
@@ -37,17 +39,18 @@ async function taglineOf(feedUrl: string): Promise<string | undefined> {
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const site = findSite(params.site ?? null);
-  if (!site) return new Response("unknown store\n", { status: 404 });
+  // Switched off is indistinguishable from absent, on purpose. A merchant who
+  // turned the agent surface off has no agent surface, and an agent told "404"
+  // stops asking rather than retrying with better credentials.
+  if (!site || !featureOn(site.key, "agent_front")) return new Response("unknown store\n", { status: 404 });
 
   const u = new URL(request.url);
-  const proto = request.headers.get("x-forwarded-proto") ?? u.protocol.replace(":", "");
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? u.host;
 
   const body = await llmsTxt({
     site,
     catalog: jsonFeedCatalog(site.catalogFeedUrl),
     askedOrigin: u.searchParams.get("origin"),
-    gatewayBaseUrl: `${proto}://${host}`,
+    gatewayBaseUrl: selfOrigin(request),
     tagline: await taglineOf(site.catalogFeedUrl),
   });
 

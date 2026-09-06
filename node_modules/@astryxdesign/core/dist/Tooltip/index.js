@@ -1,0 +1,17 @@
+// Copyright (c) Meta Platforms, Inc. and affiliates.
+
+'use client';
+
+/**
+ * @file index.ts
+ * @input Tooltip component and hook
+ * @output Exports all Tooltip module public API
+ * @position Entry point for Tooltip module
+ *
+ * SYNC: When adding new Tooltip files, update exports here
+ */
+
+// Tooltip hook
+export { useTooltip } from "./useTooltip.js";
+// Tooltip component
+export { Tooltip } from "./Tooltip.js";

@@ -1,12 +1,8 @@
-<div align="center">
+# Chapman architecture
 
-# CHAPMAN — Architecture
-
-The high-level diagram, then one diagram per subsystem.
-
-[← back to the README](../README.md)
-
-</div>
+This document describes the main trust boundaries and the architecture behind
+each dashboard feature. Start with [README.md](../README.md) for setup and use
+[INSTALL.md](../INSTALL.md) for deployment instructions.
 
 ---
 
@@ -23,7 +19,8 @@ The high-level diagram, then one diagram per subsystem.
 9. [Two memories, and why they are not one](#9-two-memories-and-why-they-are-not-one)
 10. [The storefront, wired both ways](#10-the-storefront-wired-both-ways)
 11. [The return path into the cortex](#11-the-return-path-into-the-cortex)
-12. [Where each rule is enforced](#12-where-each-rule-is-enforced)
+12. [Feature architecture diagrams](#12-feature-architecture-diagrams)
+13. [Where each rule is enforced](#13-where-each-rule-is-enforced)
 
 ---
 
@@ -64,13 +61,13 @@ flowchart TB
         direction LR
         SH["Shopify<br/>App Proxy + app embed<br/><i>HMAC-signed by Shopify</i>"]
         CU["Custom site<br/>one script tag<br/><i>CORS + origin + site key</i>"]
-        AG["Agent surface<br/>/.well-known/ucp → MCP<br/><i>agent profile, fetched and logged</i>"]
+        AG["Agent surface<br/>/.well-known/ucp to MCP<br/><i>agent profile, fetched and logged</i>"]
     end
 
     subgraph core ["CHAPMAN core"]
         direction TB
         CX["Shop cortex<br/>one shared memory of the merchant"]
-        OR["Orchestrator<br/>ground → route → reason → bound → log"]
+        OR["Orchestrator<br/>ground, route, reason, bound, log"]
         HN["Harness<br/><i>tool loop, only when two<br/>tools must be chained</i>"]
         TL["Read tools<br/>catalogue · policies · orders<br/>· pricing · live offers"]
         QT["Quote + reservations<br/><i>the only place a price is decided</i>"]
@@ -149,8 +146,8 @@ flowchart LR
 
 | Shape | Example | Chain |
 |---|---|---|
-| **pairing** | *"something to go with masala chai"* | `search_products` → `products_that_go_with` |
-| **totalling** | *"what would two of those cost delivered?"* | `search_products` → `price_basket` |
+| **pairing** | *"something to go with masala chai"* | `search_products`, then `products_that_go_with` |
+| **totalling** | *"what would two of those cost delivered?"* | `search_products`, then `price_basket` |
 | **unrouted** | the router could not decide at all | its own signal |
 
 Everything else takes the cheap path. Escalating every message would multiply latency and rate-limit burn fourfold to serve the fraction of traffic that needs it.
@@ -520,7 +517,7 @@ sequenceDiagram
     S->>M: /recover/<token> — the MERCHANT's domain
     M->>C: proxied, GET and POST
     S->>M: /?restore=<token>
-    M->>C: /restore/<token> → {handle, sku, qty}
+    M->>C: /restore/<token> returns handle, sku, qty
 ```
 
 Three things the capture endpoint refuses to take from the browser, each of which looks fine in a demo:
@@ -529,7 +526,7 @@ Three things the capture endpoint refuses to take from the browser, each of whic
 2. **A phone number.** Accepting contact from a page would let anyone aim the shop's outbound calls at a stranger's handset. The page proves *who* it is with the signed session token the merchant already puts there; resolving that to *how to reach them* is the merchant's business, answered server to server over the same signed request that serves their orders. No token means no contact, which means the basket is suppressed as `no_channel` — **shown, with that reason.** The correct outcome, not a gap.
 3. **An identity it merely asserts.**
 
-**The question is asked on the merchant's domain.** A shopper who was on nilgiripost.example should not answer "why didn't you buy?" on a gateway domain they have never heard of — that reads like phishing and gets closed. So the merchant proxies two paths, exactly the `/.well-known/ucp` pattern and about as much code, and the token is unchanged by moving: it is signed with the site secret and verified by us, so relocating the URL relocates no trust. Both directions are forwarded, because forwarding only the GET would render the question perfectly and throw the answer away.
+**The question is asked on the merchant's domain.** A shopper who was on monsoonmarket.example should not answer "why didn't you buy?" on a gateway domain they have never heard of — that reads like phishing and gets closed. So the merchant proxies two paths, exactly the `/.well-known/ucp` pattern and about as much code, and the token is unchanged by moving: it is signed with the site secret and verified by us, so relocating the URL relocates no trust. Both directions are forwarded, because forwarding only the GET would render the question perfectly and throw the answer away.
 
 Live baskets are kept in **their own file**, not `carts.jsonl`. `npm run seed` rewrites that one wholesale, so a real basket written there survives until the next seed and then vanishes — intermittent data loss, only ever in the direction that makes a demo look fine.
 
@@ -553,7 +550,240 @@ So the model never sees a notice at all. `router.server.ts` classifies the messa
 
 ---
 
-## 12. Where each rule is enforced
+## 12. Feature architecture diagrams
+
+These diagrams follow the dashboard navigation. They show the main inputs,
+server-side boundary, persisted state, and external dependency for each
+feature. Provider credentials are always read on the server. Dashboard loaders
+return variable names and readiness booleans, never secret values.
+
+### Overview and first-store setup
+
+```mermaid
+flowchart LR
+    Fresh[Fresh data volume] --> Account[Merchant account only]
+    Account --> Login[Merchant signs in]
+    Login --> Form[Configure your storefront]
+    Form --> Validate[Validate origin, catalogue, and site key]
+    Validate --> Registry[Write site registry]
+    Validate --> Secret[Generate site signing secret]
+    Registry --> Overview[Overview]
+    Secret --> Overview
+    Store[Merchant storefront] --> Probes[Embed and discovery probes]
+    Probes --> Overview
+    Env[Server environment] --> Readiness[Provider readiness]
+    Readiness --> Overview
+```
+
+Registration, installation, and provider readiness are separate inputs to the
+Overview. A registered site is not automatically marked as installed.
+
+### Feature controls
+
+```mermaid
+flowchart LR
+    Merchant[Merchant] --> Controls[Feature controls page]
+    Controls --> Flags[Per-site feature flags]
+    Flags --> AssistantGate[Assistant route gate]
+    Flags --> AgentGate[Agent surface gate]
+    Flags --> PaymentGate[New checkout gate]
+    Flags --> RecoveryGate[Outreach gate]
+    Flags --> MemoryGate[Memory collection gate]
+    InFlight[Existing payment or signed link] --> Complete[Allowed to complete safely]
+```
+
+Feature controls express merchant policy. They do not replace installation
+probes or provider credential checks. In-flight payments and signed recovery
+links are not abandoned after a flag changes.
+
+### Storefront assistant
+
+```mermaid
+flowchart LR
+    Widget[Storefront widget] --> Chat[Chat endpoint]
+    Preview[Test chat assistant] --> Pipeline[Assistant pipeline]
+    Chat --> Pipeline
+    Catalog[Live catalogue] --> Pipeline
+    Cortex[Shopper-safe cortex view] --> Pipeline
+    Tools[Read-only shopper tools] --> Pipeline
+    OpenRouter[OpenRouter or deterministic fallback] --> Pipeline
+    Pipeline --> Bounds[Claim and policy checks]
+    Bounds --> Ledger[Decision ledger]
+    Bounds --> Reply[Reply and product cards]
+```
+
+The dashboard preview uses the same pipeline as the widget. It runs without a
+shopper identity, so it cannot read personal orders or shopper memory.
+
+### Agent front
+
+```mermaid
+flowchart LR
+    Agent[Shopping agent] --> WellKnown[Storefront /.well-known/ucp]
+    WellKnown --> Profile[Chapman UCP profile]
+    Profile --> MCP[MCP endpoint]
+    MCP --> Tools[Filtered UCP tools]
+    Tools --> Catalog[Catalogue reads]
+    Tools --> Cart[Cart and quote]
+    Tools --> Checkout[Checkout]
+    Verify[Verify install button] --> WellKnown
+    Env[Razorpay readiness] --> Profile
+```
+
+Agent discovery needs a storefront route, not a provider key. The public
+profile advertises Razorpay only when the site is linked and both required key
+variables resolve.
+
+### Razorpay checkout and settlement
+
+```mermaid
+sequenceDiagram
+    participant Client as Widget or agent
+    participant Quote as Chapman quote
+    participant Razorpay
+    participant Settle as Settlement service
+    participant Orders as Order store
+
+    Client->>Quote: Product, variant, quantity
+    Quote->>Quote: Read catalogue price and approved offers
+    Quote->>Razorpay: Create order in minor units
+    Razorpay-->>Client: Hosted payment page
+    Razorpay->>Settle: Signed webhook
+    Client->>Settle: Browser confirmation fallback
+    Settle->>Settle: Verify and apply idempotency key
+    Settle->>Orders: Create order once
+```
+
+The client never submits a price. Webhook and browser confirmation use the same
+idempotent settlement path.
+
+### Offers and approvals
+
+```mermaid
+flowchart LR
+    Orders[Order history] --> Detectors[Deterministic detectors]
+    Detectors --> Floors[Merchant floors and statistical filters]
+    Floors --> Proposal[Offer proposal]
+    Proposal --> Review[Merchant review]
+    Review -->|approve| Approval[Approval ledger]
+    Review -->|reject| Stop[No offer]
+    Approval --> Bounds[Permitted promotional claim]
+    Approval --> Quote[Server-side discount calculation]
+```
+
+An approval permits a specific claim and lets the quote service apply the
+matching calculation. A model cannot create or change the discount.
+
+### Recovery and voice
+
+```mermaid
+flowchart LR
+    Cart[Incomplete cart] --> Eligibility[Recovery eligibility checks]
+    Eligibility --> Draft[Bounded recovery draft]
+    Draft --> Review[Merchant review or configured send path]
+    Review --> Channel[Channel capability check]
+    Channel --> Sarvam[Sarvam speech rendering]
+    Sarvam --> Twilio[Twilio call]
+    TestForm[Test call form and consent] --> Fixed[Fixed integration-test notice]
+    Fixed --> Limit[Quiet hours and rate limit]
+    Limit --> Sarvam
+    Twilio --> SendLog[Audited send log]
+```
+
+The test form supplies only the destination. It does not load a customer record
+or place the number in model input. Test calls use notice mode even when normal
+recovery is conversational.
+
+### Shopper memory
+
+```mermaid
+flowchart LR
+    Session[Signed shopper session] --> Recall[Recall relevant preferences]
+    Recall --> Assistant[Assistant context]
+    Assistant --> Candidate[New memory candidate]
+    Candidate --> Check[Reject prices, stock, offers, and order state]
+    Check --> Consolidate[Deterministic or OpenRouter consolidation]
+    Consolidate --> Store[Per-site, per-shopper memory]
+    Shopper[Shopper deletion request] --> Delete[Delete even when collection is off]
+    Delete --> Store
+```
+
+Anonymous shoppers are not remembered. Information that can expire, such as a
+price or order status, is not valid shopper memory.
+
+### Shop cortex
+
+```mermaid
+flowchart LR
+    Catalog[Catalogue and policies] --> Build[Build shop cortex]
+    Findings[Published analysis findings] --> Build
+    Settings[Merchant settings] --> Build
+    Build --> MerchantView[Merchant view]
+    Build --> PublicProjection[Shopper-safe projection]
+    PublicProjection --> Assistant[Assistant]
+    MerchantView --> Analyst[Analyst]
+```
+
+The cortex holds knowledge about the shop, not a shopper. Sensitive merchant
+facts remain outside the shopper projection.
+
+### Analyst
+
+```mermaid
+flowchart LR
+    Question[Merchant question] --> Analyst[Analyst tool loop]
+    OpenRouter[OpenRouter] --> Analyst
+    MerchantTools[Read-only merchant tools] --> Analyst
+    Orders[Orders and aggregate statistics] --> MerchantTools
+    Cortex[Merchant cortex view] --> MerchantTools
+    Analyst --> Transcript[Answer and tool transcript]
+```
+
+Unlike the storefront assistant, the Analyst requires OpenRouter because its
+job is to choose and combine merchant tools for an open-ended question. Tools
+remain read-only.
+
+### Identity and order access
+
+```mermaid
+sequenceDiagram
+    participant Store as Merchant storefront
+    participant Browser
+    participant Chapman
+    participant Feed as Merchant order feed
+
+    Store->>Browser: Short-lived signed shopper token
+    Browser->>Chapman: Assistant request with token
+    Chapman->>Chapman: Verify site, subject, signature, and expiry
+    Chapman->>Feed: customer id, timestamp, request signature
+    Feed->>Feed: Verify signature and timestamp
+    Feed-->>Chapman: Orders for that customer only
+    Chapman-->>Browser: Bounded order response
+```
+
+Typed email addresses, phone numbers, and order numbers do not establish
+identity. Signed-out assistant previews therefore cannot access order data.
+
+### Decision ledger and test bench
+
+```mermaid
+flowchart LR
+    Assistant[Assistant decisions] --> Ledger[Append-only decision ledger]
+    Bounds[Blocked claims] --> Ledger
+    Offers[Offer approvals] --> Ledger
+    Recovery[Recovery sends] --> Ledger
+    TestBench[Test bench] --> Live[Live assistant and readiness checks]
+    Live --> Results[Pass, fail, and evidence]
+    Live --> Ledger
+```
+
+The ledger remains available when shopper-facing features are disabled. The
+test bench exercises live paths so it can detect configuration failures that a
+static feature list cannot.
+
+---
+
+## 13. Where each rule is enforced
 
 | Rule | Enforced in | The failure it prevents |
 |---|---|---|
@@ -563,21 +793,17 @@ So the model never sees a notice at all. `router.server.ts` classifies the messa
 | Only an approval licenses a price claim | `approvals.server.ts` | an assistant that can be argued into a discount |
 | Anything countable is counted by code | `stats.server.ts`, `detectors.server.ts`, `economics.server.ts` | a plausible number that is wrong |
 | Floors run before the model | `floors.server.ts` | a trap that passes Fisher's exact reaching a merchant |
-| A grant is passed by id, never as terms | `grants.server.ts` → `buildQuote` | a caller that could pass a depth could pass 90% |
+| A grant is passed by id, never as terms | `grants.server.ts`, then `buildQuote` | a caller that could pass a depth could pass 90% |
 | Memory may not hold anything that expires | `checkMemory` in `memory.server.ts` | a price read back to a shopper in March |
 | The cortex may not hold a person | `cortex.server.ts` + `check-cortex` | merchant unit costs, or a shopper, in the wrong projection |
 | Identity comes only from a signed session | `identity.server.ts` | order lookup by an email a stranger can type |
 | One settlement path, idempotent | `settle.server.ts` | double-settling, overselling, a forged webhook |
 | Three credential classes stay apart | `sites.server.ts`, `auth.server.ts`, `razorpay.server.ts` | one credential quietly standing in for another |
 | Channels are capabilities | `outreach.server.ts` | a settings file that appears to buy a Twilio account |
-| A model is optional | `reasoner.server.ts` → `pickReasoner()` | an outage that looks like a product failure |
+| A model is optional | `reasoner.server.ts`, `pickReasoner()` | an outage that looks like a product failure |
 | A published page carries terms, never a discounted number | `agentview.server.ts` | a browsing model quoting a total nobody will honour |
 | The legibility layer computes nothing on the merchant's side | `demo-store/agentfront.go` | a second place prices come from, free to disagree with the first |
 
 ---
 
-<div align="center">
-
-[← back to the README](../README.md)
-
-</div>
+[Back to README](../README.md)

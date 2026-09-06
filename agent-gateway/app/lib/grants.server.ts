@@ -34,6 +34,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { dataPath } from "./paths.server";
 import crypto from "node:crypto";
 import { record } from "./ledger.server";
 import type { Reason } from "./reasons";
@@ -73,7 +74,7 @@ type Row =
   | ({ kind: "issue" } & RecoveryGrant)
   | { kind: "redeem"; id: string; shop: string; at: string; gatewayOrderId: string };
 
-const FILE = path.join(process.cwd(), "data", "recovery-grants.jsonl");
+const FILE = dataPath("recovery-grants.jsonl");
 
 function readAll(): Row[] {
   try {

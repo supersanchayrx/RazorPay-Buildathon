@@ -43,6 +43,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { dataPath } from "./paths.server";
 import crypto from "node:crypto";
 import type { CatalogSource } from "./catalog.server";
 
@@ -71,7 +72,7 @@ export type LiveCart = {
   recovered: boolean;
 };
 
-const FILE = path.join(process.cwd(), "data", "live-carts.jsonl");
+const FILE = dataPath("live-carts.jsonl");
 
 function append(row: LiveCart): boolean {
   try {

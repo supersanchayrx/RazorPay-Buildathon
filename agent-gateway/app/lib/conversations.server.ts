@@ -30,6 +30,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { dataPath } from "./paths.server";
 import type { Reason } from "./reasons";
 import type { Tier } from "./loyalty.server";
 
@@ -56,7 +57,7 @@ export type Conversation = {
   finished: boolean;
 };
 
-const FILE = path.join(process.cwd(), "data", "recovery-conversations.jsonl");
+const FILE = dataPath("recovery-conversations.jsonl");
 
 type Row = { shop: string; cartId: string; customerId: string; turn: ConvTurn };
 

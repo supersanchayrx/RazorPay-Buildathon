@@ -1,0 +1,12 @@
+// Copyright (c) Meta Platforms, Inc. and affiliates.
+
+'use client';
+
+/**
+ * @file index.ts
+ * @input Imports Lightbox component, useLightbox hook, and types
+ * @output Exports Lightbox, useLightbox, and all related types
+ * @position Component entry point; re-exported by /packages/core/src/index.ts
+ */
+export { Lightbox } from "./Lightbox.js";
+export { useLightbox } from "./useLightbox.js";

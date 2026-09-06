@@ -1,5 +1,22 @@
+import { useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useLoaderData, useNavigation } from "react-router";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
+import { Card } from "@astryxdesign/core/Card";
+import { DateInput } from "@astryxdesign/core/DateInput";
+import type { DateInputProps } from "@astryxdesign/core/DateInput";
+import { Divider } from "@astryxdesign/core/Divider";
+import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { HStack } from "@astryxdesign/core/HStack";
+import { Heading } from "@astryxdesign/core/Heading";
+import { NumberInput } from "@astryxdesign/core/NumberInput";
+import { Table, pixel, proportional } from "@astryxdesign/core/Table";
+import { Text } from "@astryxdesign/core/Text";
+import { Token } from "@astryxdesign/core/Token";
+import { VStack } from "@astryxdesign/core/VStack";
+
+import { Block, Eyebrow, Figure, Figures, Note, Page, PageHead } from "../components/console";
 import { requireMerchant } from "../lib/auth.server";
 import { sitesForMerchant } from "../lib/sites.server";
 import { jsonFeedCatalog } from "../lib/catalog.server";
@@ -45,9 +62,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
    * A loader that writes is not free of sin, but the alternative is worse in
    * every direction: a scheduler we do not have, or a cortex that re-runs the
    * whole pipeline on the shopper's path. What crosses is aggregates and
-   * server-written sentences \u2014 see `findings.server.ts` for why a
-   * shopper may hear "netbanking has been failing; UPI is fine" and may not
-   * hear the rate behind it.
+   * server-written sentences — see `findings.server.ts` for why a shopper may
+   * hear "netbanking has been failing; UPI is fine" and may not hear the rate
+   * behind it.
    */
   publishFindings({
     shop: site.key,
@@ -119,6 +136,125 @@ const GATE_LABEL: Record<string, string> = {
   no_effect: "No measurable effect",
 };
 
+type Fact = { label: string; value: string };
+
+/**
+ * DateInput narrows its value to a literal YYYY-MM-DD template type, so the
+ * date this page computes has to be told it is one.
+ */
+type ISODate = NonNullable<DateInputProps["value"]>;
+
+/**
+ * The arithmetic behind a suggestion, laid out as a row of measurements.
+ *
+ * Kept visually quiet on purpose: the reasoning is the argument, and an
+ * argument that shouts reads like a sales pitch rather than a calculation.
+ */
+function Facts({ facts }: { facts: readonly Fact[] }) {
+  if (facts.length === 0) return null;
+  return (
+    <HStack gap={5} wrap="wrap">
+      {facts.map((f) => (
+        <VStack key={f.label} gap={0.5}>
+          <Eyebrow>{f.label}</Eyebrow>
+          <Text weight="semibold" hasTabularNumbers>
+            {f.value}
+          </Text>
+        </VStack>
+      ))}
+    </HStack>
+  );
+}
+
+/**
+ * A price experiment, with its approval attached.
+ *
+ * State is per-card rather than per-page because two experiments must never
+ * share an end date by accident — and the hidden inputs exist because the
+ * Astryx fields are controlled, so a native form POST would otherwise carry
+ * nothing.
+ */
+function ExperimentCard({
+  id,
+  title,
+  rationale,
+  facts,
+  handle,
+  shop,
+  defaultEnd,
+  busy,
+}: {
+  id: string;
+  title: string;
+  rationale: string;
+  facts: readonly Fact[];
+  handle: string;
+  shop: string;
+  defaultEnd: ISODate;
+  busy: boolean;
+}) {
+  const depth = Number(/@(\d+(?:\.\d+)?)%/.exec(id)?.[1] ?? 10) / 100;
+  const [endsAt, setEndsAt] = useState<ISODate | "">(defaultEnd);
+  const [maxUnits, setMaxUnits] = useState<number | null>(40);
+
+  return (
+    <Card>
+      <VStack gap={4}>
+        <VStack gap={2}>
+          <Heading level={3}>{title}</Heading>
+          <Text color="secondary">{rationale}</Text>
+        </VStack>
+        <Facts facts={facts} />
+        <Divider />
+        <Form method="post">
+          <input type="hidden" name="shop" value={shop} />
+          <input type="hidden" name="candidateId" value={id} />
+          <input type="hidden" name="handle" value={handle} />
+          <input type="hidden" name="title" value={title.replace(/^Consider \d+% off /, "")} />
+          <input type="hidden" name="depth" value={depth} />
+          <input type="hidden" name="endsAt" value={endsAt} />
+          <input type="hidden" name="maxUnits" value={maxUnits ?? ""} />
+          <HStack gap={3} vAlign="end" wrap="wrap">
+            <DateInput
+              label="Ends"
+              size="sm"
+              value={endsAt || undefined}
+              onChange={(v) => setEndsAt(v ?? "")}
+              width={190}
+            />
+            <NumberInput
+              label="Max units"
+              size="sm"
+              min={1}
+              value={maxUnits}
+              onChange={setMaxUnits}
+              width={130}
+            />
+            <Button
+              type="submit"
+              name="act"
+              value="approve"
+              variant="primary"
+              size="sm"
+              isDisabled={busy}
+              label="Approve this offer"
+            />
+            <Button
+              type="submit"
+              name="act"
+              value="reject"
+              variant="ghost"
+              size="sm"
+              isDisabled={busy}
+              label="No"
+            />
+          </HStack>
+        </Form>
+      </VStack>
+    </Card>
+  );
+}
+
 export default function Offers() {
   const d = useLoaderData<typeof loader>();
   const nav = useNavigation();
@@ -126,278 +262,307 @@ export default function Offers() {
 
   if (!d.site || !d.run) {
     return (
-      <>
-        <h1>Offer proposals</h1>
-        <p className="lede">No store is connected to this account yet.</p>
-      </>
+      <Page>
+        <PageHead title="Offer proposals" />
+        <Card>
+          <EmptyState
+            title="No store is connected to this account yet"
+            description="Connect a storefront and the proposer runs against its own order history."
+          />
+        </Card>
+      </Page>
     );
   }
 
   const { run } = d;
+  const shop = d.site.key;
   // A month out, as a sensible default the merchant can change. Long enough to
   // measure something at this store's volume, short enough to be a real end.
-  const defaultEnd = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+  const defaultEnd = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10) as ISODate;
+
+  const stoppedRows: Array<Record<string, unknown>> = run.rejected.map((r) => ({
+    id: r.candidate.id,
+    idea: r.candidate.title,
+    gate: GATE_LABEL[r.rejected!.gate] ?? r.rejected!.gate,
+    why: r.rejected!.why,
+  }));
+
+  const classRows: Array<Record<string, unknown>> = run.classification.map((c) => ({
+    id: c.handle,
+    title: c.title,
+    grade: `${c.abc}${c.xyz}`,
+    share: `${(c.revenueShare * 100).toFixed(1)}%`,
+    units: c.unitsPerMonth.toFixed(1),
+    cover: c.monthsOfCover === null ? "—" : `${c.monthsOfCover.toFixed(1)} mo`,
+  }));
+
+  const decisionRows: Array<Record<string, unknown>> = d.decisions.map((x, i) => ({
+    id: `${x.ts}-${i}`,
+    when: x.ts.slice(0, 16).replace("T", " "),
+    what: x.action,
+    proposal: x.candidateId,
+  }));
 
   return (
-    <>
-      <h1>Offer proposals</h1>
-      <p className="lede">
-        Worked out from your own orders. Every number here was counted, not estimated by a language
-        model — and nothing is published until you approve it.
-      </p>
+    <Page>
+      <PageHead
+        title="Offer proposals"
+        lede="Worked out from your own orders. Every number was counted, not guessed, and nothing goes live until you approve it."
+      >
+        <Figures>
+          <Figure value={run.scale.monthlyOrders.toFixed(0)} label="orders a month" />
+          <Figure value={inr(run.scale.monthlyGrossMargin)} label="monthly gross margin" tone="accent" />
+          <Figure value={run.incidents.length} label="needs attention" />
+          <Figure value={run.actions.length} label="ideas ranked" />
+          <Figure value={run.rejected.length} label="stopped" />
+        </Figures>
+      </PageHead>
 
-      <div className="stats">
-        <div className="stat">
-          <b>{run.scale.monthlyOrders.toFixed(0)}</b>
-          <span>orders a month</span>
-        </div>
-        <div className="stat">
-          <b>{inr(run.scale.monthlyGrossMargin)}</b>
-          <span>monthly gross margin</span>
-        </div>
-        <div className="stat">
-          <b>{run.incidents.length}</b>
-          <span>needs attention</span>
-        </div>
-        <div className="stat">
-          <b>{run.actions.length}</b>
-          <span>ideas ranked</span>
-        </div>
-        <div className="stat">
-          <b>{run.rejected.length}</b>
-          <span>stopped</span>
-        </div>
-      </div>
+      {run.emptyReason ? (
+        <Banner status="info" title="Nothing to propose this run" description={run.emptyReason} />
+      ) : null}
 
-      {run.emptyReason && <p className="note">{run.emptyReason}</p>}
+      {d.offers.length > 0 ? (
+        <Block
+          title="Live now"
+          hint="The assistant can mention these. It cannot invent one or change a percentage."
+        >
+          <VStack gap={3}>
+            {d.offers.map((o) => (
+              <Card key={o.candidateId}>
+                <HStack gap={4} hAlign="between" vAlign="center" wrap="wrap">
+                  <VStack gap={1}>
+                    <HStack gap={3} vAlign="center">
+                      <Token size="md" color="green" label={`${Math.round(o.depth * 100)}% off`} />
+                      <Heading level={3}>{o.title}</Heading>
+                    </HStack>
+                    <Text type="supporting" color="secondary">
+                      Until {o.endsAt}, capped at {o.maxUnits} units. Approved by {o.approvedBy} on{" "}
+                      {o.approvedAt.slice(0, 10)}.
+                    </Text>
+                  </VStack>
+                  <Form method="post">
+                    <input type="hidden" name="shop" value={shop} />
+                    <input type="hidden" name="candidateId" value={o.candidateId} />
+                    <input type="hidden" name="act" value="revoke" />
+                    <Button
+                      type="submit"
+                      variant="secondary"
+                      size="sm"
+                      isDisabled={busy}
+                      label="Stop this offer"
+                    />
+                  </Form>
+                </HStack>
+              </Card>
+            ))}
+          </VStack>
+        </Block>
+      ) : null}
 
-      {/* ---------------- live offers ---------------- */}
-      {d.offers.length > 0 && (
-        <>
-          <h2>Live now</h2>
-          <p className="muted" style={{ fontSize: 13.5, margin: "0 0 10px" }}>
-            The assistant may tell shoppers these exist. It cannot invent one, change a percentage,
-            or add a deadline — and the discount itself is applied by the server at checkout, not by
-            anything the assistant says.
-          </p>
-          {d.offers.map((o) => (
-            <div key={o.candidateId} className="panel">
-              <div className="card-name" style={{ fontWeight: 600 }}>
-                {Math.round(o.depth * 100)}% off {o.title}
-              </div>
-              <p className="muted" style={{ fontSize: 13, margin: "6px 0" }}>
-                Until {o.endsAt}, capped at {o.maxUnits} units. Approved by {o.approvedBy} on{" "}
-                {o.approvedAt.slice(0, 10)}.
-              </p>
-              <Form method="post">
-                <input type="hidden" name="shop" value={d.site.key} />
-                <input type="hidden" name="candidateId" value={o.candidateId} />
-                <input type="hidden" name="act" value="revoke" />
-                <button type="submit" disabled={busy} className="btn-secondary">
-                  Stop this offer
-                </button>
-              </Form>
-            </div>
-          ))}
-        </>
-      )}
+      {run.incidents.length > 0 ? (
+        <Block
+          title="Needs attention"
+          hint="Broken, not suggested. Kept out of the ranked list on purpose."
+        >
+          <VStack gap={3}>
+            {run.incidents.map((c) => (
+              <Banner
+                key={c.id}
+                status="warning"
+                container="card"
+                title={c.title}
+                description={c.rationale}
+              >
+                <Facts facts={c.facts} />
+              </Banner>
+            ))}
+          </VStack>
+        </Block>
+      ) : null}
 
-      {/* ---------------- incidents ---------------- */}
-      {run.incidents.length > 0 && (
-        <>
-          <h2>Needs attention</h2>
-          <p className="muted" style={{ fontSize: 13.5, margin: "0 0 10px" }}>
-            Not suggestions. These are things that appear to be broken, and they are kept out of the
-            ranked list on purpose — a payment failure does not belong in a queue next to
-            &ldquo;consider pairing these two teas&rdquo;.
-          </p>
-          {run.incidents.map((c) => (
-            <div key={c.id} className="panel" style={{ borderLeft: "3px solid #8a6d2f" }}>
-              <div style={{ fontWeight: 600 }}>{c.title}</div>
-              <p style={{ fontSize: 13.5, margin: "8px 0", color: "#3a4a43" }}>{c.rationale}</p>
-              <FactRow facts={c.facts} />
-            </div>
-          ))}
-        </>
-      )}
-
-      {/* ---------------- this week's digest ---------------- */}
-      <h2>This week</h2>
-      <p className="muted" style={{ fontSize: 13.5, margin: "0 0 10px" }}>
-        {run.digest.length} of {run.actions.length} ranked ideas, chosen to cover different products
-        rather than to be the three highest scores. None of these costs you any margin.
-      </p>
-      {run.digest.map((c) => (
-        <div key={c.id} className="panel">
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-            <div style={{ fontWeight: 600 }}>{c.title}</div>
-            <span className="mono muted" title="priority score">
-              {c.priority.toFixed(0)}
-            </span>
-          </div>
-          <p style={{ fontSize: 13.5, margin: "8px 0", color: "#3a4a43" }}>{c.rationale}</p>
-          <FactRow facts={c.facts} />
-          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <Form method="post">
-              <input type="hidden" name="shop" value={d.site.key} />
-              <input type="hidden" name="candidateId" value={c.id} />
-              <input type="hidden" name="act" value="reject" />
-              <button type="submit" disabled={busy} className="btn-secondary">
-                Not interested
-              </button>
-            </Form>
-          </div>
-        </div>
-      ))}
-
-      {/* ---------------- price experiments ---------------- */}
-      {run.experiments.length > 0 && (
-        <>
-          <h2>Price experiments</h2>
-          <p className="muted" style={{ fontSize: 13.5, margin: "0 0 10px", maxWidth: "62ch" }}>
-            These give up margin, so they are kept apart and only one should run at a time. We can
-            tell you exactly what a cut costs and how much extra volume it would need to pay for
-            itself. <strong>We cannot tell you whether it will</strong> — you have never changed a
-            price, so there is nothing in your data to estimate that from.
-          </p>
-          {run.experiments.map((c) => {
-            const depth = Number(/@(\d+(?:\.\d+)?)%/.exec(c.id)?.[1] ?? 10) / 100;
-            return (
-              <div key={c.id} className="panel">
-                <div style={{ fontWeight: 600 }}>{c.title}</div>
-                <p style={{ fontSize: 13.5, margin: "8px 0", color: "#3a4a43" }}>{c.rationale}</p>
-                <FactRow facts={c.facts} />
-                <Form method="post" style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
-                  <input type="hidden" name="shop" value={d.site.key} />
+      <Block
+        title="This week"
+        hint={`${run.digest.length} of ${run.actions.length} ranked ideas, chosen to cover different products rather than to be the three highest scores. None of these costs you any margin.`}
+      >
+        <VStack gap={3}>
+          {run.digest.map((c) => (
+            <Card key={c.id}>
+              <VStack gap={4}>
+                <HStack gap={4} hAlign="between" vAlign="start">
+                  <VStack gap={2}>
+                    <Heading level={3}>{c.title}</Heading>
+                    <Text color="secondary">{c.rationale}</Text>
+                  </VStack>
+                  <Token size="sm" color="gray" label={`priority ${c.priority.toFixed(0)}`} />
+                </HStack>
+                <Facts facts={c.facts} />
+                <Form method="post">
+                  <input type="hidden" name="shop" value={shop} />
                   <input type="hidden" name="candidateId" value={c.id} />
-                  <input type="hidden" name="handle" value={c.products[0]} />
-                  <input type="hidden" name="title" value={c.title.replace(/^Consider \d+% off /, "")} />
-                  <input type="hidden" name="depth" value={depth} />
-                  <label style={{ fontSize: 12.5 }}>
-                    Ends
-                    <br />
-                    <input type="date" name="endsAt" defaultValue={defaultEnd} required />
-                  </label>
-                  <label style={{ fontSize: 12.5 }}>
-                    Max units
-                    <br />
-                    <input type="number" name="maxUnits" defaultValue={40} min={1} required style={{ width: 90 }} />
-                  </label>
-                  <button type="submit" name="act" value="approve" disabled={busy} className="btn-primary">
-                    Approve this offer
-                  </button>
-                  <button type="submit" name="act" value="reject" disabled={busy} className="btn-secondary">
-                    No
-                  </button>
+                  <input type="hidden" name="act" value="reject" />
+                  <Button
+                    type="submit"
+                    variant="ghost"
+                    size="sm"
+                    isDisabled={busy}
+                    label="Not interested"
+                  />
                 </Form>
-              </div>
-            );
-          })}
-        </>
-      )}
-
-      {/* ---------------- what was stopped ---------------- */}
-      <h2>Considered and stopped</h2>
-      <p className="muted" style={{ fontSize: 13.5, margin: "0 0 10px", maxWidth: "62ch" }}>
-        Shown rather than hidden. A proposer that quietly discards is
-        indistinguishable from one that never looked.
-      </p>
-      <table>
-        <thead>
-          <tr>
-            <th>Idea</th>
-            <th>Why it was stopped</th>
-          </tr>
-        </thead>
-        <tbody>
-          {run.rejected.map((r) => (
-            <tr key={r.candidate.id}>
-              <td>
-                {r.candidate.title}
-                <br />
-                <span className="pill planned">{GATE_LABEL[r.rejected!.gate] ?? r.rejected!.gate}</span>
-              </td>
-              <td className="muted">{r.rejected!.why}</td>
-            </tr>
+              </VStack>
+            </Card>
           ))}
-          {run.rejected.length === 0 && (
-            <tr>
-              <td colSpan={2} className="muted">
-                Nothing was stopped this run.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+        </VStack>
+      </Block>
 
-      {/* ---------------- classification ---------------- */}
-      <h2>Your catalogue, classified</h2>
-      <p className="muted" style={{ fontSize: 13.5, margin: "0 0 10px", maxWidth: "62ch" }}>
-        A by revenue, not by units — a product can be slow on the shelf and still be a tenth of the
-        business, and treating it as a slow mover is how a healthy line ends up discounted. X, Y and
-        Z are how steady the monthly demand is; <strong>?</strong> means too few months to say.
-      </p>
-      <table>
-        <thead>
-          <tr>
-            <th>Product</th>
-            <th>Class</th>
-            <th>Share of revenue</th>
-            <th>Units/mo</th>
-            <th>Cover</th>
-          </tr>
-        </thead>
-        <tbody>
-          {run.classification.map((c) => (
-            <tr key={c.handle}>
-              <td>{c.title}</td>
-              <td className="mono">
-                {c.abc}
-                {c.xyz}
-              </td>
-              <td>{(c.revenueShare * 100).toFixed(1)}%</td>
-              <td>{c.unitsPerMonth.toFixed(1)}</td>
-              <td>{c.monthsOfCover === null ? "—" : `${c.monthsOfCover.toFixed(1)} mo`}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {run.experiments.length > 0 ? (
+        <Block
+          title="Price experiments"
+          hint="These give up margin, so run one at a time. Each shows what it costs and the volume it needs to break even — not whether it will get there."
+        >
+          <VStack gap={3}>
+            {run.experiments.map((c) => (
+              <ExperimentCard
+                key={c.id}
+                id={c.id}
+                title={c.title}
+                rationale={c.rationale}
+                facts={c.facts}
+                handle={c.products[0]}
+                shop={shop}
+                defaultEnd={defaultEnd}
+                busy={busy}
+              />
+            ))}
+          </VStack>
+        </Block>
+      ) : null}
 
-      {d.decisions.length > 0 && (
-        <>
-          <h2>Your decisions</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>When</th>
-                <th>What</th>
-                <th>Proposal</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.decisions.map((x, i) => (
-                <tr key={i}>
-                  <td className="muted">{x.ts.slice(0, 16).replace("T", " ")}</td>
-                  <td>{x.action}</td>
-                  <td className="mono muted">{x.candidateId}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      )}
-    </>
-  );
-}
+      <Block
+        title="Considered and stopped"
+        hint="Shown rather than hidden, so you can judge the floors."
+      >
+        {stoppedRows.length === 0 ? (
+          <Card>
+            <EmptyState
+              isCompact
+              title="Nothing was stopped this run"
+              description="Every candidate the detectors raised cleared all three floors."
+            />
+          </Card>
+        ) : (
+          <Card padding={0}>
+            <Table
+              data={stoppedRows}
+              idKey="id"
+              density="balanced"
+              dividers="rows"
+              columns={[
+                {
+                  key: "idea",
+                  header: "Idea",
+                  width: proportional(1),
+                  renderCell: (r) => (
+                    <VStack gap={1.5}>
+                      <Text>{String(r.idea)}</Text>
+                      <HStack>
+                        <Token size="sm" color="gray" label={String(r.gate)} />
+                      </HStack>
+                    </VStack>
+                  ),
+                },
+                {
+                  key: "why",
+                  header: "Why it was stopped",
+                  width: proportional(1.2),
+                  renderCell: (r) => <Text color="secondary">{String(r.why)}</Text>,
+                },
+              ]}
+            />
+          </Card>
+        )}
+      </Block>
 
-function FactRow({ facts }: { facts: Array<{ label: string; value: string }> }) {
-  return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 16px", fontSize: 12.5 }}>
-      {facts.map((f) => (
-        <span key={f.label} className="muted">
-          {f.label} <strong style={{ color: "#16211c" }}>{f.value}</strong>
-        </span>
-      ))}
-    </div>
+      <Block
+        title="Your catalogue, classified"
+        hint="A, B, C by share of revenue. X, Y, Z by how steady demand is; ? means too few months to say."
+      >
+        <Card padding={0}>
+          <Table
+            data={classRows}
+            idKey="id"
+            density="compact"
+            dividers="rows"
+            columns={[
+              { key: "title", header: "Product", width: proportional(1) },
+              {
+                key: "grade",
+                header: "Class",
+                width: pixel(80),
+                renderCell: (r) => (
+                  <Text type="code" size="2xs">
+                    {String(r.grade)}
+                  </Text>
+                ),
+              },
+              { key: "share", header: "Share of revenue", width: pixel(140), align: "end" },
+              { key: "units", header: "Units/mo", width: pixel(100), align: "end" },
+              { key: "cover", header: "Cover", width: pixel(96), align: "end" },
+            ]}
+          />
+        </Card>
+      </Block>
+
+      {decisionRows.length > 0 ? (
+        <Block title="Your decisions">
+          <Card padding={0}>
+            <Table
+              data={decisionRows}
+              idKey="id"
+              density="compact"
+              dividers="rows"
+              columns={[
+                {
+                  key: "when",
+                  header: "When",
+                  width: pixel(150),
+                  renderCell: (r) => (
+                    <Text type="code" size="2xs" color="secondary">
+                      {String(r.when)}
+                    </Text>
+                  ),
+                },
+                {
+                  key: "what",
+                  header: "What",
+                  width: pixel(120),
+                  renderCell: (r) => (
+                    <Token
+                      size="sm"
+                      color={r.what === "approve" ? "green" : "gray"}
+                      label={String(r.what)}
+                    />
+                  ),
+                },
+                {
+                  key: "proposal",
+                  header: "Proposal",
+                  width: proportional(1),
+                  renderCell: (r) => (
+                    <Text type="code" size="2xs" color="secondary">
+                      {String(r.proposal)}
+                    </Text>
+                  ),
+                },
+              ]}
+            />
+          </Card>
+        </Block>
+      ) : null}
+
+      <Note>
+        Nothing here forecasts. You get the break-even; the judgment stays with you.
+      </Note>
+    </Page>
   );
 }

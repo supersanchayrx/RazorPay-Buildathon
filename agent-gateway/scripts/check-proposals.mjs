@@ -16,6 +16,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { DATA_DIR, dataPath } from "./data-dir.mjs";
 import { pathToFileURL } from "node:url";
 import * as esbuild from "esbuild";
 
@@ -192,14 +193,14 @@ console.log("\n--- detectors, on data/orders.jsonl ---");
 
 const rd = (f) =>
   fs
-    .readFileSync(path.join(process.cwd(), "data", f), "utf8")
+    .readFileSync(dataPath(f), "utf8")
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l));
 
 const orders = rd("orders.jsonl");
 const carts = rd("carts.jsonl");
-const inputs = JSON.parse(fs.readFileSync(path.join(process.cwd(), "data", "merchant-inputs.json"), "utf8"));
+const inputs = JSON.parse(fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"));
 
 // Stock on hand, from the demo store's catalogue.
 const feed = JSON.parse(fs.readFileSync(path.join(process.cwd(), "..", "demo-store", "catalog.json"), "utf8"));

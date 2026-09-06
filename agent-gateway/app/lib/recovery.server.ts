@@ -57,7 +57,7 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
+import { dataPath } from "./paths.server";
 import { checkReply } from "./bounds.server";
 import { paymentFailures, type DetectorInput, type HistoryCart, type HistoryOrder, type MerchantInputs } from "./detectors.server";
 import { activeOffers, type ActiveOffer } from "./approvals.server";
@@ -187,7 +187,7 @@ export type RecoveryRun = {
 function readJsonl<T>(file: string): T[] {
   try {
     return fs
-      .readFileSync(path.join(process.cwd(), "data", file), "utf8")
+      .readFileSync(dataPath(file), "utf8")
       .split("\n")
       .filter(Boolean)
       .map((l) => JSON.parse(l) as T);
@@ -199,7 +199,7 @@ function readJsonl<T>(file: string): T[] {
 function readInputs(): MerchantInputs | null {
   try {
     return JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), "data", "merchant-inputs.json"), "utf8"),
+      fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"),
     ) as MerchantInputs;
   } catch {
     return null;

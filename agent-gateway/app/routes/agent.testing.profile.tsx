@@ -1,5 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { UCP_VERSION } from "../lib/ucp.server";
+import { selfOrigin } from "../lib/origin.server";
 
 /**
  * A UCP agent profile, for testing this store's agent surface.
@@ -30,8 +31,6 @@ import { UCP_VERSION } from "../lib/ucp.server";
  */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const u = new URL(request.url);
-  const proto = request.headers.get("x-forwarded-proto") ?? u.protocol.replace(":", "");
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? u.host;
 
   return new Response(
     JSON.stringify(
@@ -51,7 +50,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         name: "CHAPMAN test harness",
         description:
           "A person exercising this store's agent surface by hand — through the ucp CLI, an MCP client, or scripts/shop-as-agent.mjs. Not a shopping platform, and not a fleet.",
-        url: `${proto}://${host}/agent/testing/profile`,
+        url: `${selfOrigin(request)}/agent/testing/profile`,
       },
       null,
       2,

@@ -39,6 +39,9 @@ const REAL = process.cwd();
 const SANDBOX = path.join(REAL, "node_modules", ".cache", "ucp-sandbox");
 fs.rmSync(SANDBOX, { recursive: true, force: true });
 fs.mkdirSync(path.join(SANDBOX, "data"), { recursive: true });
+// Isolation used to rest on cwd alone. An inherited CHAPMAN_DATA_DIR would
+// have walked straight past it and into the merchant's real data.
+process.env.CHAPMAN_DATA_DIR = path.join(SANDBOX, "data");
 
 const U = await load("app/lib/ucp.server.ts", "ucp-check.mjs");
 const T = await load("app/lib/ucptools.ts", "ucptools-check.mjs");
@@ -197,6 +200,11 @@ check(
 
 /* ================= discovery honesty ================= */
 
+// The profile is allowed to advertise checkout only when these names resolve.
+// Set them for the discovery block, then remove them before the payment-method
+// tests below so those can still exercise the unconfigured path.
+process.env.K = "rzp_test_check";
+process.env.S = "check-secret";
 const doc = U.discoveryDocument(SITE, "http://127.0.0.1:3000");
 check(
   "discovery names the version, transport and endpoint",
@@ -270,6 +278,13 @@ check(
   "a store WITHOUT keys advertises none",
   Object.keys(U.discoveryDocument({ ...SITE, razorpay: undefined }, "http://x").ucp.payment_handlers).length === 0,
   "so an agent expects escalation instead of discovering it by failing at the last step",
+);
+delete process.env.K;
+delete process.env.S;
+check(
+  "a store with variable names but missing values also advertises none",
+  Object.keys(U.discoveryDocument(SITE, "http://x").ucp.payment_handlers).length === 0,
+  "a reference in config is not a working credential",
 );
 check(
   "every advertised capability has a method behind it",

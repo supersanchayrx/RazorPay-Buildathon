@@ -59,6 +59,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { dataPath } from "./paths.server";
 import crypto from "node:crypto";
 
 /** Written this way so no shell or build step can mangle an escape. */
@@ -208,7 +209,7 @@ export function worthLearning(
  * Store
  * ------------------------------------------------------------------ */
 
-const FILE = path.join(process.cwd(), "data", "shopper-memory.jsonl");
+const FILE = dataPath("shopper-memory.jsonl");
 
 /** A delete leaves a tombstone, so the append-only log stays append-only. */
 type Row = ({ op: "put" } & Memory) | { op: "forget"; shop: string; sub: string; id?: string; at: string };

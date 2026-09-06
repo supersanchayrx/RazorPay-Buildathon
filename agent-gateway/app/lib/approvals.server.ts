@@ -27,6 +27,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { dataPath } from "./paths.server";
 import { record } from "./ledger.server";
 
 export type Decision = {
@@ -68,7 +69,7 @@ export type ActiveOffer = OfferTerms & {
   approvedBy: string;
 };
 
-const FILE = path.join(process.cwd(), "data", "offer-decisions.jsonl");
+const FILE = dataPath("offer-decisions.jsonl");
 
 function readAll(): Decision[] {
   try {

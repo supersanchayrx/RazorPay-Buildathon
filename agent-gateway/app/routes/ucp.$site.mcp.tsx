@@ -4,7 +4,9 @@ import { jsonFeedCatalog } from "../lib/catalog.server";
 import { resolveAgent } from "../lib/ucp.server";
 import { METHODS, type MethodContext } from "../lib/ucpmethods.server";
 import { TOOLS } from "../lib/ucptools";
+import { featureForUcpTool, featureOn, filterUcpTools } from "../lib/featureflags.server";
 import { record } from "../lib/ledger.server";
+import { selfOrigin } from "../lib/origin.server";
 
 /**
  * The MCP endpoint a shopper's agent talks to.
@@ -58,9 +60,7 @@ const rpcError = (id: unknown, code: number, message: string, data?: unknown) =>
  */
 function baseUrlOf(request: Request): string {
   const u = new URL(request.url);
-  const proto = request.headers.get("x-forwarded-proto") ?? u.protocol.replace(":", "");
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? u.host;
-  return `${proto}://${host}`;
+  return selfOrigin(request);
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -76,6 +76,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   const site = findSite(params.site ?? null);
   if (!site) return rpcError(null, -32001, "Unknown store.");
+
+  // A merchant who switched the agent surface off has no agent surface. 404
+  // rather than an RPC error, because this is not a request that failed — it
+  // is an endpoint that is not there, and an agent should stop asking.
+  if (!featureOn(site.key, "agent_front")) {
+    return new Response("Not found", { status: 404, headers: CORS });
+  }
 
   let body: { jsonrpc?: string; id?: unknown; method?: string; params?: Record<string, unknown> };
   try {
@@ -110,7 +117,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (method === "ping") return json({ jsonrpc: "2.0", id, result: {} });
 
   if (method === "tools/list") {
-    return json({ jsonrpc: "2.0", id, result: { tools: TOOLS } });
+    // What this shop actually offers, not what CHAPMAN can do. Advertising a
+    // tool the merchant switched off would have an agent plan around a
+    // capability that refuses on use — the expensive way to find out.
+    return json({ jsonrpc: "2.0", id, result: { tools: filterUcpTools(site.key, TOOLS) } });
   }
 
   /* ---------------- tools/call ---------------- */
@@ -123,6 +133,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const name = String(call.name ?? "");
   const fn = METHODS[name];
   if (!fn) {
+    return rpcError(id, -32601, `Unknown tool: ${name}. Call tools/list for what this store supports.`);
+  }
+
+  // Withdrawing a tool from the list is not enough on its own: an agent that
+  // cached an earlier list, or guessed from the spec, calls it anyway. Same
+  // error as an unknown tool, deliberately — from the caller's side a tool
+  // this shop does not offer and a tool that does not exist are the same fact.
+  const governed = featureForUcpTool(name);
+  if (governed && !featureOn(site.key, governed)) {
     return rpcError(id, -32601, `Unknown tool: ${name}. Call tools/list for what this store supports.`);
   }
 

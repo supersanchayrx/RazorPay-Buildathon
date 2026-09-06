@@ -158,12 +158,14 @@ export function guessHost(headers: Headers): string | null {
   const h = (k: string) => headers.get(k)?.toLowerCase() ?? "";
   if (h("x-nf-request-id") || h("server").includes("netlify")) return "Netlify";
   if (h("x-vercel-id") || h("server").includes("vercel")) return "Vercel";
-  if (h("cf-ray") && h("server").includes("cloudflare")) return "Cloudflare Pages";
+  if (h("cf-ray") && h("server").includes("cloudflare"))
+    return "Cloudflare Pages";
   if (h("server").includes("nginx")) return "nginx";
   if (h("server").includes("apache")) return "Apache";
   if (h("server").includes("caddy")) return "Caddy";
   if (h("x-powered-by").includes("express")) return "Express";
-  if (h("x-powered-by").includes("phusion") || h("server").includes("puma")) return "Rails";
+  if (h("x-powered-by").includes("phusion") || h("server").includes("puma"))
+    return "Rails";
   return null;
 }
 
@@ -201,7 +203,10 @@ export type TierCSnippet = Snippet & {
  * A merchant who cannot deploy code is not locked out of this tier. They get
  * half of it in two lines, and the console says which half.
  */
-export function tierCSnippets(gatewayBaseUrl: string, siteKey: string): TierCSnippet[] {
+export function tierCSnippets(
+  gatewayBaseUrl: string,
+  siteKey: string,
+): TierCSnippet[] {
   const base = `${gatewayBaseUrl.replace(/\/$/, "")}/ucp/${siteKey}`;
   const NO_CODE = ["/llms.txt", "Link: header"];
   const NO_CODE_MISSING = ["JSON-LD in the page", "?format=json"];
@@ -253,8 +258,15 @@ add_header Link '</.well-known/ucp>; rel="ucp"; type="application/json"' always;
       host: "Express",
       where: "above your routes",
       lang: "javascript",
-      covers: ["/llms.txt", "Link: header", "JSON-LD in the page", "?format=json"],
-      missing: ["pages sent with res.sendFile or a stream — this hooks res.send"],
+      covers: [
+        "/llms.txt",
+        "Link: header",
+        "JSON-LD in the page",
+        "?format=json",
+      ],
+      missing: [
+        "pages sent with res.sendFile or a stream — this hooks res.send",
+      ],
       body: `const CHAPMAN = "${base}";
 const cache = new Map();
 
@@ -323,7 +335,12 @@ app.use(async (req, res, next) => {
       where: "wrap your outermost handler",
       lang: "go",
       measured: true,
-      covers: ["/llms.txt", "Link: header", "JSON-LD in the page", "?format=json"],
+      covers: [
+        "/llms.txt",
+        "Link: header",
+        "JSON-LD in the page",
+        "?format=json",
+      ],
       body: `// Copy demo-store/agentfront.go into your package, then:
 tc := newTierC("${gatewayBaseUrl.replace(/\/$/, "")}", "${siteKey}")
 mux.HandleFunc("/llms.txt", tc.handleLLMs)
@@ -383,12 +400,17 @@ const TIMEOUT_MS = 6000;
  * merchant told only "not working" has to guess which. The `ucp` CLI's own
  * failure taxonomy makes the same distinction, and for the same reason.
  */
-export async function verifyInstall(site: Site, gatewayBaseUrl: string): Promise<VerifyResult> {
+export async function verifyInstall(
+  site: Site,
+  gatewayBaseUrl: string,
+  reachableOrigin = site.origins[0] ?? "",
+): Promise<VerifyResult> {
   const origin = site.origins[0] ?? "";
   const steps: VerifyStep[] = [];
   const checkedAt = new Date().toISOString();
   const expected = discoveryDocument(site, gatewayBaseUrl);
-  const expectedEndpoint = expected.ucp.services["dev.ucp.shopping"][0].endpoint;
+  const expectedEndpoint =
+    expected.ucp.services["dev.ucp.shopping"][0].endpoint;
 
   const done = (): VerifyResult => ({
     origin,
@@ -410,7 +432,9 @@ export async function verifyInstall(site: Site, gatewayBaseUrl: string): Promise
   // HTTPS is not a preference. `ucp discover http://…` is refused with
   // INVALID_INPUT before any network call is made, so a plain-HTTP storefront is
   // invisible to a conforming client no matter how correct the rest is.
-  const isLocal = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|$)/.test(origin);
+  const isLocal = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|$)/.test(
+    origin,
+  );
   steps.push(
     origin.startsWith("https://")
       ? { label: "Storefront is HTTPS", state: "pass", detail: origin }
@@ -424,7 +448,10 @@ export async function verifyInstall(site: Site, gatewayBaseUrl: string): Promise
 
   /* ---- 1. the well-known path answers, however it chooses to ---- */
 
-  const wellKnown = `${origin}/.well-known/ucp`;
+  // The public origin is what agents use and what we report. The optional
+  // reachable origin is only the network route this server fetches. In Docker
+  // those are localhost:4000 and store:4000 respectively.
+  const wellKnown = `${reachableOrigin}/.well-known/ucp`;
   let hop: Response;
   try {
     hop = await fetch(wellKnown, {
@@ -442,7 +469,11 @@ export async function verifyInstall(site: Site, gatewayBaseUrl: string): Promise
     return done();
   }
 
-  const redirected = hop.status === 301 || hop.status === 302 || hop.status === 307 || hop.status === 308;
+  const redirected =
+    hop.status === 301 ||
+    hop.status === 302 ||
+    hop.status === 307 ||
+    hop.status === 308;
   if (redirected) {
     const target = hop.headers.get("location") ?? "";
     steps.push({
@@ -491,7 +522,10 @@ export async function verifyInstall(site: Site, gatewayBaseUrl: string): Promise
   let doc: {
     ucp?: {
       version?: string;
-      services?: Record<string, Array<{ endpoint?: string; transport?: string }>>;
+      services?: Record<
+        string,
+        Array<{ endpoint?: string; transport?: string }>
+      >;
       payment_handlers?: Record<string, unknown>;
     };
   };
@@ -503,7 +537,11 @@ export async function verifyInstall(site: Site, gatewayBaseUrl: string): Promise
     });
     if (!res.ok) throw new Error(`returned ${res.status} after following`);
     doc = await res.json();
-    steps.push({ label: "It returns a UCP profile", state: "pass", detail: `${res.status}, valid JSON` });
+    steps.push({
+      label: "It returns a UCP profile",
+      state: "pass",
+      detail: `${res.status}, valid JSON`,
+    });
   } catch (e) {
     steps.push({
       label: "It returns a UCP profile",
@@ -516,7 +554,11 @@ export async function verifyInstall(site: Site, gatewayBaseUrl: string): Promise
 
   steps.push(
     doc.ucp?.version
-      ? { label: "It names a protocol version", state: "pass", detail: doc.ucp.version }
+      ? {
+          label: "It names a protocol version",
+          state: "pass",
+          detail: doc.ucp.version,
+        }
       : {
           label: "It names a protocol version",
           state: "fail",
@@ -528,7 +570,11 @@ export async function verifyInstall(site: Site, gatewayBaseUrl: string): Promise
   const endpoint = doc.ucp?.services?.["dev.ucp.shopping"]?.[0]?.endpoint ?? "";
   steps.push(
     endpoint
-      ? { label: "It names a shopping endpoint", state: "pass", detail: endpoint }
+      ? {
+          label: "It names a shopping endpoint",
+          state: "pass",
+          detail: endpoint,
+        }
       : {
           label: "It names a shopping endpoint",
           state: "fail",
@@ -546,7 +592,11 @@ export async function verifyInstall(site: Site, gatewayBaseUrl: string): Promise
 
   steps.push(
     endpoint === expectedEndpoint
-      ? { label: "It matches what we serve now", state: "pass", detail: "endpoint is current" }
+      ? {
+          label: "It matches what we serve now",
+          state: "pass",
+          detail: "endpoint is current",
+        }
       : {
           label: "It matches what we serve now",
           state: "warn",
@@ -572,7 +622,8 @@ export async function verifyInstall(site: Site, gatewayBaseUrl: string): Promise
     steps.push({
       label: "Your payment handler is advertised",
       state: "skip",
-      detail: "no payment keys configured — agents can browse and build carts, not check out",
+      detail:
+        "no payment keys configured — agents can browse and build carts, not check out",
     });
   }
 
@@ -581,7 +632,10 @@ export async function verifyInstall(site: Site, gatewayBaseUrl: string): Promise
   try {
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
@@ -589,11 +643,18 @@ export async function verifyInstall(site: Site, gatewayBaseUrl: string): Promise
     // Streamable HTTP may answer as SSE, so the JSON is located rather than
     // assumed to start at byte zero.
     const start = text.indexOf("{");
-    const parsed = start >= 0 ? (JSON.parse(text.slice(start)) as { result?: { tools?: unknown[] } }) : null;
+    const parsed =
+      start >= 0
+        ? (JSON.parse(text.slice(start)) as { result?: { tools?: unknown[] } })
+        : null;
     const count = parsed?.result?.tools?.length ?? 0;
     steps.push(
       count > 0
-        ? { label: "The endpoint lists its tools", state: "pass", detail: `${count} operations` }
+        ? {
+            label: "The endpoint lists its tools",
+            state: "pass",
+            detail: `${count} operations`,
+          }
         : {
             label: "The endpoint lists its tools",
             state: "fail",
@@ -649,7 +710,9 @@ export type AgentActivity = {
 
 export function agentActivity(shop: string): AgentActivity {
   const rows = readLedger(4000).filter(
-    (r) => r.shop === shop && typeof (r.detail as { agent?: unknown } | undefined)?.agent === "string",
+    (r) =>
+      r.shop === shop &&
+      typeof (r.detail as { agent?: unknown } | undefined)?.agent === "string",
   );
 
   const hosts = new Set<string>();
@@ -660,7 +723,8 @@ export function agentActivity(shop: string): AgentActivity {
     const d = r.detail as { agent: string; orderId?: string; amount?: number };
     hosts.add(d.agent);
     calls++;
-    if (r.kind === "payment_started" && d.orderId) started.set(d.orderId, d.amount ?? 0);
+    if (r.kind === "payment_started" && d.orderId)
+      started.set(d.orderId, d.amount ?? 0);
   }
 
   // An order is only an order once it settled. `payment_started` is intent, and
@@ -669,7 +733,10 @@ export function agentActivity(shop: string): AgentActivity {
   let revenue = 0;
   for (const [gatewayOrderId] of started) {
     const placed = findByGatewayOrder(gatewayOrderId);
-    if (placed && (placed.status === "paid" || placed.status === "authorized")) {
+    if (
+      placed &&
+      (placed.status === "paid" || placed.status === "authorized")
+    ) {
       orders++;
       revenue += placed.amount;
     }
@@ -685,7 +752,11 @@ export function agentActivity(shop: string): AgentActivity {
       .slice(-12)
       .reverse()
       .map((r) => {
-        const d = r.detail as { agent: string; orderId?: string; amount?: number };
+        const d = r.detail as {
+          agent: string;
+          orderId?: string;
+          amount?: number;
+        };
         return {
           ts: r.ts,
           kind: r.kind,

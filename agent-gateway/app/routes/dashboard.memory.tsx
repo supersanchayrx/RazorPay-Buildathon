@@ -1,5 +1,20 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, Link, useLoaderData, useNavigation } from "react-router";
+import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
+import { Card } from "@astryxdesign/core/Card";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
+import { Divider } from "@astryxdesign/core/Divider";
+import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { HStack } from "@astryxdesign/core/HStack";
+import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
+import { Table, pixel, proportional } from "@astryxdesign/core/Table";
+import { Text } from "@astryxdesign/core/Text";
+import { Token } from "@astryxdesign/core/Token";
+import { VStack } from "@astryxdesign/core/VStack";
+
+import { Block, Figure, Figures, Note, Page, PageHead, Setup } from "../components/console";
+import { IntegrationSetup } from "../components/integration-setup";
 import { requireMerchant } from "../lib/auth.server";
 import { sitesForMerchant } from "../lib/sites.server";
 import {
@@ -12,6 +27,7 @@ import {
   RECALL_LIMIT,
 } from "../lib/memory.server";
 import { complete, isConfigured as modelConfigured, MODELS } from "../lib/openrouter.server";
+import { openRouterSetup } from "../lib/integration-setup.server";
 
 /**
  * What the shop remembers about people, shown to the merchant in full.
@@ -43,7 +59,15 @@ import { complete, isConfigured as modelConfigured, MODELS } from "../lib/openro
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const merchant = requireMerchant(request);
   const site = sitesForMerchant(merchant.sites)[0] ?? null;
-  if (!site) return { site: null, subjects: [], stats: null, limits: null, summariser: false };
+  if (!site)
+    return {
+      site: null,
+      subjects: [],
+      stats: null,
+      limits: null,
+      summariser: false,
+      modelSetup: openRouterSetup("summariser"),
+    };
 
   return {
     site: { key: site.key, name: site.name },
@@ -75,6 +99,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
      */
     limits: { ttlDays: MEMORY_TTL_DAYS, recallLimit: RECALL_LIMIT, condenseAbove: CONSOLIDATE_ABOVE },
     summariser: modelConfigured(),
+    modelSetup: openRouterSetup("summariser"),
   };
 };
 
@@ -136,210 +161,264 @@ const KIND_BLURB: Record<string, string> = {
   boundary: "something they asked us not to do",
 };
 
+/** A boundary is not a taste. Colour says so before the label does. */
+const KIND_TONE: Record<string, "green" | "blue" | "gray" | "red"> = {
+  preference: "green",
+  context: "blue",
+  habit: "gray",
+  boundary: "red",
+};
+
 export default function MemoryPage() {
   const d = useLoaderData<typeof loader>();
+  const a = useActionData<typeof action>();
   const nav = useNavigation();
   const busy = nav.state !== "idle";
 
   if (!d.site || !d.stats || !d.limits) {
     return (
-      <>
-        <h1>Shopper memory</h1>
-        <p className="lede">No store is connected to this account yet.</p>
-      </>
+      <Page>
+        <PageHead title="Shopper memory" />
+        <Card>
+          <EmptyState
+            title="No store is connected to this account yet"
+            description="Memory is keyed per shop, so it needs one before it can hold anything."
+          />
+        </Card>
+      </Page>
     );
   }
 
+  const site = d.site;
+  const limits = d.limits;
+
   return (
-    <>
-      <p className="muted" style={{ marginTop: 22, fontSize: 13.5 }}>
-        <Link to="/dashboard" style={{ textDecoration: "none" }}>
-          ← Features
-        </Link>
-      </p>
-      <h1>Shopper memory</h1>
-      <p className="lede">
-        What your assistant remembers about individual people, and every word of it. Kept separate
-        from the shop&rsquo;s own memory on purpose: that one holds facts about your business and
-        cannot hold a person, this one holds people and never becomes a report.
-      </p>
+    <Page>
+      <PageHead
+        title="Shopper memory"
+        lede="What your assistant remembers about individual people, and every word of it. Kept apart from the shop cortex — that one holds your business, this one holds people."
+      >
+        <Figures>
+          <Figure value={d.stats.people} label="people remembered" tone="accent" />
+          <Figure value={d.stats.total} label="things remembered" />
+          <Figure value={d.stats.bySource.voice ?? 0} label="learned on a call" />
+          <Figure value={`${limits.ttlDays}d`} label="before one expires" />
+        </Figures>
+      </PageHead>
 
-      <div className="stats">
-        <div className="stat">
-          <b>{d.stats.people}</b>
-          <span>people remembered</span>
-        </div>
-        <div className="stat">
-          <b>{d.stats.total}</b>
-          <span>things remembered</span>
-        </div>
-        <div className="stat">
-          <b>{d.stats.bySource.voice ?? 0}</b>
-          <span>learned on a call</span>
-        </div>
-        <div className="stat">
-          <b>{d.limits.ttlDays}d</b>
-          <span>before one expires</span>
-        </div>
-      </div>
+      {a?.error ? <Banner status="error" title="That did not go through" description={a.error} /> : null}
+      {a?.ok && a.message ? <Banner status="success" title={a.message} isDismissable /> : null}
 
-      <div className="panel">
-        <h3 style={{ marginTop: 0 }}>The rules, which are code and not a policy document</h3>
-        <table>
-          <tbody>
-            <tr>
-              <td style={{ width: 260 }}>Nobody signed in</td>
-              <td>
+      <Block
+        title="Who is remembered"
+        hint={`${d.stats.people} ${d.stats.people === 1 ? "person" : "people"}, each keyed by your own customer id.`}
+      >
+        {d.subjects.length === 0 ? (
+          <Card>
+            <EmptyState
+              title="Nothing remembered yet"
+              description="Memories are written when a signed-in shopper says something durable about themselves, in the widget or on a recovery call. A question about your returns policy is about you, not about them, and is discarded before any model sees it."
+            />
+          </Card>
+        ) : (
+          <VStack gap={4}>
+            {d.subjects.map((g) => (
+              <Card key={g.sub} padding={0}>
+                <VStack gap={0}>
+                  <HStack gap={4} hAlign="between" vAlign="center" wrap="wrap" padding={4}>
+                    <HStack gap={3} vAlign="center">
+                      <Text type="code" size="xsm" weight="semibold">
+                        {g.sub}
+                      </Text>
+                      <Token size="sm" color="gray" label={`${g.memories.length} remembered`} />
+                    </HStack>
+                    <HStack gap={2}>
+                      {g.memories.length > limits.condenseAbove ? (
+                        <Form method="post">
+                          <input type="hidden" name="shop" value={site.key} />
+                          <input type="hidden" name="sub" value={g.sub} />
+                          <input type="hidden" name="act" value="condense" />
+                          <Button
+                            type="submit"
+                            variant="primary"
+                            size="sm"
+                            isDisabled={busy}
+                            label="Condense these"
+                          />
+                        </Form>
+                      ) : null}
+                      <Form method="post">
+                        <input type="hidden" name="shop" value={site.key} />
+                        <input type="hidden" name="sub" value={g.sub} />
+                        <Button
+                          type="submit"
+                          variant="secondary"
+                          size="sm"
+                          isDisabled={busy}
+                          label="Forget this shopper"
+                        />
+                      </Form>
+                    </HStack>
+                  </HStack>
+
+                  <Table
+                    data={g.memories as unknown as Array<Record<string, unknown>>}
+                    idKey="id"
+                    density="balanced"
+                    dividers="rows"
+                    columns={[
+                      {
+                        key: "text",
+                        header: "Remembered",
+                        width: proportional(1),
+                        renderCell: (m) => (
+                          <VStack gap={1.5}>
+                            <Text>{String(m.text)}</Text>
+                            {m.evidence ? (
+                              <Collapsible
+                                trigger={
+                                  <Text type="supporting" color="secondary">
+                                    what they said
+                                  </Text>
+                                }
+                              >
+                                <Text type="supporting" color="secondary">
+                                  &ldquo;{String(m.evidence)}&rdquo;
+                                </Text>
+                              </Collapsible>
+                            ) : null}
+                          </VStack>
+                        ),
+                      },
+                      {
+                        key: "kind",
+                        header: "Kind",
+                        width: pixel(180),
+                        renderCell: (m) => (
+                          <VStack gap={1}>
+                            <HStack>
+                              <Token
+                                size="sm"
+                                color={KIND_TONE[String(m.kind)] ?? "gray"}
+                                label={String(m.kind)}
+                              />
+                            </HStack>
+                            <Text type="supporting" color="secondary">
+                              {KIND_BLURB[String(m.kind)]}
+                            </Text>
+                          </VStack>
+                        ),
+                      },
+                      {
+                        key: "source",
+                        header: "From",
+                        width: pixel(92),
+                        renderCell: (m) => (
+                          <Text type="code" size="2xs" color="secondary">
+                            {String(m.source)}
+                          </Text>
+                        ),
+                      },
+                      {
+                        key: "expiresAt",
+                        header: "Expires",
+                        width: pixel(104),
+                        renderCell: (m) => (
+                          <Text type="code" size="2xs" color="secondary">
+                            {String(m.expiresAt).slice(0, 10)}
+                          </Text>
+                        ),
+                      },
+                      {
+                        key: "id",
+                        header: "",
+                        width: pixel(92),
+                        align: "end",
+                        renderCell: (m) => (
+                          <Form method="post">
+                            <input type="hidden" name="shop" value={site.key} />
+                            <input type="hidden" name="sub" value={g.sub} />
+                            <input type="hidden" name="id" value={String(m.id)} />
+                            <Button
+                              type="submit"
+                              variant="ghost"
+                              size="sm"
+                              isDisabled={busy}
+                              label="Forget"
+                            />
+                          </Form>
+                        ),
+                      },
+                    ]}
+                  />
+                </VStack>
+              </Card>
+            ))}
+          </VStack>
+        )}
+      </Block>
+
+      <Setup title="What it may and may not remember">
+        <IntegrationSetup guide={d.modelSetup} />
+
+        <Divider />
+
+        <VStack gap={0}>
+          <MetadataList label={{ position: "start", width: 220 }}>
+            <MetadataListItem label="Nobody signed in">
+              <Text>
                 Nothing is written at all. With no identity there is no way to honour a deletion
                 request later, so collecting would be taking something we could never give back.
-              </td>
-            </tr>
-            <tr>
-              <td>A memory may contain</td>
-              <td>
+              </Text>
+            </MetadataListItem>
+            <MetadataListItem label="A memory may contain">
+              <Text>
                 Durable things about a person — prefers low caffeine, buys gifts for a colleague,
                 brews in a French press.
-              </td>
-            </tr>
-            <tr>
-              <td>A memory may never contain</td>
-              <td>
+              </Text>
+            </MetadataListItem>
+            <MetadataListItem label="A memory may never contain">
+              <Text>
                 Anything that expires: a price, a stock level, an offer, an order state, a payment
-                detail or a delivery date. Candidates carrying one are <b>refused when written</b>,
-                which is what makes it safe to put a six-week-old sentence into today&rsquo;s reply.
-              </td>
-            </tr>
-            <tr>
-              <td>How it is used</td>
-              <td>
-                Memory supplies the <i>question</i>; your catalogue supplies the <i>answer</i>. The
-                assistant may say &ldquo;last time you were after something low-caffeine — still?&rdquo;
-                and then look up what is actually low-caffeine, in stock, at today&rsquo;s price. At
-                most {d.limits.recallLimit} are used in any one reply.
-              </td>
-            </tr>
-            <tr>
-              <td>When the list gets long</td>
-              <td>
-                Above {d.limits.condenseAbove} lines about one person you can <b>condense</b> them.
+                detail or a delivery date. Candidates carrying one are refused when written, which is
+                what makes it safe to put a six-week-old sentence into today&rsquo;s reply.
+              </Text>
+            </MetadataListItem>
+            <MetadataListItem label="How it is used">
+              <Text>
+                Memory supplies the question; your catalogue supplies the answer. The assistant may
+                say &ldquo;last time you were after something low-caffeine — still?&rdquo; and then
+                look up what is actually low-caffeine, in stock, at today&rsquo;s price. At most{" "}
+                {limits.recallLimit} are used in any one reply.
+              </Text>
+            </MetadataListItem>
+            <MetadataListItem label="When the list gets long">
+              <Text>
+                Above {limits.condenseAbove} lines about one person you can condense them.
                 Near-duplicates merge by rule with no model at all;{" "}
                 {d.summariser
                   ? "a summariser then rewrites the rest as fewer, clearer lines"
                   : "a summariser would then rewrite the rest, but no model key is configured, so only the rule pass runs"}
                 . Every line it writes is checked against the lines it was given — anything it
-                invented, or anything carrying a price or a date, and the whole merge is thrown
-                away rather than half-applied. A boundary (&ldquo;don&rsquo;t contact me&rdquo;) is
-                never merged into anything and is not even shown to the summariser.
-              </td>
-            </tr>
-            <tr>
-              <td>Who else sees it</td>
-              <td>
+                invented, or anything carrying a price or a date, and the whole merge is thrown away
+                rather than half-applied. A boundary is never merged into anything and is not even
+                shown to the summariser.
+              </Text>
+            </MetadataListItem>
+            <MetadataListItem label="Who else sees it">
+              <Text>
                 Nobody. It is keyed to this shop, so the same person shopping at another store we
                 serve has a separate memory that never meets this one.
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+              </Text>
+            </MetadataListItem>
+          </MetadataList>
+        </VStack>
+      </Setup>
 
-      {d.subjects.length === 0 ? (
-        <p className="note">
-          Nothing remembered yet. Memories are written when a <b>signed-in</b> shopper says
-          something durable about themselves — in the widget or on a recovery call. A question about
-          your returns policy is about you, not about them, and is discarded before any model sees it.
-        </p>
-      ) : (
-        d.subjects.map((g) => (
-          <div className="panel" key={g.sub}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-              <span className="mono" style={{ fontWeight: 600 }}>
-                {g.sub}
-              </span>
-              <span className="muted" style={{ fontSize: 12.5 }}>
-                {g.memories.length} remembered
-              </span>
-              <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                {g.memories.length > d.limits!.condenseAbove ? (
-                  <Form method="post">
-                    <input type="hidden" name="shop" value={d.site!.key} />
-                    <input type="hidden" name="sub" value={g.sub} />
-                    <input type="hidden" name="act" value="condense" />
-                    <button className="btn-primary" type="submit" disabled={busy}>
-                      Condense these
-                    </button>
-                  </Form>
-                ) : null}
-                <Form method="post">
-                  <input type="hidden" name="shop" value={d.site!.key} />
-                  <input type="hidden" name="sub" value={g.sub} />
-                  <button className="btn-secondary" type="submit" disabled={busy}>
-                    Forget this shopper
-                  </button>
-                </Form>
-              </div>
-            </div>
-
-            <table style={{ marginTop: 10 }}>
-              <thead>
-                <tr>
-                  <th>Remembered</th>
-                  <th style={{ width: 120 }}>Kind</th>
-                  <th style={{ width: 90 }}>From</th>
-                  <th style={{ width: 90 }}>Expires</th>
-                  <th style={{ width: 80 }} />
-                </tr>
-              </thead>
-              <tbody>
-                {g.memories.map((m) => (
-                  <tr key={m.id}>
-                    <td>
-                      {m.text}
-                      {m.evidence ? (
-                        <details style={{ marginTop: 4 }}>
-                          <summary className="muted" style={{ fontSize: 12, cursor: "pointer" }}>
-                            what they said
-                          </summary>
-                          <div className="muted" style={{ fontSize: 12.5, marginTop: 4 }}>
-                            &ldquo;{m.evidence}&rdquo;
-                          </div>
-                        </details>
-                      ) : null}
-                    </td>
-                    <td>
-                      {m.kind}
-                      <div className="muted" style={{ fontSize: 12 }}>
-                        {KIND_BLURB[m.kind]}
-                      </div>
-                    </td>
-                    <td>{m.source}</td>
-                    <td className="muted" style={{ fontSize: 12.5 }}>
-                      {m.expiresAt.slice(0, 10)}
-                    </td>
-                    <td>
-                      <Form method="post">
-                        <input type="hidden" name="shop" value={d.site!.key} />
-                        <input type="hidden" name="sub" value={g.sub} />
-                        <input type="hidden" name="id" value={m.id} />
-                        <button className="btn-secondary" type="submit" disabled={busy}>
-                          Forget
-                        </button>
-                      </Form>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ))
-      )}
-
-      <p className="note">
-        Expiry is applied when a memory is <i>read</i>, not by a job that has to keep running. So a
-        memory that has aged out is invisible from the moment it should be, whether or not anything
-        swept it — the failure this refuses is a forgotten cron leaving a profile alive for years.
-        Using a memory refreshes it, so what survives is what the shop actually finds useful.
-      </p>
-    </>
+      <Note>
+        A memory expires the moment it should, with no sweeper to forget to run. Using one refreshes
+        it, so what survives is what the shop actually finds useful.
+      </Note>
+    </Page>
   );
 }

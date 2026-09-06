@@ -2,6 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { runAssistant, runAssistantStream } from "../lib/assistant.server";
 import { jsonFeedCatalog } from "../lib/catalog.server";
 import { findSite, allowedOrigin } from "../lib/sites.server";
+import { featureOn } from "../lib/featureflags.server";
 import { verifySessionToken } from "../lib/identity.server";
 import { jsonFeedOrders, seededOrders } from "../lib/orders.server";
 import { placedOrders, mergeSources } from "../lib/orderstore.server";
@@ -56,7 +57,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!site) return json({ error: "unknown site key" }, 404, origin);
   const ok = allowedOrigin(site, origin);
   if (!ok) return json({ error: "origin not allowed for this site", origin }, 403, origin);
-  return json({ ok: true, site: site.name, endpoint: "chat", method: "POST" }, 200, ok);
+  // `enabled` is what the widget reads before it shows itself. Reported here
+  // rather than inferred from a failed POST, so the bubble never appears for a
+  // shop that has switched the assistant off.
+  return json(
+    { ok: true, site: site.name, endpoint: "chat", method: "POST", enabled: featureOn(site.key, "assistant") },
+    200,
+    ok,
+  );
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -78,6 +86,28 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       { error: "origin not allowed for this site", origin: origin ?? null },
       403,
       origin,
+    );
+  }
+
+  // Placed above the stream/non-stream fork so one check covers both.
+  //
+  // A decline rather than an error status: the widget is embedded in the
+  // merchant's page, and a 4xx there reads to a shopper as the shop being
+  // broken. The reply shape is the ordinary one, so nothing in the widget
+  // needs to know this state exists.
+  if (!featureOn(site.key, "assistant")) {
+    return json(
+      {
+        reply: "Chat isn't available on this store at the moment.",
+        cards: [],
+        bounded: false,
+        gates: [],
+        reasoner: "disabled",
+        route: "disabled",
+        toolCalls: [],
+      },
+      200,
+      ok,
     );
   }
 

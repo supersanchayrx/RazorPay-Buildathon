@@ -21,7 +21,7 @@
  *                   data as a real order.
  */
 import fs from "node:fs";
-import path from "node:path";
+import { dataPath } from "./paths.server";
 import crypto from "node:crypto";
 
 export type OrderLine = {
@@ -119,7 +119,7 @@ function loadSeed(): Array<Order & { customer: string }> {
   let rows: Array<Order & { customer: string }> = [];
   try {
     rows = fs
-      .readFileSync(path.join(process.cwd(), "data", "orders.jsonl"), "utf8")
+      .readFileSync(dataPath("orders.jsonl"), "utf8")
       .split("\n")
       .filter(Boolean)
       .map((l) => {

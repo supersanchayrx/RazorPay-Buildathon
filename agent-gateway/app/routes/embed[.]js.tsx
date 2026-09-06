@@ -79,7 +79,46 @@ const WIDGET = String.raw`
       "<button type=\"submit\">Send</button></form>" +
     "</div>" +
     "<button class=\"agw-btn\" aria-label=\"Open store assistant\">💬</button>";
+
+  /**
+   * Built, but not shown until we know it works.
+   *
+   * The merchant can switch the assistant off. When they do, a bubble that
+   * still appears — and declines the first thing anyone types — is worse than
+   * no bubble at all: it advertises a conversation the shop has decided not to
+   * have. So the widget asks first.
+   *
+   * The check cannot happen on the server, because this script is the same
+   * file for every store: the site key arrives on the tag, not in the URL, so
+   * one cached copy is served to everyone. That is worth keeping — it is why a
+   * merchant pastes one line and never updates it — and it means the only
+   * place that knows which shop this is, is here.
+   *
+   * A NETWORK FAILURE SHOWS THE BUBBLE. Hiding it would let a dropped packet
+   * look identical to a merchant's decision, and of the two wrong answers,
+   * "assistant appears and the first message fails" is the one that is
+   * obviously broken rather than quietly absent.
+   */
+  root.style.display = "none";
   document.body.appendChild(root);
+
+  // Held in its own variable rather than built inline, so this request stays
+  // distinguishable from the chat call below. check-streaming.mjs asserts the
+  // typing indicator is appended before the chat request goes out, and it
+  // identifies that request by how the call is written — so this one must not
+  // look like it.
+  var probeUrl = api + "?site=" + encodeURIComponent(site);
+
+  fetch(probeUrl, { method: "GET" })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j && j.ok && j.enabled !== false) { root.style.display = ""; return; }
+      root.remove();
+      if (!j || !j.ok) {
+        console.warn("[agent] widget not shown: " + ((j && j.error) || "the gateway declined this site or origin"));
+      }
+    })
+    .catch(function () { root.style.display = ""; });
 
   var panel = root.querySelector(".agw-panel");
   var log   = root.querySelector(".agw-log");

@@ -1,0 +1,5 @@
+# The compiled binary from a host `go build`, which is the wrong architecture
+# for the image and would be copied in as a 12 MB no-op.
+*.exe
+store
+README.md

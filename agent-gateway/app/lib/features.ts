@@ -114,15 +114,6 @@ export const FEATURES: Feature[] = [
     href: "/dashboard/recovery",
   },
   {
-    key: "seasonality",
-    name: "Festival & event windows",
-    blurb:
-      "Indian festival dates as data — stock lead times before Dhanteras, and a merchant-approved event window that makes a deadline honest.",
-    status: "building",
-    unlockedBy: "The calendar and its guardrails are built. The merchant-facing event editor is not.",
-    doc: "architecture-offer-proposer.md",
-  },
-  {
     key: "agent_front",
     name: "Agent-readable storefront",
     blurb:
@@ -148,7 +139,8 @@ export const FEATURES: Feature[] = [
   {
     key: "voice",
     name: "Voice & messaging outreach",
-    blurb: "Deliver recovery messages over a call, WhatsApp or SMS, within the limits you set.",
+    blurb:
+      "Deliver recovery messages over a call, WhatsApp or SMS, within the limits you set.",
     status: "available",
     unlockedBy:
       "VOICE DELIVERS: Sarvam for speech, Twilio to place the call, as a one-way notice or a bounded conversation " +
@@ -171,13 +163,14 @@ export const FEATURES: Feature[] = [
     name: "Diagnostics",
     blurb: "What agents and shoppers asked that we could not answer.",
     status: "planned",
-    unlockedBy: "Needs the tool registry, so unanswered calls are recorded as they happen.",
+    unlockedBy:
+      "Needs the tool registry, so unanswered calls are recorded as they happen.",
     doc: "architecture-tool-surface.md",
   },
 ];
 
 export const STATUS_LABEL: Record<FeatureStatus, string> = {
-  available: "Available",
+  available: "Ready",
   needs_setup: "Needs setup",
   building: "In progress",
   planned: "Planned",

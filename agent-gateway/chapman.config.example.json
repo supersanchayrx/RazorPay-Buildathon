@@ -1,0 +1,101 @@
+// CHAPMAN — site registry.
+//
+// Copy this to `chapman.config.json` and edit, or run `npm run init` and answer
+// the questions. `chapman.config.json` is gitignored, so your settings survive
+// `git pull`.
+//
+// Comments are allowed here (`//` and /* */). Trailing commas are not.
+//
+// Nothing in this file is a secret. Secrets are named, and the values live in
+// your environment or your `.env`. If you find yourself pasting a key into this
+// file, you are in the wrong place.
+{
+  "sites": [
+    {
+      // A short public identifier for this storefront. It sits in your page
+      // HTML and anyone can read it — that is fine, it is a name and not a
+      // password. Letters, digits, underscore and hyphen.
+      "key": "pk_mystore",
+
+      // What a shopper sees the assistant call your shop.
+      "name": "My Store",
+
+      // REQUIRED, and the field most often got wrong.
+      //
+      // The exact origins allowed to embed the widget: scheme and host, no
+      // path, no trailing slash. Every domain your storefront is served from
+      // needs an entry — "https://shop.example" and "https://www.shop.example"
+      // are two different origins to a browser, and so are http and https.
+      //
+      // This is the real access check. The browser sets `Origin` itself and
+      // page JavaScript cannot forge it.
+      "origins": ["https://shop.example", "https://www.shop.example"],
+
+      // REQUIRED. An absolute http(s) URL returning your product feed as JSON.
+      // See docs/catalog-format.md for the shape. It must be reachable from
+      // wherever CHAPMAN runs, which is not necessarily from your laptop.
+      "catalogFeedUrl": "https://shop.example/catalog.json",
+
+      // How to build a product page URL, with {handle} substituted.
+      //
+      // Needed the moment anything we write has to point somewhere the shopper
+      // can act. Omitting it is legitimate and means every link falls back to
+      // your front page — worse, but never wrong.
+      "productUrlTemplate": "/products/{handle}",
+
+      // Optional. Paths on YOUR origin that proxy our recovery and restore
+      // pages, so a shopper who was on shop.example is asked "why didn't you
+      // buy?" on shop.example rather than on a domain they do not recognise.
+      // The same fifteen-line proxy as /.well-known/ucp. Omit both to fall back
+      // to our own origin, which works and looks like a third party.
+      // "recoverPath": "/recover",
+      // "restorePath": "/restore",
+
+      // Optional. First line the widget shows, and your brand colour.
+      "greeting": "Ask me anything about our products.",
+      "accent": "#1f2937",
+
+      // REQUIRED. The NAME of an environment variable holding this site's
+      // signing secret — not the secret itself. It signs the session tokens
+      // that assert who a shopper is, and it signs our requests to your order
+      // feed, so it is the one value here that really is a secret.
+      //
+      // Generate one with:  node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+      // then put SITE_SECRET_MYSTORE=... in your .env. `npm run init` does both.
+      "secretEnv": "SITE_SECRET_MYSTORE",
+
+      // Optional, and OFF by default because turning it on changes what the
+      // assistant can say about a person.
+      //
+      // `feedUrl` is a read-only endpoint you publish; we sign our requests to
+      // it with the secret above. Leave the whole block out and the assistant
+      // answers from your catalogue and declines anything personal — a
+      // perfectly good state for a shop to be in.
+      // "orders": { "feedUrl": "https://shop.example/api/orders" },
+
+      // Optional. Leave out entirely if CHAPMAN does not take payment for you.
+      //
+      // Environment variable NAMES again, never values.
+      //
+      // `methods` is ADVERTISED TO AGENTS, so it has to be true. Omit it and
+      // you get the conservative default — card, netbanking, wallet — which is
+      // what a Razorpay account can present with nothing extra switched on. UPI
+      // requires KYC on your account; add it here only once that has cleared,
+      // because advertising it early means an agent tells a buyer to pay by a
+      // method your checkout page will not offer.
+      "razorpay": {
+        "keyIdEnv": "RAZORPAY_KEY_ID",
+        "keySecretEnv": "RAZORPAY_KEY_SECRET",
+        // Strongly recommended. Without it, settlement rides the browser
+        // return path and a buyer who closes the tab after paying gets no
+        // order. Register the webhook in your Razorpay dashboard against
+        // https://your-gateway.example/webhooks/razorpay/pk_mystore
+        "webhookSecretEnv": "RAZORPAY_WEBHOOK_SECRET"
+        // "methods": ["upi", "card", "netbanking", "wallet"]
+      }
+    }
+
+    // Running more than one storefront? Add another object here. Each needs its
+    // own `key` and its own `secretEnv`.
+  ]
+}

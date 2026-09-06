@@ -3,7 +3,7 @@ import { findSite } from "../lib/sites.server";
 import { verifyRecoveryToken } from "../lib/identity.server";
 import { liveCarts } from "../lib/carts.server";
 import fs from "node:fs";
-import path from "node:path";
+import { dataPath } from "../lib/paths.server";
 
 /**
  * What was in the basket, so the merchant's storefront can put it back.
@@ -53,7 +53,7 @@ function readCart(shop: string, cartId: string): CartRow | null {
   try {
     return (
       fs
-        .readFileSync(path.join(process.cwd(), "data", "carts.jsonl"), "utf8")
+        .readFileSync(dataPath("carts.jsonl"), "utf8")
         .split("\n")
         .filter(Boolean)
         .map((l) => JSON.parse(l) as CartRow)

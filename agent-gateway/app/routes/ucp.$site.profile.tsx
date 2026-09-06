@@ -1,6 +1,8 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { findSite } from "../lib/sites.server";
+import { featureOn } from "../lib/featureflags.server";
 import { discoveryDocument } from "../lib/ucp.server";
+import { selfOrigin } from "../lib/origin.server";
 
 /**
  * The UCP discovery document for one store.
@@ -19,7 +21,10 @@ import { discoveryDocument } from "../lib/ucp.server";
  */
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const site = findSite(params.site ?? null);
-  if (!site) {
+  // Switched off is indistinguishable from absent, on purpose. A merchant who
+  // turned the agent surface off has no agent surface, and an agent told "404"
+  // stops asking rather than retrying with better credentials.
+  if (!site || !featureOn(site.key, "agent_front")) {
     return new Response(JSON.stringify({ error: "unknown store" }), {
       status: 404,
       headers: { "content-type": "application/json" },
@@ -27,10 +32,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 
   const u = new URL(request.url);
-  const proto = request.headers.get("x-forwarded-proto") ?? u.protocol.replace(":", "");
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? u.host;
 
-  return new Response(JSON.stringify(discoveryDocument(site, `${proto}://${host}`), null, 2), {
+  return new Response(JSON.stringify(discoveryDocument(site, selfOrigin(request)), null, 2), {
     headers: {
       "content-type": "application/json; charset=utf-8",
       // Public, and cheap to recompute. Five minutes is long enough to spare us

@@ -12,9 +12,12 @@
  * which a per-key rate limit handles. Stronger proof (a DNS TXT record or a
  * .well-known file) belongs as an upgrade, never as a requirement to start.
  *
- * In-memory for now; this becomes a Prisma table alongside the ledger.
+ * The entries themselves live in `chapman.config.json`, not here — a shop's
+ * origins and catalogue URL are the merchant's data, not our source code. See
+ * `config.server.ts` for the loader and the validation rules.
  */
 
+import { loadSites } from "./config.server";
 import type { RazorpayRef } from "./razorpay.server";
 
 export type Site = {
@@ -91,45 +94,18 @@ export type Site = {
   razorpay?: RazorpayRef;
 };
 
-const SITES: Site[] = [
-  {
-    key: "pk_nilgiripost_dev",
-    name: "Nilgiri Post",
-    origins: ["http://127.0.0.1:4000", "http://localhost:4000", "http://127.0.0.1:4100"],
-    catalogFeedUrl: "http://127.0.0.1:4000/catalog.json",
-    productUrlTemplate: "/product.html?handle={handle}",
-    recoverPath: "/recover",
-    restorePath: "/restore",
-    greeting: "Ask me about our teas and coffees.",
-    accent: "#1f4037",
-    // Development value. In production this is generated per merchant at
-    // install and stored encrypted; it must never be committed.
-    secret: process.env.SITE_SECRET_NILGIRIPOST ?? "dev-secret-nilgiripost-do-not-ship",
-    orders: { feedUrl: "http://127.0.0.1:4000/api/orders" },
-    // Key set 1 belongs to the custom-site path.
-    //
-    // `methods` is deliberately ABSENT, which means the conservative default:
-    // card, netbanking, wallet — and no UPI. That is not a preference, it is
-    // this account's actual state. Probed 2026-09-06:
-    //
-    //   POST /payments/create/ajax → "UPI transactions are not enabled for the
-    //   merchant"
-    //
-    // UPI needs KYC. When that clears, add `methods: ["upi", "card",
-    // "netbanking", "wallet"]` here and the discovery document, the escalation
-    // message and the checkout page all follow from the one edit. Until then,
-    // advertising UPI would have an agent tell a buyer to pay by a method the
-    // checkout page will not offer them.
-    razorpay: {
-      keyIdEnv: "RAZORPAY_TEST_API_KEY_ID1",
-      keySecretEnv: "RAZORPAY_TEST_API_KEY_SECRET1",
-      webhookSecretEnv: "RAZORPAY_WEBHOOK_SECRET1",
-    },
-  },
-];
+/**
+ * Read once, held for the process lifetime.
+ *
+ * Every lookup below goes through this rather than a module-level constant, so
+ * a merchant edits JSON and restarts instead of editing TypeScript and
+ * rebuilding. The signatures are unchanged, which is the point: thirty-seven
+ * call sites did not have to know this moved.
+ */
+const sites = (): Site[] => loadSites();
 
 export function allSites(): Site[] {
-  return SITES;
+  return sites();
 }
 
 /**
@@ -140,12 +116,12 @@ export function allSites(): Site[] {
  * lookup is the difference between authorisation and a convention.
  */
 export function sitesForMerchant(keys: string[]): Site[] {
-  return SITES.filter((s) => keys.includes(s.key));
+  return sites().filter((s) => keys.includes(s.key));
 }
 
 export function findSite(key: string | null): Site | null {
   if (!key) return null;
-  return SITES.find((s) => s.key === key) ?? null;
+  return sites().find((s) => s.key === key) ?? null;
 }
 
 /** Returns the origin to echo back, or null if this origin may not embed. */

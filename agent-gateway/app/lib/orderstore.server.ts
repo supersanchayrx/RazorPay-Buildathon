@@ -21,6 +21,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { dataPath } from "./paths.server";
 import type { Order, OrderSource } from "./orders.server";
 
 export type PlacedOrder = {
@@ -44,8 +45,8 @@ export type PlacedOrder = {
   settledBy: "browser" | "webhook";
 };
 
-const FILE = path.join(process.cwd(), "data", "placed-orders.jsonl");
-const PENDING = path.join(process.cwd(), "data", "pending-checkouts.jsonl");
+const FILE = dataPath("placed-orders.jsonl");
+const PENDING = dataPath("pending-checkouts.jsonl");
 
 /**
  * What we were asked to sell, recorded when the Razorpay order is created.

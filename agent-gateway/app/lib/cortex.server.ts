@@ -31,7 +31,7 @@
  * cannot compute — their voice, their floors — and nothing else.
  */
 import fs from "node:fs";
-import path from "node:path";
+import { dataPath } from "./paths.server";
 import type { CatalogSource, ShopPolicies } from "./catalog.server";
 import { readLedger } from "./ledger.server";
 import type { Region } from "./calendar.server";
@@ -150,7 +150,7 @@ function readMerchantInputs(): {
 } | null {
   try {
     const raw = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), "data", "merchant-inputs.json"), "utf8"),
+      fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"),
     );
     return raw.floors ?? null;
   } catch {
@@ -161,7 +161,7 @@ function readMerchantInputs(): {
 function readOrderSummary(): { ordersPerMonth: number; avgOrderValue: number; bestsellers: string[]; windowDays: number } | null {
   try {
     const rows = fs
-      .readFileSync(path.join(process.cwd(), "data", "orders.jsonl"), "utf8")
+      .readFileSync(dataPath("orders.jsonl"), "utf8")
       .split("\n")
       .filter(Boolean)
       .map((l) => JSON.parse(l))
