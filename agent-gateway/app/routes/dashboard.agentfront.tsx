@@ -6,6 +6,7 @@ import { sitesForMerchant } from "../lib/sites.server";
 import { discoveryDocument, UCP_VERSION, capabilities, paymentHandlers } from "../lib/ucp.server";
 import {
   installSnippets,
+  tierCSnippets,
   guessHost,
   staticProfile,
   verifyInstall,
@@ -91,6 +92,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           activity: agentActivity(s.key),
           profileUrl,
           snippets: installSnippets(profileUrl),
+          tierC: tierCSnippets(base, s.key),
+          llmsUrl: `${base}/ucp/${s.key}/llms.txt`,
           staticDoc: staticProfile(s, base),
           endpoint: discoveryDocument(s, base).ucp.services["dev.ucp.shopping"][0].endpoint,
         };
@@ -376,6 +379,17 @@ export default function AgentFront() {
             <Steps result={verified.result} />
           ) : null}
 
+          <h3>Step 3 — optional: be readable to AIs that only browse</h3>
+          <p className="muted" style={{ fontSize: 13.5, maxWidth: "64ch", margin: "4px 0 8px" }}>
+            Steps 1 and 2 make your store <strong>transactable</strong> — any agent that speaks the
+            protocol can search, cart and buy. This step adds nothing to that. It is for the other
+            kind of caller: someone pastes your product URL into ChatGPT or Claude and it fetches
+            the page like a browser, with no idea the protocol exists. Right now it reads your
+            markup and guesses. After this it reads your prices, your stock and your live offers,
+            and it is told where the real total comes from.
+          </p>
+          <TierC snippets={s.tierC} llmsUrl={s.llmsUrl} />
+
           <details style={{ margin: "18px 0" }}>
             <summary className="muted" style={{ fontSize: 13.5, cursor: "pointer" }}>
               Try it yourself — point a real AI at this store
@@ -475,6 +489,96 @@ export default function AgentFront() {
           the protocol, not a shortfall — and it is the only honest one on Indian rails.
         </li>
       </ul>
+    </>
+  );
+}
+
+/**
+ * Tier C, with the no-code half separated from the code half.
+ *
+ * The split is the point of this component. A merchant on a static host is not
+ * locked out of this tier — two config lines get them `/llms.txt` and the
+ * header — and one who can deploy gets the other two behaviours. Presenting it
+ * as a single "install middleware" button would make the first merchant think
+ * the answer is no.
+ *
+ * Every card says what it covers AND what it does not. A partial install
+ * described as an install is how somebody concludes the feature is broken when
+ * it is doing exactly what they configured.
+ */
+function TierC({
+  snippets,
+  llmsUrl,
+}: {
+  snippets: Array<{
+    host: string;
+    where: string;
+    lang: string;
+    body: string;
+    covers: string[];
+    missing?: string[];
+    measured?: boolean;
+  }>;
+  llmsUrl: string;
+}) {
+  const [pick, setPick] = useState(0);
+  const chosen = snippets[pick];
+  if (!chosen) return null;
+
+  return (
+    <>
+      <div className="tabs" style={{ flexWrap: "wrap", marginBottom: 4 }}>
+        {snippets.map((sn, i) => (
+          <a
+            key={sn.host}
+            href="#tierc"
+            onClick={(e) => {
+              e.preventDefault();
+              setPick(i);
+            }}
+            {...(i === pick ? { "aria-current": "true" as const } : {})}
+          >
+            {sn.host}
+          </a>
+        ))}
+      </div>
+
+      <p className="muted" style={{ fontSize: 12.5, margin: "8px 0 0" }}>
+        {chosen.where}
+        {chosen.measured ? (
+          <>
+            {" — "}
+            <strong>this is the one we run and test</strong>; the others are written from the same
+            contract but we have not watched them work
+          </>
+        ) : null}
+      </p>
+      <pre>
+        <code>{chosen.body}</code>
+      </pre>
+
+      <p className="muted" style={{ fontSize: 12.5, margin: "6px 0 0" }}>
+        Gives you: <strong>{chosen.covers.join(", ")}</strong>
+      </p>
+      {chosen.missing?.length ? (
+        <p className="muted" style={{ fontSize: 12.5, margin: "4px 0 0" }}>
+          Does not give you: {chosen.missing.join("; ")}
+        </p>
+      ) : null}
+
+      <p className="note">
+        Nothing here computes a price. Your middleware sends us a path and injects what comes
+        back, so the offers and totals a browsing model reads are produced by the same server that
+        would charge for them — there is no second copy to drift. It also cannot take your shop
+        down: if we are unreachable the page is served exactly as it would have been, just without
+        the extra.
+      </p>
+      <p className="muted" style={{ fontSize: 12.5, margin: "6px 0 0" }}>
+        You can read what a model will be told, right now:{" "}
+        <a href={llmsUrl} target="_blank" rel="noreferrer">
+          <code>{llmsUrl}</code>
+        </a>
+      </p>
     </>
   );
 }

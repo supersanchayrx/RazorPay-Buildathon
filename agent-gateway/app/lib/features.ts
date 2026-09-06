@@ -126,7 +126,7 @@ export const FEATURES: Feature[] = [
     key: "agent_front",
     name: "Agent-readable storefront",
     blurb:
-      "When a shopper’s AI agent reaches your store, it gets a machine surface it can transact against instead of guessing at your HTML — including the offers you approved, which it can spend but never invent. One line to install.",
+      "When a shopper’s AI agent reaches your store, it gets a machine surface it can transact against instead of guessing at your HTML — including the offers you approved, which it can spend but never invent. One line to install. An optional second layer adds JSON-LD, an llms.txt and a machine view of every page, for the AIs that only browse.",
     status: "available",
     // Not rendered for a live card — the index only shows this on features that
     // are not yet available — so the substance lives in the blurb and the page.

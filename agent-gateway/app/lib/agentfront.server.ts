@@ -168,6 +168,172 @@ export function guessHost(headers: Headers): string | null {
 }
 
 /* ------------------------------------------------------------------ *
+ * Tier C — the optional legibility layer
+ * ------------------------------------------------------------------ */
+
+export type TierCSnippet = Snippet & {
+  /** Which of the four Tier C behaviours this install actually delivers. */
+  covers: string[];
+  /** What it does not, stated rather than left to be discovered. */
+  missing?: string[];
+  /**
+   * True only where we run this ourselves and a test suite drives it.
+   *
+   * The distinction is the whole reason this codebase has a corrections log: a
+   * snippet we reasoned our way to and a snippet we watched work are different
+   * artefacts, and presenting them identically is how the first one's bugs
+   * become the merchant's problem.
+   */
+  measured?: boolean;
+};
+
+/**
+ * Tier C splits into a half that needs no code and a half that does.
+ *
+ * That split is worth surfacing rather than hiding behind one "install
+ * middleware" button. Two of the four behaviours — `/llms.txt` and the `Link:`
+ * header — are a redirect rule and a header rule, which every static host
+ * already supports and which a merchant can add in the same place they added
+ * Tier A. The other two — injecting JSON-LD into the page, and answering the
+ * same URL with data — require something in the request path that can see the
+ * HTML on the way out.
+ *
+ * A merchant who cannot deploy code is not locked out of this tier. They get
+ * half of it in two lines, and the console says which half.
+ */
+export function tierCSnippets(gatewayBaseUrl: string, siteKey: string): TierCSnippet[] {
+  const base = `${gatewayBaseUrl.replace(/\/$/, "")}/ucp/${siteKey}`;
+  const NO_CODE = ["/llms.txt", "Link: header"];
+  const NO_CODE_MISSING = ["JSON-LD in the page", "?format=json"];
+
+  return [
+    {
+      host: "Netlify — no code",
+      where: "_redirects and _headers",
+      lang: "text",
+      covers: NO_CODE,
+      missing: NO_CODE_MISSING,
+      body: `# _redirects
+/llms.txt  ${base}/llms.txt  302
+
+# _headers
+/*
+  Link: </.well-known/ucp>; rel="ucp"; type="application/json"`,
+    },
+    {
+      host: "Vercel — no code",
+      where: "vercel.json",
+      lang: "json",
+      covers: NO_CODE,
+      missing: NO_CODE_MISSING,
+      body: `{
+  "redirects": [
+    { "source": "/llms.txt", "destination": "${base}/llms.txt", "permanent": false }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Link", "value": "</.well-known/ucp>; rel=\\"ucp\\"; type=\\"application/json\\"" }
+      ]
+    }
+  ]
+}`,
+    },
+    {
+      host: "nginx — no code",
+      where: "your server block",
+      lang: "nginx",
+      covers: NO_CODE,
+      missing: NO_CODE_MISSING,
+      body: `location = /llms.txt { return 302 ${base}/llms.txt; }
+add_header Link '</.well-known/ucp>; rel="ucp"; type="application/json"' always;`,
+    },
+    {
+      host: "Express",
+      where: "above your routes",
+      lang: "javascript",
+      covers: ["/llms.txt", "Link: header", "JSON-LD in the page", "?format=json"],
+      missing: ["pages sent with res.sendFile or a stream — this hooks res.send"],
+      body: `const CHAPMAN = "${base}";
+const cache = new Map();
+
+const originOf = (req) =>
+  \`\${req.get("x-forwarded-proto") || req.protocol}://\${req.get("x-forwarded-host") || req.get("host")}\`;
+
+async function view(path, origin) {
+  const key = origin + path;
+  const hit = cache.get(key);
+  if (hit && hit.until > Date.now()) return hit.view;
+  try {
+    const r = await fetch(
+      \`\${CHAPMAN}/agentview?path=\${encodeURIComponent(path)}&origin=\${encodeURIComponent(origin)}\`,
+      { signal: AbortSignal.timeout(2500) },
+    );
+    if (!r.ok) return null;
+    const view = await r.json();
+    if (cache.size > 512) cache.clear();
+    cache.set(key, { view, until: Date.now() + (view.max_age || 300) * 1000 });
+    return view;
+  } catch {
+    // The gateway is optional. The shop is not. Never let this throw.
+    return null;
+  }
+}
+
+app.get("/llms.txt", async (req, res) => {
+  const r = await fetch(
+    \`\${CHAPMAN}/llms.txt?origin=\${encodeURIComponent(originOf(req))}\`,
+  ).catch(() => null);
+  if (!r || !r.ok) return res.sendStatus(404);
+  res.type("text/plain").send(await r.text());
+});
+
+app.use(async (req, res, next) => {
+  if (req.method !== "GET") return next();
+  const v = await view(req.originalUrl, originOf(req));
+  if (!v) return next();
+
+  // The same URL now has two answers. A shared cache has to be told.
+  res.vary("Accept");
+  if (v.link) res.set("Link", v.link);
+
+  // \`?format=json\` as well as the header, because a browsing model calls a
+  // fetch tool with a URL and cannot set one.
+  const wantsJson =
+    req.query.format === "json" || req.accepts(["html", "json"]) === "json";
+  if (wantsJson && v.json) return res.json(v.json);
+
+  const send = res.send.bind(res);
+  res.send = (body) => {
+    if (typeof body === "string" && body.includes("</head>")) {
+      // Their structured data wins. Two Product nodes is an ambiguous page.
+      const frag = body.includes("application/ld+json")
+        ? v.head.replace(v.jsonld, "")
+        : v.head;
+      body = body.replace("</head>", frag + "</head>");
+    }
+    return send(body);
+  };
+  next();
+});`,
+    },
+    {
+      host: "Go (net/http)",
+      where: "wrap your outermost handler",
+      lang: "go",
+      measured: true,
+      covers: ["/llms.txt", "Link: header", "JSON-LD in the page", "?format=json"],
+      body: `// Copy demo-store/agentfront.go into your package, then:
+tc := newTierC("${gatewayBaseUrl.replace(/\/$/, "")}", "${siteKey}")
+mux.HandleFunc("/llms.txt", tc.handleLLMs)
+
+http.ListenAndServe(addr, tc.wrap(mux))`,
+    },
+  ];
+}
+
+/* ------------------------------------------------------------------ *
  * Tier B — the static file, for hosts that cannot redirect
  * ------------------------------------------------------------------ */
 

@@ -571,6 +571,8 @@ So the model never sees a notice at all. `router.server.ts` classifies the messa
 | Three credential classes stay apart | `sites.server.ts`, `auth.server.ts`, `razorpay.server.ts` | one credential quietly standing in for another |
 | Channels are capabilities | `outreach.server.ts` | a settings file that appears to buy a Twilio account |
 | A model is optional | `reasoner.server.ts` → `pickReasoner()` | an outage that looks like a product failure |
+| A published page carries terms, never a discounted number | `agentview.server.ts` | a browsing model quoting a total nobody will honour |
+| The legibility layer computes nothing on the merchant's side | `demo-store/agentfront.go` | a second place prices come from, free to disagree with the first |
 
 ---
 

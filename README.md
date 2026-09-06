@@ -9,7 +9,7 @@ Two front doors — one for shopping agents, one for people — over a single co
 [![UCP](https://img.shields.io/badge/UCP-2026--08--25-1f4037)](#agent-readable-storefront)
 [![MCP](https://img.shields.io/badge/MCP-Streamable_HTTP-3a3f5c)](#2-real-claude-over-mcp)
 [![Razorpay](https://img.shields.io/badge/Razorpay-test_mode-0b3a82)](#payments-and-settlement)
-[![Tests](https://img.shields.io/badge/assertions-679_across_18_suites-2e7d32)](#tests)
+[![Tests](https://img.shields.io/badge/assertions-735_across_19_suites-2e7d32)](#tests)
 
 [Quickstart](#quickstart) · [Architecture](#architecture) · [Features](#features) · [For merchants](#for-merchants) · [Tests](#tests) · [Status](#status-and-limits)
 
@@ -74,7 +74,7 @@ flowchart TB
             direction TB
             ROUTES["app/routes/<br/>widget · chat · basket · checkout<br/>agent endpoint · payment page<br/>console pages"]
             LIB["app/lib/ — the core<br/>orchestrator · bounds · quote · approvals<br/>proposer · recovery · memory · cortex"]
-            SCRIPTS["scripts/<br/>seed data · 18 test suites<br/>live probes"]
+            SCRIPTS["scripts/<br/>seed data · 19 test suites<br/>live probes"]
             DATA[("data/ — not committed<br/>fixtures · ledger · baskets")]
             ROUTES --> LIB
             SCRIPTS --> LIB
@@ -87,6 +87,7 @@ flowchart TB
             UCPGO["ucp.go<br/><i>the merchant's entire<br/>agent integration:<br/>one route</i>"]
             ACC["accounts.go<br/>signed order feed"]
             RECGO["recovery.go<br/>proxies two pages"]
+            AFGO["agentfront.go<br/><i>optional middleware:<br/>injects what the gateway<br/>computes. Fails open</i>"]
         end
 
         DOCS["docs/ + claude docs/<br/>architecture · checklist · probe reports"]
@@ -311,6 +312,7 @@ Each has its own section below. The honest gaps are under [Status and limits](#s
 | Feature | In one line |
 |---|---|
 | [Agent-readable storefront](#agent-readable-storefront) | fourteen tools over MCP, one line to install |
+| [Legibility for models that browse](#legibility-for-models-that-browse) | structured data, an `llms.txt`, and a machine view of every page |
 | [Bounded shopping assistant](#bounded-shopping-assistant) | route first, reason second — a model only when one is needed |
 | [The guardrails](#the-guardrails) | four checks the model cannot argue with |
 | [Two tool registries](#two-tool-registries) | seven shopper reads, fourteen merchant reads, no writes |
@@ -344,6 +346,24 @@ Handing the buyer a payment link is not a shortfall. Razorpay authenticates the 
 Verified live against `allbirds.com` and `gymshark.com`, driven by Shopify's own client, and used by Claude to complete a ₹924 order.
 
 *See it:* `npm run probe:ucp`, or the **Agent front** page.
+
+---
+
+### Legibility for models that browse
+
+The section above serves an agent that reads the discovery route, gets an endpoint, and never looks at the merchant's HTML again. This optional second layer serves the other population: someone pastes a product URL into Claude or ChatGPT, and it fetches the page like a browser with no idea the protocol exists. It gets one shot at the HTML.
+
+So this adds nothing transactable — it adds legibility. Structured `Product` and `Offer` data injected into the page, a generated `/llms.txt`, a `Link:` header so a client that *does* speak the protocol can upgrade itself from any page, and the same URL answering with data when asked.
+
+Three properties make it safe to put in front of a live storefront:
+
+- **The merchant's side computes nothing.** It sends us a path and injects what comes back, so there is never a second place prices and offers come from.
+- **It publishes the list price and never a discounted one.** An offer rides along as terms, because the real number depends on the basket and only the server that charges it knows one.
+- **It cannot take the store down.** Every call is bounded and cached, and on failure the page is served exactly as it would have been. Prove it with `go run . -tierc=false`.
+
+The reasoning behind each, and what a merchant actually pastes, is under [and for the AIs that only browse](#and-for-the-ais-that-only-browse).
+
+*See it:* the **Agent front** page, or open `/llms.txt` on the demo store.
 
 ---
 
@@ -478,6 +498,18 @@ Sarvam for speech, chosen for Hinglish because that is how the shopper actually 
 | Conversation | the shopper answers, because people say more than they will type. The spoken answer joins the same tally as a typed one |
 
 Voice is the one channel where an invented discount leaves no screenshot and cannot be disproved. So the guarantee is not an instruction in a prompt: **the model is handed no discount, no ceiling, and no mention that grants exist.** On a live call it was pushed five ways — politely, on loyalty, on desperation, and with a fabricated *"your owner said I'd get one"* — and refused every time, because there was no figure in its context to concede.
+
+#### What a real call looks like
+
+Two moments from a live call, as the console transcribed them while it was happening.
+
+![A phone call transcript. The caller asks in mixed Hindi and English for the details of their basket. The shop replies in the same mix: yes, your saved basket is Nilgiri Frost Green Tea, left 240 hours ago, still saved on the website. The caller then asks what happened to Priya and who is speaking. The shop replies that it has no information about that, and that this call is only about the basket. The caller says thank you and goes.](docs/images/voice-call-hinglish.png)
+
+The caller switches between Hindi and English mid-sentence and the shop follows, because that is how the shopper actually talks. Two things worth noticing. The basket details are real — the product and how long ago it was left come from the record, not from the model. And when asked about a person the call knows nothing about, it says it has no information rather than guessing, then puts the conversation back where it belongs.
+
+![A phone call transcript. The caller asks: can you tell me about the discount you guys are running? The shop replies: I can't share any offers on this call, the website will show any live ones. Thank you.](docs/images/voice-call-discount-refused.png)
+
+Asked directly for a discount, it declines and points at the website — and it answers in English, because the question was asked in English. This is not the model being careful. There was no figure in its context to share.
 
 Pressing 9 stops it. A written message can say "reply STOP"; a spoken one cannot, and an instruction the listener cannot follow only sounds like an opt-out.
 
@@ -649,7 +681,8 @@ Estimates. The typing column is the honest measure of the work.
 | **The assistant** | paste one script tag | one paste | **2 min** |
 | **The agent surface** *(recommended tier)* | paste one redirect line into their host's config | one paste | **5 min** |
 | — if the host cannot redirect | upload one generated file | none | 5 min |
-| — optional upgrade | deploy middleware, for agents that browse rather than use the protocol | a deploy | 30 min |
+| — optional, for models that *browse* | two config lines get an `llms.txt` and the header | one paste | 5 min |
+| — the same, in full | middleware, for structured data in the page and JSON on request | a deploy | 30 min |
 | **On Shopify instead** | install the app, turn the embed on | two clicks | **2 min** |
 | Confirming the domain | nothing — the widget's own traffic reveals it | none | seconds |
 | Payments | paste a Razorpay key and secret | one paste | 5 min |
@@ -661,7 +694,7 @@ Estimates. The typing column is the honest measure of the work.
 **From nothing to a store an agent can find and buy from: about fifteen minutes**, of which the required work is two pastes and five answers.
 
 > [!NOTE]
-> The higher install tiers do not add capability, only reach — which kinds of agent can find the store at all. Every tier is fully transactable.
+> The higher install tiers do not add capability, only reach — which kinds of agent can find the store at all. Every tier is fully transactable, and the last one has a no-code half, so a merchant on a static host is not shut out of it.
 
 ### The five decisions
 
@@ -706,6 +739,21 @@ Nothing goes stale, because the redirect resolves live on every request: enablin
 
 If they would rather the request ended on their own origin, they can proxy it instead — fifteen lines, and what [demo-store/ucp.go](demo-store/ucp.go) does.
 
+### And for the AIs that only browse
+
+That one line serves agents that speak the protocol. It does nothing for the other population: someone pastes a product URL into ChatGPT or Claude, and it fetches the page like a browser with no idea the protocol exists. An optional second layer makes the store legible to those too — JSON-LD `Product`/`Offer` injected before `</head>`, a generated `/llms.txt`, a `Link:` header, and the same URL answering with data when asked.
+
+**The merchant's side of it computes nothing.** It sends us a path and injects what comes back. That is not laziness, it is the point: the live offers are in an approval ledger here and the policies come from the catalogue feed we read, so a middleware that built its own JSON-LD would be a *second place* prices come from. Two places is how a cart said ₹740 while the checkout charged ₹672.
+
+Two details worth naming, because both were decisions rather than defaults:
+
+- **Content negotiation has a discoverable half.** `Accept: application/json` is the correct mechanism and it is useless to the audience this exists for — a model browsing the web calls a fetch tool with a URL and cannot set a header. `?format=json` does the same thing, and `/llms.txt` tells it so.
+- **It cannot take the storefront down.** Every call to us is bounded at 2.5 seconds and cached, and on any failure the page is served exactly as it would have been. Assets never enter the buffer at all — an early draft served a 5 MB file as its first 4 MB with a 200, which is the kind of failure that reaches a customer and never reaches a log.
+
+Half of it needs no code: `/llms.txt` and the header are a redirect rule and a header rule, which every static host already has. The console says which half each snippet gives you. Reference implementation, running and tested, is [demo-store/agentfront.go](demo-store/agentfront.go).
+
+**What it will not publish is a discounted price.** An offer rides on the page as terms — title, percentage, end date — while `Offer.price` carries the list price, which is a true fact about the variant. The real number depends on the basket, and only the server that charges it knows one. `/llms.txt` says it outright: *do not compute a discounted total from the list prices above.*
+
 **On Shopify the agent surface is not needed from us.** Shopify already serves this protocol on every store. Selling a merchant something they were given for free is the quiet dishonesty this product is otherwise built to avoid, so on Shopify the value is the offer pipeline and the bounded assistant.
 
 ---
@@ -716,7 +764,7 @@ If they would rather the request ended on their own origin, they can proxy it in
 cd agent-gateway && npm run check
 ```
 
-**679 assertions across eighteen suites, all passing.** They are adversarial where it matters: each identity check tries to read somebody else's orders and asserts that it could not.
+**735 assertions across nineteen suites, all passing.** They are adversarial where it matters: each identity check tries to read somebody else's orders and asserts that it could not.
 
 | Suite | What it asserts |
 |---|---|
@@ -738,6 +786,7 @@ cd agent-gateway && npm run check
 | Harness | the call parser, and that every shopper-facing tool is a read |
 | UCP | money, identifiers, what is published, and every checkout guard |
 | Agent front | every install snippet, and a missing redirect rule failing loudly |
+| Tier C | what a browsing model is told — and every number it is *not* told |
 
 The sample data is deterministic — same seed, same bytes — so a change in output means the code changed, not the dice.
 
@@ -752,7 +801,7 @@ Live probes, which need the servers running: `probe:ucp`, `probe:models`, `probe
 
 ### Built
 
-Shopify and custom-site transport, catalogue grounding, routing, bounds and the ledger. The shop cortex with enforced views, the merchant console with login, and a festival calendar. Signed shopper identity and scoped order access. Streaming replies with the checks enforced before release. Razorpay orders, webhooks, stock holds and repeat-safe settlement. The agent-readable storefront, verified by a third-party client, with a real assistant having bought through it. The offer proposer, approvals and the tool harness. A model layer with a shortlist per job. Basket recovery, the loop that asks why, and recovery grants. Shopper memory. Live basket capture, and recovery hosted on the merchant's own domain. A test bench and readiness probes.
+Shopify and custom-site transport, catalogue grounding, routing, bounds and the ledger. The shop cortex with enforced views, the merchant console with login, and a festival calendar. Signed shopper identity and scoped order access. Streaming replies with the checks enforced before release. Razorpay orders, webhooks, stock holds and repeat-safe settlement. The agent-readable storefront, verified by a third-party client, with a real assistant having bought through it, plus the optional layer that makes the same store legible to models that only browse. The offer proposer, approvals and the tool harness. A model layer with a shortlist per job. Basket recovery, the loop that asks why, and recovery grants. Shopper memory. Live basket capture, and recovery hosted on the merchant's own domain. A test bench and readiness probes.
 
 ### Honest gaps
 
@@ -796,6 +845,8 @@ agent-gateway/            React Router v7 + Vite, on the Shopify app template
     ucpmethods.server.ts    the thirteen shopping methods plus promotions
     ucptools.ts             what the tool listing returns
     agentfront.server.ts    install snippets, host detection, and the verify probe
+    agentview.server.ts     the machine view of a page: structured data, llms.txt,
+                            the link header. Terms, never a discounted number
     stats.server.ts         the statistics the detectors and filters rely on
     detectors.server.ts     seven detectors, all ordinary functions
     floors.server.ts        merchant limits, applied before any model
@@ -826,7 +877,7 @@ agent-gateway/            React Router v7 + Vite, on the Shopify app template
                           the agent endpoint, and the merchant console
   scripts/
     seed-history.mjs        the deterministic sample data - signals and traps
-    check-*.mjs             eighteen assertion suites (npm run check)
+    check-*.mjs             nineteen assertion suites (npm run check)
     probe-*.mjs             live measurements
     shop-as-agent.mjs       the scripted shopper
     merchant-add.mjs        create a console account
@@ -836,6 +887,8 @@ demo-store/               Nilgiri Post - a custom merchant site, in Go
   accounts.go               mint a token, serve a signed order feed
   recovery.go               two proxied routes, so the question page and the basket
                             restore live on the merchant's domain rather than ours
+  agentfront.go             the optional legibility middleware, as a merchant would
+                            write it. Cached, bounded, and it fails open
 ```
 
 </details>

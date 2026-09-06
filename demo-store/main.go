@@ -61,6 +61,8 @@ func main() {
 	secret := flag.String("secret", "dev-secret-nilgiripost-do-not-ship",
 		"shared secret with the agent gateway; signs session tokens and the order feed")
 	site := flag.String("site", "pk_nilgiripost_dev", "site key this store is registered under")
+	tierCOn := flag.Bool("tierc", true,
+		"serve the optional agent-legibility layer: JSON-LD, /llms.txt, Link header, ?format=json")
 	flag.Parse()
 
 	dir := rootDir()
@@ -80,8 +82,16 @@ func main() {
 	// endpoint, both served from THIS domain and forwarded. See recovery.go.
 	rec := &recoveryProxy{base: strings.TrimSuffix(*agent, "/"), site: *site}
 
+	// Tier C: the optional legibility layer. See agentfront.go. Flagged off-able
+	// because "does the store still work without it?" has to be a thing anyone
+	// can check in one restart, not a thing we assert.
+	tc := newTierC(*agent, *site)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/ucp", ucp.handle)
+	if *tierCOn {
+		mux.HandleFunc("/llms.txt", tc.handleLLMs)
+	}
 	mux.HandleFunc("/recover/", rec.handleRecover)
 	mux.HandleFunc("/restore/", rec.handleRestore)
 	mux.HandleFunc("/api/orders", shop.handleOrders)
@@ -119,11 +129,24 @@ func main() {
 		fs.ServeHTTP(w, r)
 	}))
 
+	// The whole storefront, then Tier C wrapped around it — which is exactly
+	// how a merchant installs this: one line, at the outermost layer, where it
+	// can see the HTML on the way out.
+	var handler http.Handler = mux
+	if *tierCOn {
+		handler = tc.wrap(handler)
+	}
+
 	log.Printf("Nilgiri Post demo store serving %s", dir)
 	log.Printf("  agent gateway: %s", *agent)
 	log.Printf("  recovery: /recover/<token> and /restore/<token> proxied to the gateway")
+	if *tierCOn {
+		log.Printf("  tier C: JSON-LD injected, /llms.txt served, ?format=json honoured")
+	} else {
+		log.Printf("  tier C: OFF (-tierc=false) — the store is still fully transactable")
+	}
 	log.Printf("  -> http://%s", *addr)
-	if err := http.ListenAndServe(*addr, logging(noCache(mux))); err != nil {
+	if err := http.ListenAndServe(*addr, logging(noCache(handler))); err != nil {
 		log.Fatal(err)
 	}
 }
