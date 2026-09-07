@@ -4,6 +4,10 @@ This runbook demonstrates the current product, not a preconfigured fixture.
 The opening state is a real storefront with a catalogue and no Chapman embed,
 discovery route, order feed, or registered Chapman site.
 
+For a presentation that needs populated Analyst, Offers, Recovery, and shopper
+order-history views, use the separate [synthetic demo data guide](demo-data.md)
+after the storefront is registered.
+
 The storefront already loads Razorpay Checkout. For this demo and initial
 release, the merchant is also responsible for registering Chapman's settlement
 webhook in Razorpay. Chapman links and uses that existing payment integration;

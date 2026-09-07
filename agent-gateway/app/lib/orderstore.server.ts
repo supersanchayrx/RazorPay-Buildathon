@@ -37,7 +37,14 @@ export type PlacedOrder = {
   method: string | null;
   amount: number;
   currency: string;
-  lines: Array<{ handle: string; title: string; sku: string; qty: number; unitPrice: number; lineTotal: number }>;
+  lines: Array<{
+    handle: string;
+    title: string;
+    sku: string;
+    qty: number;
+    unitPrice: number;
+    lineTotal: number;
+  }>;
   /** The verified shopper, when there was one. Guests are null. */
   customer: string | null;
   fingerprint: string;
@@ -78,6 +85,8 @@ export type PendingCheckout = {
    * can do. Absent for checkouts that did not start in a storefront cart.
    */
   cartRef?: string | null;
+  /** Present only when a server-issued recovery grant created this checkout. */
+  recoveryGrantId?: string | null;
 };
 
 export function savePending(p: PendingCheckout): void {
@@ -98,7 +107,10 @@ export function findPending(gatewayOrderId: string): PendingCheckout | null {
       .filter(Boolean)
       .map((l) => JSON.parse(l) as PendingCheckout);
     // Last write wins, same as placed orders.
-    return [...rows].reverse().find((r) => r.gatewayOrderId === gatewayOrderId) ?? null;
+    return (
+      [...rows].reverse().find((r) => r.gatewayOrderId === gatewayOrderId) ??
+      null
+    );
   } catch {
     return null;
   }
@@ -204,7 +216,10 @@ const toOrder = (p: PlacedOrder): Order => ({
     unitPrice: l.unitPrice,
     lineTotal: l.lineTotal,
   })),
-  payment: { method: p.method ?? "unknown", status: p.status === "failed" ? "failed" : "captured" },
+  payment: {
+    method: p.method ?? "unknown",
+    status: p.status === "failed" ? "failed" : "captured",
+  },
 });
 
 /**
@@ -221,9 +236,9 @@ export function placedOrders(shop: string): OrderSource {
     !sub
       ? []
       : readAll()
-      .filter((o) => o.shop === shop && o.customer === sub)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map(toOrder);
+          .filter((o) => o.shop === shop && o.customer === sub)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map(toOrder);
   return {
     kind: "placed",
     async forShopper(sub, limit = 10) {

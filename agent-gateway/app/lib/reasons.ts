@@ -114,7 +114,7 @@ export const OFFERED_CHOICES: Reason[] = ["price_too_high", "shipping_cost", "pa
 const PATTERNS: Array<{ reason: Reason; re: RegExp }> = [
   {
     reason: "shipping_cost",
-    re: /\b(?:shipping|delivery|postage|courier)\b[^.!?]{0,40}\b(?:cost|charge|fee|expensive|too much|extra|pricey)\b|\b(?:cost|charge|fee)\s+(?:of|for)\s+(?:shipping|delivery)\b|\bfree\s+(?:shipping|delivery)\b/i,
+    re: /\b(?:shipping|delivery|postage|courier)\b[^.!?]{0,40}\b(?:costs?|charges?|fees?|expensive|too much|extra|pricey)\b|\b(?:costs?|charges?|fees?)\s+(?:of|for)\s+(?:shipping|delivery)\b|\bfree\s+(?:shipping|delivery)\b/i,
   },
   {
     reason: "shipping_speed",

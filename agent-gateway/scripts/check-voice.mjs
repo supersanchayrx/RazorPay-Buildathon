@@ -32,7 +32,14 @@ import * as esbuild from "esbuild";
 async function load(entry, name) {
   const out = path.join(process.cwd(), "node_modules", ".cache", name);
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  await esbuild.build({ entryPoints: [entry], bundle: true, platform: "node", format: "esm", outfile: out, logLevel: "silent" });
+  await esbuild.build({
+    entryPoints: [entry],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    outfile: out,
+    logLevel: "silent",
+  });
   return import(pathToFileURL(out).href + "?t=" + Date.now());
 }
 
@@ -42,13 +49,16 @@ const OUT = await load("app/lib/outreach.server.ts", "out-cv.mjs");
 const SET = await load("app/lib/settings.server.ts", "set-cv.mjs");
 const CNV = await load("app/lib/conversations.server.ts", "cnv-cv.mjs");
 const VTK = await load("app/lib/voicetalk.server.ts", "vtk-cv.mjs");
+const VRC = await load("app/lib/voice-recovery.server.ts", "vrc-cv.mjs");
 const BND = await load("app/lib/bounds.server.ts", "bnd-cv.mjs");
 const TWM = await load("app/lib/twiml.server.ts", "twm-cv.mjs");
 const FND = await load("app/lib/findings.server.ts", "fnd-cv.mjs");
 
 let failed = 0;
 const check = (label, ok, detail) => {
-  console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  — ${detail}` : ""}`);
+  console.log(
+    `${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  — ${detail}` : ""}`,
+  );
   if (!ok) failed++;
 };
 
@@ -62,34 +72,51 @@ const CUST = "cus_check_voice_1";
 console.log("--- the URL carries a name, not a sentence ---");
 
 const tok = IDN.mintVoiceToken({ site: SHOP, draft: DRAFT_ID, secret: SECRET });
-const decoded = JSON.parse(Buffer.from(tok.split(".")[1], "base64url").toString("utf8"));
+const decoded = JSON.parse(
+  Buffer.from(tok.split(".")[1], "base64url").toString("utf8"),
+);
 
 check(
   "an audio token carries the draft id and nothing else",
-  Object.keys(decoded).sort().join(",") === "draft,exp,site" && decoded.draft === DRAFT_ID,
+  Object.keys(decoded).sort().join(",") === "draft,exp,site" &&
+    decoded.draft === DRAFT_ID,
   Object.keys(decoded).sort().join(", "),
 );
 check(
   "it names no cart and no customer",
-  !JSON.stringify(decoded).includes(CART) && !JSON.stringify(decoded).includes(CUST),
+  !JSON.stringify(decoded).includes(CART) &&
+    !JSON.stringify(decoded).includes(CUST),
   "a leaked audio URL should not identify whose basket it is",
 );
-check("it verifies for the site that minted it", IDN.verifyVoiceToken(tok, { site: SHOP, secret: SECRET }).ok === true);
+check(
+  "it verifies for the site that minted it",
+  IDN.verifyVoiceToken(tok, { site: SHOP, secret: SECRET }).ok === true,
+);
 check(
   "and not for another site's secret",
-  IDN.verifyVoiceToken(tok, { site: SHOP, secret: "a-different-secret" }).reason === "bad_signature",
+  IDN.verifyVoiceToken(tok, { site: SHOP, secret: "a-different-secret" })
+    .reason === "bad_signature",
 );
 check(
   "nor for another site with our secret",
-  IDN.verifyVoiceToken(tok, { site: "pk_someone_else", secret: SECRET }).reason === "wrong_site",
+  IDN.verifyVoiceToken(tok, { site: "pk_someone_else", secret: SECRET })
+    .reason === "wrong_site",
 );
 check(
   "it expires",
-  IDN.verifyVoiceToken(IDN.mintVoiceToken({ site: SHOP, draft: DRAFT_ID, secret: SECRET, ttlSeconds: 1 }), {
-    site: SHOP,
-    secret: SECRET,
-    now: Math.floor(Date.now() / 1000) + 5,
-  }).reason === "expired",
+  IDN.verifyVoiceToken(
+    IDN.mintVoiceToken({
+      site: SHOP,
+      draft: DRAFT_ID,
+      secret: SECRET,
+      ttlSeconds: 1,
+    }),
+    {
+      site: SHOP,
+      secret: SECRET,
+      now: Math.floor(Date.now() / 1000) + 5,
+    },
+  ).reason === "expired",
 );
 
 /**
@@ -104,13 +131,34 @@ check(
  */
 console.log("--- three token types, and none opens another's door ---");
 
-const rec = IDN.mintRecoveryToken({ site: SHOP, cart: CART, sub: CUST, secret: SECRET });
+const rec = IDN.mintRecoveryToken({
+  site: SHOP,
+  cart: CART,
+  sub: CUST,
+  secret: SECRET,
+});
 const ses = IDN.mintSessionToken({ site: SHOP, sub: CUST, secret: SECRET });
 
-check("prefixes are distinct", tok.startsWith("a1.") && rec.startsWith("r1.") && ses.startsWith("v1."), `${tok.slice(0, 3)} ${rec.slice(0, 3)} ${ses.slice(0, 3)}`);
-check("the audio verifier refuses a recovery token", IDN.verifyVoiceToken(rec, { site: SHOP, secret: SECRET }).reason === "malformed");
-check("the audio verifier refuses a session token", IDN.verifyVoiceToken(ses, { site: SHOP, secret: SECRET }).reason === "malformed");
-check("the recovery verifier refuses an audio token", IDN.verifyRecoveryToken(tok, { site: SHOP, secret: SECRET }).reason === "malformed");
+check(
+  "prefixes are distinct",
+  tok.startsWith("a1.") && rec.startsWith("r1.") && ses.startsWith("v1."),
+  `${tok.slice(0, 3)} ${rec.slice(0, 3)} ${ses.slice(0, 3)}`,
+);
+check(
+  "the audio verifier refuses a recovery token",
+  IDN.verifyVoiceToken(rec, { site: SHOP, secret: SECRET }).reason ===
+    "malformed",
+);
+check(
+  "the audio verifier refuses a session token",
+  IDN.verifyVoiceToken(ses, { site: SHOP, secret: SECRET }).reason ===
+    "malformed",
+);
+check(
+  "the recovery verifier refuses an audio token",
+  IDN.verifyRecoveryToken(tok, { site: SHOP, secret: SECRET }).reason ===
+    "malformed",
+);
 
 /* ================= 2. Twilio signatures ================= */
 console.log("\n--- proving a request came from Twilio ---");
@@ -121,20 +169,55 @@ const sigParams = { CallSid: "CA1", From: "+10000000000", To: "+919999999999" };
 const authToken = "twilio-auth-token-for-the-test";
 const good = crypto
   .createHmac("sha1", authToken)
-  .update(Buffer.from(sigUrl + Object.keys(sigParams).sort().map((k) => k + sigParams[k]).join(""), "utf8"))
+  .update(
+    Buffer.from(
+      sigUrl +
+        Object.keys(sigParams)
+          .sort()
+          .map((k) => k + sigParams[k])
+          .join(""),
+      "utf8",
+    ),
+  )
   .digest("base64");
 
-check("a correct signature verifies", VOI.verifyTwilioSignature({ signature: good, url: sigUrl, params: sigParams, authToken }) === true);
+check(
+  "a correct signature verifies",
+  VOI.verifyTwilioSignature({
+    signature: good,
+    url: sigUrl,
+    params: sigParams,
+    authToken,
+  }) === true,
+);
 check(
   "one changed parameter fails",
-  VOI.verifyTwilioSignature({ signature: good, url: sigUrl, params: { ...sigParams, To: "+919999999998" }, authToken }) === false,
+  VOI.verifyTwilioSignature({
+    signature: good,
+    url: sigUrl,
+    params: { ...sigParams, To: "+919999999998" },
+    authToken,
+  }) === false,
   "the To number is what decides whose phone rings",
 );
 check(
   "a different URL fails",
-  VOI.verifyTwilioSignature({ signature: good, url: sigUrl + "x", params: sigParams, authToken }) === false,
+  VOI.verifyTwilioSignature({
+    signature: good,
+    url: sigUrl + "x",
+    params: sigParams,
+    authToken,
+  }) === false,
 );
-check("an absent signature is not treated as valid", VOI.verifyTwilioSignature({ signature: null, url: sigUrl, params: sigParams, authToken }) === false);
+check(
+  "an absent signature is not treated as valid",
+  VOI.verifyTwilioSignature({
+    signature: null,
+    url: sigUrl,
+    params: sigParams,
+    authToken,
+  }) === false,
+);
 
 /* ================= 3. the channel is a purchase, not a preference ================= */
 console.log("\n--- the channel cannot be switched on by editing a file ---");
@@ -142,9 +225,20 @@ console.log("\n--- the channel cannot be switched on by editing a file ---");
 const savedFrom = process.env.TWILIO_FROM;
 delete process.env.TWILIO_FROM;
 const voiceCh = OUT.CHANNELS.find((c) => c.id === "voice");
-check("voice is unavailable with a credential missing", voiceCh.available === false, "one variable moved: TWILIO_FROM");
-check("and it names the missing one", (voiceCh.unlockedBy ?? "").includes("TWILIO_FROM"));
-SET.writeSettings(SHOP, { outreach: { enabled: true, maxPerRun: 25 } }, "check");
+check(
+  "voice is unavailable with a credential missing",
+  voiceCh.available === false,
+  "one variable moved: TWILIO_FROM",
+);
+check(
+  "and it names the missing one",
+  (voiceCh.unlockedBy ?? "").includes("TWILIO_FROM"),
+);
+SET.writeSettings(
+  SHOP,
+  { outreach: { enabled: true, maxPerRun: 25 } },
+  "check",
+);
 check(
   "settings enabled, ceilings raised, still off",
   OUT.CHANNELS.find((c) => c.id === "voice").available === false,
@@ -177,14 +271,62 @@ check(
     delete raw.outreach.call;
     fs.writeFileSync(f, JSON.stringify(raw));
     const c = SET.readSettings(SHOP).outreach.call;
-    return c.maxTurns === SET.DEFAULTS.outreach.call.maxTurns && c.mode === "notice";
+    return (
+      c.maxTurns === SET.DEFAULTS.outreach.call.maxTurns && c.mode === "notice"
+    );
   })(),
   "an absent ceiling read as undefined is a ceiling every call site treats as infinite",
 );
 check(
   "a call longer than the carrier allows is refused",
-  SET.writeSettings(SHOP, { outreach: { call: { mode: "conversation", maxTurns: 20 } } }, "check").ok === false,
+  SET.writeSettings(
+    SHOP,
+    { outreach: { call: { mode: "conversation", maxTurns: 20 } } },
+    "check",
+  ).ok === false,
   "Twilio caps how many TwiML documents one call may fetch; past it the call dies with a machine error",
+);
+
+const outreachSource = fs.readFileSync(
+  "app/lib/outreach.server.ts",
+  "utf8",
+);
+const voiceDelivery = outreachSource.slice(
+  outreachSource.indexOf('label: "Voice callback"'),
+  outreachSource.indexOf('id: "email"'),
+);
+check(
+  "voice audio is rendered before the phone is dialled",
+  voiceDelivery.indexOf("await renderVoice(d.text") >= 0 &&
+    voiceDelivery.indexOf("await renderVoice(d.text") <
+      voiceDelivery.indexOf("await placeCall({"),
+  "Twilio's media GET must read a cached file; putting Sarvam inside that live request produced a 502 after the caller answered",
+);
+check(
+  "a failed pre-render refuses to dial",
+  voiceDelivery.includes("could not prepare voice audio; nothing was dialled"),
+  "ringing first and discovering synthesis failed later produces Twilio's generic application-error message",
+);
+check(
+  "an outbound call registers one terminal status callback",
+  voiceDelivery.includes("statusCallbackUrl:") &&
+    voiceDelivery.includes("/voice/status/") &&
+    fs
+      .readFileSync("app/lib/voice.server.ts", "utf8")
+      .includes('form.set("StatusCallbackEvent", "completed")'),
+  "the SMS trigger belongs after the call, not inside a live speech turn",
+);
+
+const statusRoute = fs.readFileSync(
+  "app/routes/voice.status.$site.$token.tsx",
+  "utf8",
+);
+check(
+  "the post-call trigger proves both the placed call and spoken offer",
+  statusRoute.includes("readSends(site.key)") &&
+    statusRoute.includes("callTranscript(site.key, callSid)") &&
+    statusRoute.includes('values.CallStatus !== "completed"'),
+  "a grant alone is not evidence that the caller actually heard an offer",
 );
 
 /* ================= 4. the bounds gate, on the model's spoken words ================= */
@@ -195,17 +337,42 @@ const forbidden = [
   "Hurry — this deal ends tomorrow, only 2 left!",
 ];
 for (const line of forbidden) {
-  const violations = BND.checkReply(line, { groundedStockClaims: [], approvedOffers: [] });
-  check(`refused aloud: “${line.slice(0, 42)}…”`, violations.length > 0, violations.map((v) => v.gate).join(", "));
+  const violations = BND.checkReply(line, {
+    groundedStockClaims: [],
+    approvedOffers: [],
+  });
+  check(
+    `refused aloud: “${line.slice(0, 42)}…”`,
+    violations.length > 0,
+    violations.map((v) => v.gate).join(", "),
+  );
 }
 check(
   "the safe line itself passes the gate",
-  BND.checkReply(VTK.SAFE_LINE, { groundedStockClaims: [], approvedOffers: [] }).length === 0,
+  BND.checkReply(VTK.SAFE_LINE, { groundedStockClaims: [], approvedOffers: [] })
+    .length === 0,
   "a fallback that fails its own gate is a fallback that cannot be used",
 );
 check(
   "and so does the question we ask",
-  BND.checkReply(VTK.THE_ASK, { groundedStockClaims: [], approvedOffers: [] }).length === 0,
+  BND.checkReply(VTK.THE_ASK, { groundedStockClaims: [], approvedOffers: [] })
+    .length === 0,
+);
+const approvedOnly = VRC.voiceRemedyLine({
+  ok: true,
+  decision: {
+    remedy: {
+      kind: "discount",
+      grant: { depth: 0.08, tier: "regular" },
+    },
+  },
+  handoff: { ok: false, error: "trial template restriction" },
+});
+check(
+  "the caller hears the approval without SMS provider commentary",
+  approvedOnly?.includes("8% off approve") &&
+    !/sms|link|send nahi|could not|cannot/i.test(approvedOnly),
+  approvedOnly ?? "no fixed approval line",
 );
 
 /* ================= 5. the prompt holds no number to give away ================= */
@@ -229,8 +396,18 @@ const draft = {
 };
 
 const prompt = VTK.systemPrompt("Nilgiri Post", null, draft);
-for (const leak of ["8%", "maxDepthPct", "grant", "monthlyMarginCap", "235", "margin"]) {
-  check(`the prompt never mentions “${leak}”`, !prompt.toLowerCase().includes(leak.toLowerCase()));
+for (const leak of [
+  "8%",
+  "maxDepthPct",
+  "grant",
+  "monthlyMarginCap",
+  "235",
+  "margin",
+]) {
+  check(
+    `the prompt never mentions “${leak}”`,
+    !prompt.toLowerCase().includes(leak.toLowerCase()),
+  );
 }
 check(
   "it does carry the facts the message already asserted",
@@ -247,7 +424,9 @@ const enriched = VTK.systemPrompt("Nilgiri Post", null, draft, {
     shipping: "Free delivery over 800 rupees, otherwise 60 rupees.",
     cod: "Cash on delivery is not available.",
   },
-  serviceNotices: ["Some HDFC netbanking payments have not been going through recently."],
+  serviceNotices: [
+    "Some HDFC netbanking payments have not been going through recently.",
+  ],
   memories: ["Prefers low-caffeine teas.", "Buys gifts for their father."],
 });
 
@@ -284,7 +463,14 @@ check(
  * that nothing about discounts, depths, grants or this basket's margin has
  * appeared.
  */
-for (const leak of ["8%", "maxDepthPct", "grant", "monthlyMarginCap", "235", "% off"]) {
+for (const leak of [
+  "8%",
+  "maxDepthPct",
+  "grant",
+  "monthlyMarginCap",
+  "235",
+  "% off",
+]) {
   check(
     `even with the cortex attached, the prompt never mentions “${leak}”`,
     !enriched.toLowerCase().includes(leak.toLowerCase()),
@@ -308,8 +494,8 @@ check(
 );
 check(
   "rule 1 is still rule 1",
-  /Never state a discount/i.test(enriched),
-  "the extra context is knowledge of the shop, not permission to concede",
+  /Never create, improve or negotiate a discount/i.test(enriched),
+  "only a later server-issued grant can add exact terms to the call",
 );
 check(
   "an empty context produces exactly the prompt it always did",
@@ -344,15 +530,31 @@ FND.publishFindings({
       ],
     },
   ],
-  actions: [{ id: "a1", title: "Pair the chai with the kettle", reach: 10, impact: 40 }],
+  actions: [
+    { id: "a1", title: "Pair the chai with the kettle", reach: 10, impact: 40 },
+  ],
   stopped: 3,
-  recovery: { wouldContact: 12, suppressed: 214, marginAtStake: 4200, expectedValue: 500, enabled: true },
-  reasons: { total: 4, enough: false, counts: [{ reason: "price_too_high", count: 4, share: 1 }] },
+  recovery: {
+    wouldContact: 12,
+    suppressed: 214,
+    marginAtStake: 4200,
+    expectedValue: 500,
+    enabled: true,
+  },
+  reasons: {
+    total: 4,
+    enough: false,
+    counts: [{ reason: "price_too_high", count: 4, share: 1 }],
+  },
   asOf: RAN_AT,
 });
 
 const patched = FND.updateFindings(FSHOP, {
-  reasons: { total: 5, enough: false, counts: [{ reason: "price_too_high", count: 5, share: 1 }] },
+  reasons: {
+    total: 5,
+    enough: false,
+    counts: [{ reason: "price_too_high", count: 5, share: 1 }],
+  },
 });
 
 check("a call refreshes the reason counts", patched.reasons.total === 5);
@@ -383,7 +585,17 @@ check(
 console.log("\n--- the opt-out a caller can actually reach ---");
 
 VTK._reset();
-CNV.addTurn({ shop: SHOP, cartId: CART, customerId: CUST, turn: { kind: "asked", ts: new Date().toISOString(), channel: "voice", draftId: DRAFT_ID } });
+CNV.addTurn({
+  shop: SHOP,
+  cartId: CART,
+  customerId: CUST,
+  turn: {
+    kind: "asked",
+    ts: new Date().toISOString(),
+    channel: "voice",
+    draftId: DRAFT_ID,
+  },
+});
 const optOutcome = VTK.optOut(SHOP, "CAtest9", draft);
 
 check("pressing 9 ends the call", optOutcome.kind === "hangup");
@@ -397,7 +609,20 @@ check(
 );
 check(
   "nothing further can be recorded against that basket",
-  CNV.addTurn({ shop: SHOP, cartId: CART, customerId: CUST, turn: { kind: "answered", ts: new Date().toISOString(), reason: "price_too_high", by: "choice", evidence: "x", text: "x", tier: "returning" } }).ok === false,
+  CNV.addTurn({
+    shop: SHOP,
+    cartId: CART,
+    customerId: CUST,
+    turn: {
+      kind: "answered",
+      ts: new Date().toISOString(),
+      reason: "price_too_high",
+      by: "choice",
+      evidence: "x",
+      text: "x",
+      tier: "returning",
+    },
+  }).ok === false,
   "terminal states are terminal",
 );
 
@@ -406,7 +631,17 @@ console.log("\n--- the reason is the product, wherever it was said ---");
 
 const CART2 = "crt_check_voice_2";
 const draft2 = { ...draft, cartId: CART2, id: "rcv_check_voice_2" };
-CNV.addTurn({ shop: SHOP, cartId: CART2, customerId: CUST, turn: { kind: "asked", ts: new Date().toISOString(), channel: "voice", draftId: draft2.id } });
+CNV.addTurn({
+  shop: SHOP,
+  cartId: CART2,
+  customerId: CUST,
+  turn: {
+    kind: "asked",
+    ts: new Date().toISOString(),
+    channel: "voice",
+    draftId: draft2.id,
+  },
+});
 
 /**
  * Phrase rules, not a model — so this assertion is deterministic and free. The
@@ -414,11 +649,24 @@ CNV.addTurn({ shop: SHOP, cartId: CART2, customerId: CUST, turn: { kind: "asked"
  * in the same store the web page writes to.
  */
 const spoken = "honestly the delivery charge was too expensive for me";
-await VTK.takeTurn({ callSid: "CAtest7", said: spoken, shop: SHOP, draft: draft2 });
+await VTK.takeTurn({
+  callSid: "CAtest7",
+  said: spoken,
+  shop: SHOP,
+  draft: draft2,
+});
 
 const conv2 = CNV.conversation(SHOP, CART2);
-check("a spoken answer moves the basket to answered", conv2?.state === "answered", conv2?.state);
-check("classified into the closed set", conv2?.reason != null && conv2.reason !== undefined, conv2?.reason);
+check(
+  "a spoken answer moves the basket to answered",
+  conv2?.state === "answered",
+  conv2?.state,
+);
+check(
+  "classified into the closed set",
+  conv2?.reason != null && conv2.reason !== undefined,
+  conv2?.reason,
+);
 check(
   "delivery cost beats price, because it is checked first",
   conv2?.reason === "shipping_cost",
@@ -426,7 +674,11 @@ check(
 );
 
 const hist = CNV.reasonHistogram(SHOP);
-check("it reaches the histogram", JSON.stringify(hist).includes("shipping_cost"), "the same one a typed answer feeds");
+check(
+  "it reaches the histogram",
+  JSON.stringify(hist).includes("shipping_cost"),
+  "the same one a typed answer feeds",
+);
 
 /**
  * The shopper's own words are candid personal data. "I couldn't afford it" is
@@ -435,7 +687,9 @@ check("it reaches the histogram", JSON.stringify(hist).includes("shipping_cost")
 const histJson = JSON.stringify(hist);
 check(
   "and their exact words do not cross into the histogram",
-  !histJson.includes("honestly") && !histJson.includes("expensive for me") && !histJson.includes(CUST),
+  !histJson.includes("honestly") &&
+    !histJson.includes("expensive for me") &&
+    !histJson.includes(CUST),
   "counts only — the sentence stays in the conversation store",
 );
 
@@ -443,11 +697,20 @@ check(
 console.log("\n--- what was said, on the channel with no screenshot ---");
 
 const lines = VTK.callTranscript(SHOP, "CAtest7");
-check("both sides are written down", lines.some((l) => l.who === "shopper") && lines.some((l) => l.who === "shop"), `${lines.length} lines`);
-check("the shopper's line is verbatim", lines.some((l) => l.who === "shopper" && l.text === spoken));
+check(
+  "both sides are written down",
+  lines.some((l) => l.who === "shopper") && lines.some((l) => l.who === "shop"),
+  `${lines.length} lines`,
+);
+check(
+  "the shopper's line is verbatim",
+  lines.some((l) => l.who === "shopper" && l.text === spoken),
+);
 check(
   "every shop line records where it came from",
-  lines.filter((l) => l.who === "shop").every((l) => typeof l.source === "string"),
+  lines
+    .filter((l) => l.who === "shop")
+    .every((l) => typeof l.source === "string"),
   "a merchant must be able to tell a template from a model",
 );
 
@@ -460,11 +723,20 @@ check(
   g.includes('actionOnEmptyResult="true"'),
   "without it, “no callback” means both “they said nothing” and “gather never ran” — that ambiguity produced a wrong conclusion",
 );
-check("it accepts a keypress as well as speech", g.includes('input="speech dtmf"'), "9 must work even when the recogniser does not");
-check("the two clocks are both set", g.includes('timeout="6"') && g.includes('speechTimeout="auto"'), "wait-for-speech and pause-after-speech are different things");
+check(
+  "it accepts a keypress as well as speech",
+  g.includes('input="speech dtmf"'),
+  "9 must work even when the recogniser does not",
+);
+check(
+  "the two clocks are both set",
+  g.includes('timeout="6"') && g.includes('speechTimeout="auto"'),
+  "wait-for-speech and pause-after-speech are different things",
+);
 check(
   "an unrendered line still gets spoken, audibly worse",
-  TWM.reply({ audioUrl: null, text: "hello" }) === "<Say>hello</Say>" && TWM.reply({ audioUrl: "u", text: "hello" }) === "<Play>u</Play>",
+  TWM.reply({ audioUrl: null, text: "hello" }) === "<Say>hello</Say>" &&
+    TWM.reply({ audioUrl: "u", text: "hello" }) === "<Play>u</Play>",
   "a call that silently drops replies is harder to notice than one that changes voice",
 );
 
@@ -485,9 +757,26 @@ console.log("\n--- the clock nobody owns ---");
  * must fit inside the deadline that answers Twilio, with room for the network.
  */
 const budgets = {
-  model: Number(fs.readFileSync("app/lib/voicetalk.server.ts", "utf8").match(/VOICE_MODEL_MS \?\? (\d+)/)[1]),
-  sarvam: Number(fs.readFileSync("app/lib/voice.server.ts", "utf8").match(/SARVAM_TIMEOUT_MS \?\? (\d+)/)[1]),
-  deadline: Number(fs.readFileSync("app/routes/voice.turn.$site.$token.tsx", "utf8").match(/VOICE_DEADLINE_MS \?\? (\d+)/)[1]),
+  model: Number(
+    fs
+      .readFileSync("app/lib/voicetalk.server.ts", "utf8")
+      .match(/VOICE_MODEL_MS \?\? (\d+)/)[1],
+  ),
+  sarvam: Number(
+    fs
+      .readFileSync("app/lib/voice.server.ts", "utf8")
+      .match(/SARVAM_TIMEOUT_MS \?\? (\d+)/)[1],
+  ),
+  deadline: Number(
+    fs
+      .readFileSync("app/routes/voice.turn.$site.$token.tsx", "utf8")
+      .match(/VOICE_DEADLINE_MS \?\? (\d+)/)[1],
+  ),
+  inline: Number(
+    fs
+      .readFileSync("app/routes/voice.turn.$site.$token.tsx", "utf8")
+      .match(/VOICE_INLINE_MS \?\? (\d+)/)[1],
+  ),
 };
 
 /**
@@ -520,24 +809,29 @@ const budgets = {
  * and each part must still fit on its own.
  */
 check(
-  "the longer of generation and synthesis fits inside the deadline",
-  Math.max(budgets.model, budgets.sarvam) < budgets.deadline,
-  `max(${budgets.model}, ${budgets.sarvam}) = ${Math.max(budgets.model, budgets.sarvam)}ms < ${budgets.deadline}ms — they overlap, so the sum does not apply`,
-);
-check(
-  "and synthesis alone could still finish after a late first sentence",
-  budgets.sarvam < budgets.deadline,
-  `${budgets.sarvam}ms < ${budgets.deadline}ms`,
+  "the inline wait leaves ample room to return TwiML",
+  budgets.inline + 500 < budgets.deadline,
+  `${budgets.inline}ms + 500ms < ${budgets.deadline}ms`,
 );
 check(
   "and the deadline stays inside what Twilio was measured to tolerate",
-  budgets.deadline <= 12000,
-  `${budgets.deadline}ms, inside Twilio's documented 15s ceiling with margin for the tunnel`,
+  budgets.deadline <= 4500,
+  `${budgets.deadline}ms, below the measured failure window with margin for the tunnel`,
 );
 check(
   "every timeout is a real number, not NaN from a renamed variable",
   Object.values(budgets).every((n) => Number.isFinite(n) && n > 0),
   JSON.stringify(budgets),
+);
+
+const turnRoute = fs.readFileSync("app/routes/voice.turn.$site.$token.tsx", "utf8");
+const replyRoute = fs.readFileSync("app/routes/voice.reply.$site.$token.tsx", "utf8");
+check(
+  "fresh speech finishes in parked work, outside Twilio's reply callback",
+  turnRoute.includes("pending.set(callSid, voicedWork)") &&
+    turnRoute.includes("cachedSpeech(VOICE_FILLER") &&
+    !replyRoute.includes("await speak("),
+  "the caller gets cached Sarvam filler while voicedWork continues; reply only plays completed audio",
 );
 
 /* ================= cleanup ================= */
@@ -550,14 +844,20 @@ try {
 }
 const convFile = CNV._file();
 try {
-  const kept = fs.readFileSync(convFile, "utf8").split("\n").filter((l) => l && !l.includes(SHOP));
+  const kept = fs
+    .readFileSync(convFile, "utf8")
+    .split("\n")
+    .filter((l) => l && !l.includes(SHOP));
   fs.writeFileSync(convFile, kept.join("\n") + (kept.length ? "\n" : ""));
 } catch {
   /* nothing written */
 }
 const tFile = VTK._file();
 try {
-  const kept = fs.readFileSync(tFile, "utf8").split("\n").filter((l) => l && !l.includes(SHOP));
+  const kept = fs
+    .readFileSync(tFile, "utf8")
+    .split("\n")
+    .filter((l) => l && !l.includes(SHOP));
   fs.writeFileSync(tFile, kept.join("\n") + (kept.length ? "\n" : ""));
 } catch {
   /* nothing written */
@@ -575,4 +875,6 @@ if (failed) {
   console.log(`${failed} FAILED`);
   process.exit(1);
 }
-console.log("All checks passed. The shop's voice cannot be made to say anything it was not handed.");
+console.log(
+  "All checks passed. The shop's voice cannot be made to say anything it was not handed.",
+);

@@ -138,6 +138,31 @@ export type Rendered =
   | { ok: true; file: string; bytes: number; cached: boolean }
   | { ok: false; error: string };
 
+/** Fixed acknowledgement used while a conversational reply finishes. */
+export const VOICE_FILLER = "One moment.";
+
+/**
+ * Resolve speech only when it is already on disk.
+ *
+ * This is safe on a live Twilio webhook: unlike render(), it performs no
+ * network request and falls back to Twilio's voice if the warm-up was lost.
+ */
+export function cachedSpeech(
+  text: string,
+  c: VoiceConfig,
+  origin: string,
+): { audioUrl: string | null; text: string } {
+  const file = path.join(CACHE_DIR, `${cacheKey(text, c)}.mp3`);
+  try {
+    if (fs.statSync(file).size > 0) {
+      return { audioUrl: `${origin}/voice/audio/${path.basename(file)}`, text };
+    }
+  } catch {
+    /* a missing warm-up deliberately falls through to Twilio Say */
+  }
+  return { audioUrl: null, text };
+}
+
 /**
  * Render one sentence to 8 kHz mp3, cached by content.
  *
@@ -145,7 +170,11 @@ export type Rendered =
  * draft and checked it — this is the transport half. `speak()` is the entry
  * point that enforces "drafts only".
  */
-export async function render(text: string, c: VoiceConfig): Promise<Rendered> {
+export async function render(
+  text: string,
+  c: VoiceConfig,
+  opts: { timeoutMs?: number } = {},
+): Promise<Rendered> {
   if (!text.trim()) return { ok: false, error: "nothing to say" };
   if (text.length > MAX_CHARS) {
     return {
@@ -162,6 +191,13 @@ export async function render(text: string, c: VoiceConfig): Promise<Rendered> {
     /* not cached yet */
   }
 
+  const requestedTimeout =
+    opts.timeoutMs ?? Number(process.env.SARVAM_TIMEOUT_MS ?? 3000);
+  const timeoutMs =
+    Number.isFinite(requestedTimeout) && requestedTimeout > 0
+      ? requestedTimeout
+      : 3000;
+
   let res: Response;
   try {
     res = await fetch("https://api.sarvam.ai/text-to-speech", {
@@ -174,7 +210,7 @@ export async function render(text: string, c: VoiceConfig): Promise<Rendered> {
        * up at fifteen seconds and tells the caller it could not reach us. Six
        * is well past the two-and-a-half a normal render takes.
        */
-      signal: AbortSignal.timeout(Number(process.env.SARVAM_TIMEOUT_MS ?? 3000)),
+      signal: AbortSignal.timeout(timeoutMs),
       headers: { "api-subscription-key": c.sarvamKey, "Content-Type": "application/json" },
       body: JSON.stringify({
         text,
@@ -281,9 +317,15 @@ export type PlacedCall = { ok: true; sid: string; status: string } | { ok: false
 export async function placeCall(opts: {
   to: string;
   twimlUrl: string;
+  statusCallbackUrl?: string;
   c: VoiceConfig;
 }): Promise<PlacedCall> {
   const form = new URLSearchParams({ To: opts.to, From: opts.c.twilioFrom, Url: opts.twimlUrl });
+  if (opts.statusCallbackUrl) {
+    form.set("StatusCallback", opts.statusCallbackUrl);
+    form.set("StatusCallbackMethod", "POST");
+    form.set("StatusCallbackEvent", "completed");
+  }
   const auth = Buffer.from(`${opts.c.twilioSid}:${opts.c.twilioToken}`).toString("base64");
 
   let res: Response;

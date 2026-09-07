@@ -40,17 +40,17 @@ methods, or register the webhook for the merchant.
 
 ## Main features
 
-| Feature | Purpose |
-|---|---|
-| [Storefront assistant](docs/architecture.md#storefront-assistant) | Answers from the merchant's live catalogue and policies |
-| [Agent front](docs/architecture.md#agent-front) | Publishes UCP over MCP for shopping agents |
-| [Feature controls](docs/architecture.md#feature-controls) | Lets the merchant withdraw specific capabilities |
-| [Razorpay checkout](docs/architecture.md#razorpay-checkout-and-settlement) | Creates orders and verifies payment settlement |
-| [Offers](docs/architecture.md#offers-and-approvals) | Requires merchant approval before a promotion can be claimed or applied |
-| [Recovery](docs/architecture.md#recovery-and-voice) | Reviews incomplete carts and supports configured voice calls |
-| [Shopper memory](docs/architecture.md#shopper-memory) | Stores limited preferences for signed-in shoppers |
-| [Shop cortex](docs/architecture.md#shop-cortex) and [Analyst](docs/architecture.md#analyst) | Provides merchant-side context and read-only analysis |
-| [Decision ledger and Test bench](docs/architecture.md#decision-ledger-and-test-bench) | Records decisions and tests live guardrails |
+| Feature                                                                                     | Purpose                                                                                                            |
+| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| [Storefront assistant](docs/architecture.md#storefront-assistant)                           | Answers from the merchant's live catalogue and policies                                                            |
+| [Agent front](docs/architecture.md#agent-front)                                             | Publishes UCP over MCP for shopping agents                                                                         |
+| [Feature controls](docs/architecture.md#feature-controls)                                   | Lets the merchant withdraw specific capabilities                                                                   |
+| [Razorpay checkout](docs/architecture.md#razorpay-checkout-and-settlement)                  | Creates orders and verifies payment settlement                                                                     |
+| [Offers](docs/architecture.md#offers-and-approvals)                                         | Requires merchant approval before a promotion can be claimed or applied                                            |
+| [Recovery](docs/architecture.md#recovery-and-voice)                                         | Learns why carts were left, applies bounded remedies, and can send a discounted payment link after a Hinglish call |
+| [Shopper memory](docs/architecture.md#shopper-memory)                                       | Stores limited preferences for signed-in shoppers                                                                  |
+| [Shop cortex](docs/architecture.md#shop-cortex) and [Analyst](docs/architecture.md#analyst) | Provides merchant-side context and read-only analysis                                                              |
+| [Decision ledger and Test bench](docs/architecture.md#decision-ledger-and-test-bench)       | Records decisions and tests live guardrails                                                                        |
 
 The bundled storefront is **Monsoon Market**. It is a small Go application used
 only to demonstrate the integration.
@@ -72,7 +72,8 @@ flowchart LR
     Gateway --> Checks[Policy and claim checks]
     Gateway --> Ledger[Decision ledger]
     Gateway --> Razorpay
-    Gateway --> Voice[Sarvam and Twilio]
+    Gateway --> Voice[Sarvam and Twilio Voice]
+    Gateway --> SMS[Twilio SMS payment handoff]
     Gateway -. optional .-> OpenRouter[OpenRouter]
 ```
 
@@ -123,14 +124,14 @@ claim an integration is installed before the merchant configures it.
 
 Sign in and select **Configure your storefront**.
 
-| Field | Value |
-|---|---|
-| Store name | `Monsoon Market` |
-| Public site key | `pk_monsoon_market` |
-| Browser origin | `http://localhost:4000` |
-| Catalogue URL | `http://store:4000/catalog.json` |
-| Product URL template | `/product.html?handle={handle}` |
-| Order feed | leave blank |
+| Field                | Value                            |
+| -------------------- | -------------------------------- |
+| Store name           | `Monsoon Market`                 |
+| Public site key      | `pk_monsoon_market`              |
+| Browser origin       | `http://localhost:4000`          |
+| Catalogue URL        | `http://store:4000/catalog.json` |
+| Product URL template | `/product.html?handle={handle}`  |
+| Order feed           | leave blank                      |
 
 Select **Configure Razorpay for this storefront** only if shopping agents should
 also receive Chapman's hosted checkout. Saving registers the store and creates
@@ -169,13 +170,13 @@ Provider secrets go in the root `.env`, never in storefront code or
 docker compose up -d gateway
 ```
 
-| Page | Required configuration |
-|---|---|
-| Assistant | `OPENROUTER_API_KEY` is optional; the safe fallback works without it |
-| Agent front | Razorpay needs `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` |
-| Analyst | `OPENROUTER_API_KEY` is required |
-| Shopper memory | OpenRouter summarisation is optional |
-| Recovery | Voice needs Sarvam, Twilio SID, Twilio token, Twilio number, and `PUBLIC_ORIGIN` |
+| Page           | Required configuration                                                                                            |
+| -------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Assistant      | `OPENROUTER_API_KEY` is optional; the safe fallback works without it                                              |
+| Agent front    | Razorpay needs `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`                                                        |
+| Analyst        | `OPENROUTER_API_KEY` is required                                                                                  |
+| Shopper memory | OpenRouter summarisation is optional                                                                              |
+| Recovery       | Voice needs Sarvam, Twilio SID, Twilio token, Twilio number, and `PUBLIC_ORIGIN`; SMS may reuse the Twilio number |
 
 Each feature page shows its exact variables and whether they are configured.
 If the setup checkbox was skipped, use the tested terminal linker documented in
@@ -193,6 +194,21 @@ webhook setup, tunnel setup, and model overrides.
   This is a real Twilio call and can use provider credit. An inline console
   shows validation, Sarvam rendering, Twilio acceptance, or the exact reason
   the call was stopped.
+- **Recovery** also has **Send test message**. A Full Twilio account receives
+  Chapman's fixed neutral text; a Trial account automatically uses Twilio's
+  predefined `sms_customer_support` template. The console shows Twilio
+  acceptance, and neither path creates a cart, discount, or payment order.
+
+For automated recovery, choose conversational calls, configure the recovery
+discount policy, then enable **Send an approved discounted-payment link by
+SMS**. Chapman classifies the caller's first durable answer, evaluates the same
+returning-customer, margin, quantity, expiry, and monthly-budget gates used by
+web recovery, creates the discounted Razorpay order, and messages its payment
+link to the same number. The model cannot choose or negotiate the percentage.
+
+The automatic payment-link handoff requires a Full Twilio account. Trial SMS
+accepts only predefined bodies, so it cannot carry a unique Razorpay order URL;
+Chapman detects this and stops before creating an undeliverable payment order.
 
 Run the automated checks with:
 
@@ -271,16 +287,16 @@ Current limitations:
 
 ## Documentation
 
-| Document | Purpose |
-|---|---|
-| [INSTALL.md](INSTALL.md) | Docker, native, and production installation |
-| [docs/configuration.md](docs/configuration.md) | Provider keys and integration tests |
-| [docs/agentic-install.md](docs/agentic-install.md) | Full coding-agent setup prompt |
-| [docs/architecture.md](docs/architecture.md) | System and per-feature diagrams |
-| [docs/catalog-format.md](docs/catalog-format.md) | Catalogue JSON format |
-| [docs/fresh-store-setup.md](docs/fresh-store-setup.md) | Empty-volume setup for every feature |
-| [docs/demo-plan.md](docs/demo-plan.md) | Demo runbook |
-| [docs/troubleshooting.md](docs/troubleshooting.md) | Common failures |
+| Document                                               | Purpose                                     |
+| ------------------------------------------------------ | ------------------------------------------- |
+| [INSTALL.md](INSTALL.md)                               | Docker, native, and production installation |
+| [docs/configuration.md](docs/configuration.md)         | Provider keys and integration tests         |
+| [docs/agentic-install.md](docs/agentic-install.md)     | Full coding-agent setup prompt              |
+| [docs/architecture.md](docs/architecture.md)           | System and per-feature diagrams             |
+| [docs/catalog-format.md](docs/catalog-format.md)       | Catalogue JSON format                       |
+| [docs/fresh-store-setup.md](docs/fresh-store-setup.md) | Empty-volume setup for every feature        |
+| [docs/demo-plan.md](docs/demo-plan.md)                 | Demo runbook                                |
+| [docs/troubleshooting.md](docs/troubleshooting.md)     | Common failures                             |
 
 ## What broke @2am
 

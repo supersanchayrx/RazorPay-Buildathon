@@ -47,7 +47,10 @@ import {
   isConfigured as voiceConfigured,
   missing as voiceMissing,
   placeCall,
+  render as renderVoice,
+  VOICE_FILLER,
 } from "./voice.server";
+import { SAFE_LINE, THE_ASK } from "./voicetalk.server";
 
 /* ------------------------------------------------------------------ *
  * What a channel is
@@ -241,14 +244,17 @@ export const CHANNELS: Channel[] = [
      * Read the order of operations, because it is the whole design:
      *
      *   1. write the sentence down     <- the transcript, before anyone hears it
-     *   2. mint a token naming it      <- not the text; a token, for 15 minutes
-     *   3. ring the phone              <- Twilio calls US back to ask what to say
+     *   2. render and cache the audio  <- never make Twilio wait on Sarvam
+     *   3. mint a token naming it      <- not the text; a token, for 15 minutes
+     *   4. ring the phone              <- Twilio calls US back to ask what to say
      *
      * Step 1 comes first for the reason the send log comes first in `send()`:
      * voice's worst property is that there is no record of what was said, and
      * a call placed before the sentence was persisted is a call nobody can
-     * audit. Step 2 exists so that step 3 can carry an identifier rather than
-     * a payload — the same reason `buildQuote` takes a grant id.
+     * audit. Step 2 prevents a slow speech API from turning an answered call
+     * into Twilio's generic application-error message. Step 3 exists so that
+     * step 4 can carry an identifier rather than a payload — the same reason
+     * `buildQuote` takes a grant id.
      *
      * There is no model anywhere in this path, and nowhere to put one. What
      * gets spoken is `d.text`, which `recovery.server.ts` composed from a
@@ -265,10 +271,49 @@ export const CHANNELS: Channel[] = [
       const written = appendDraft(d);
       if (!written.ok) return { ok: false, error: `could not write the transcript: ${written.error}` };
 
+      // Synthesis belongs before dialling, while nobody is waiting. Twilio's
+      // later audio request must be a cached file read, never a Sarvam round
+      // trip that can time out after the person has answered.
+      const audio = await renderVoice(d.text, c, { timeoutMs: 10_000 });
+      if (!audio.ok) {
+        return {
+          ok: false,
+          error: `could not prepare voice audio; nothing was dialled: ${audio.error}`,
+        };
+      }
+
+      // The conversation route must acknowledge Twilio immediately while the
+      // agent and Sarvam finish the real reply. Warm that acknowledgement now,
+      // before anyone is on the line, so it stays in the same Sarvam voice.
+      const filler = await renderVoice(VOICE_FILLER, c, { timeoutMs: 10_000 });
+      if (!filler.ok) {
+        return {
+          ok: false,
+          error: `could not prepare conversation audio; nothing was dialled: ${filler.error}`,
+        };
+      }
+
+      // The question and the deadline fallback are also reachable before a
+      // dynamic reply exists. Warm both so no normal demo branch changes from
+      // the configured Sarvam speaker to Twilio's synthetic voice.
+      for (const [label, line] of [
+        ["conversation question", THE_ASK],
+        ["safe fallback", SAFE_LINE],
+      ] as const) {
+        const warm = await renderVoice(line, c, { timeoutMs: 10_000 });
+        if (!warm.ok) {
+          return {
+            ok: false,
+            error: `could not prepare ${label}; nothing was dialled: ${warm.error}`,
+          };
+        }
+      }
+
       const token = mintVoiceToken({ site: site.key, draft: d.id, secret: site.secret });
       const call = await placeCall({
         to: d.to.phone,
         twimlUrl: `${c.origin}/voice/twiml/${site.key}/${token}`,
+        statusCallbackUrl: `${c.origin}/voice/status/${site.key}/${token}`,
         c,
       });
 

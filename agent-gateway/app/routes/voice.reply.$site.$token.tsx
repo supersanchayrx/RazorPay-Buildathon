@@ -2,12 +2,12 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { findSite } from "../lib/sites.server";
 import { verifyVoiceToken } from "../lib/identity.server";
 import { draftById } from "../lib/outreach.server";
-import { config } from "../lib/voice.server";
-import { fallbackAudio, noteFallbackSpoken, speak, SAFE_LINE, type TurnOutcome } from "../lib/voicetalk.server";
+import { cachedSpeech, config } from "../lib/voice.server";
+import { fallbackAudio, noteFallbackSpoken, SAFE_LINE, type TurnOutcome } from "../lib/voicetalk.server";
 import { collect, hangup, listen, reply, xml , respondWithin } from "../lib/twiml.server";
 import { record } from "../lib/ledger.server";
 
-const DEADLINE_MS = Number(process.env.VOICE_DEADLINE_MS ?? 5500);
+const DEADLINE_MS = Number(process.env.VOICE_DEADLINE_MS ?? 4000);
 
 const LATE_LISTEN = (params: { site?: string; token?: string }) =>
   listen(`${config()?.origin ?? ""}/voice/turn/${params.site}/${params.token}`);
@@ -39,7 +39,9 @@ async function inner({ request, params }: LoaderFunctionArgs | ActionFunctionArg
   const callSid = String(form.get("CallSid") ?? "unknown");
   const turnUrl = `${c.origin}/voice/turn/${site.key}/${params.token}`;
 
-  const out = await collect<TurnOutcome>(callSid);
+  // Leave enough of the response budget to serialize and deliver TwiML even
+  // when the parked model work never resolves.
+  const out = await collect<TurnOutcome>(callSid, Math.max(250, DEADLINE_MS - 500));
 
   if (!out) {
     /**
@@ -51,10 +53,16 @@ async function inner({ request, params }: LoaderFunctionArgs | ActionFunctionArg
      * call, so this cannot loop forever.
      */
     record({ shop: site.key, kind: "tool_error", message: `voice reply: nothing ready for ${callSid}`, detail: { cartId: draft.cartId } });
-    return xml(reply(await speak(SAFE_LINE, c, c.origin)) + listen(turnUrl));
+    return xml(reply(cachedSpeech(SAFE_LINE, c, c.origin)) + listen(turnUrl));
   }
 
-  const utt = out.audioUrl ? { audioUrl: out.audioUrl, text: out.line } : await speak(out.line, c, c.origin);
+  // Never start TTS while Twilio is waiting for this webhook. takeTurn may
+  // already have produced audio; otherwise Twilio's voice is the reliable
+  // fallback for this turn.
+  const utt = out.audioUrl
+    ? { audioUrl: out.audioUrl, text: out.line }
+    : cachedSpeech(SAFE_LINE, c, c.origin);
+  if (!out.audioUrl) noteFallbackSpoken(site.key, draft.cartId, callSid);
   if (out.kind === "hangup") return xml(reply(utt) + "<Hangup/>");
   return xml(reply(utt) + (out.last ? `<Say>Thanks for your time.</Say><Hangup/>` : listen(turnUrl)));
 }
@@ -85,7 +93,8 @@ async function handle(args: LoaderFunctionArgs | ActionFunctionArgs) {
       const v = site ? verifyVoiceToken(args.params.token, { site: site.key, secret: site.secret }) : null;
       const d = site && v?.ok ? draftById(site.key, v.claim.draft) : null;
       if (site) noteFallbackSpoken(site.key, d?.cartId ?? "unknown", "unknown");
-      const warm = fallbackAudio();
+      const voice = config();
+      const warm = fallbackAudio() ?? (voice ? cachedSpeech(SAFE_LINE, voice, voice.origin).audioUrl : null);
       return (warm ? `<Play>${warm}</Play>` : `<Say>${SAFE_LINE}</Say>`) + LATE_LISTEN(args.params);
     },
   );

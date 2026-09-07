@@ -2,12 +2,13 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { findSite } from "../lib/sites.server";
 import { verifyVoiceToken } from "../lib/identity.server";
 import { draftById } from "../lib/outreach.server";
-import { config } from "../lib/voice.server";
+import { cachedSpeech, config, VOICE_FILLER } from "../lib/voice.server";
 import { fallbackAudio, noteFallbackSpoken, optOut, takeSilence, takeTurn, speak, SAFE_LINE } from "../lib/voicetalk.server";
 import { hangup, listen, pending, reply, xml , respondWithin } from "../lib/twiml.server";
 import { record } from "../lib/ledger.server";
 
-const DEADLINE_MS = Number(process.env.VOICE_DEADLINE_MS ?? 5500);
+const DEADLINE_MS = Number(process.env.VOICE_DEADLINE_MS ?? 4000);
+const INLINE_MS = Number(process.env.VOICE_INLINE_MS ?? 1200);
 
 const LATE_LISTEN = (params: { site?: string; token?: string }) =>
   listen(`${config()?.origin ?? ""}/voice/turn/${params.site}/${params.token}`);
@@ -68,25 +69,33 @@ async function inner({ request, params }: LoaderFunctionArgs | ActionFunctionArg
    */
   if (digit === "9") {
     const out = optOut(site.key, callSid, draft);
-    return xml(reply(await speak(out.line, c, c.origin)) + "<Hangup/>");
+    return xml(reply({ audioUrl: null, text: out.line }) + "<Hangup/>");
   }
 
   if (digit) {
     const line = "Sorry, I didn't catch that. Just say it, or press 9 if you'd rather we stopped calling.";
-    return xml(reply(await speak(line, c, c.origin)) + listen(turnUrl));
+    return xml(reply({ audioUrl: null, text: line }) + listen(turnUrl));
   }
 
   /* ---- silence ---------------------------------------------------- */
 
   if (!said) {
     const out = takeSilence(callSid, site.key, draft);
-    const utt = await speak(out.line, c, c.origin);
+    const utt = { audioUrl: null, text: out.line };
     return xml(out.kind === "hangup" ? reply(utt) + "<Hangup/>" : reply(utt) + listen(turnUrl));
   }
 
   /* ---- the exchange ----------------------------------------------- */
 
   const work = takeTurn({ callSid, said, shop: site.key, draft, c, origin: c.origin });
+  // Finish Sarvam speech as part of the parked work, not after Twilio asks for
+  // the reply. The route races this promise only briefly, then redirects while
+  // synthesis continues in the background.
+  const voicedWork = work.then(async (out) => {
+    if (out.audioUrl) return out;
+    const utt = await speak(out.line, c, c.origin);
+    return { ...out, audioUrl: utt.audioUrl };
+  });
 
   /**
    * The window, sized from measurement rather than taste.
@@ -99,12 +108,18 @@ async function inner({ request, params }: LoaderFunctionArgs | ActionFunctionArg
    * anything was still waiting for it.
    */
   const quick = await Promise.race([
-    work,
-    new Promise<null>((r) => setTimeout(() => r(null), Number(process.env.VOICE_INLINE_MS ?? 5200))),
+    voicedWork,
+    new Promise<null>((r) => setTimeout(() => r(null), INLINE_MS)),
   ]);
 
   if (quick) {
-    const utt = await speak(quick.line, c, c.origin);
+    // Only play audio that takeTurn already finished. Starting synthesis here
+    // would put another network request on Twilio's critical response path.
+    const readyAudio = "audioUrl" in quick ? quick.audioUrl ?? null : null;
+    const utt = readyAudio
+      ? { audioUrl: readyAudio, text: quick.line }
+      : cachedSpeech(SAFE_LINE, c, c.origin);
+    if (!readyAudio) noteFallbackSpoken(site.key, draft.cartId, callSid);
     if (quick.kind === "hangup") return xml(reply(utt) + "<Hangup/>");
     return xml(
       reply(utt) +
@@ -115,7 +130,7 @@ async function inner({ request, params }: LoaderFunctionArgs | ActionFunctionArg
   }
 
   // Slow path. Park the work and let the filler cover it.
-  pending.set(callSid, work);
+  pending.set(callSid, voicedWork);
   /**
    * A fixed noise that promises nothing.
    *
@@ -123,8 +138,12 @@ async function inner({ request, params }: LoaderFunctionArgs | ActionFunctionArg
    * happening, and not "sure!", which implies agreement to a question no
    * model has read yet. It means "still here", which is all it is for.
    */
-  const filler = await speak("One moment.", c, c.origin);
-  return xml(reply(filler) + `<Redirect method="POST">${c.origin}/voice/reply/${site.key}/${params.token}</Redirect>`);
+  const filler = reply(cachedSpeech(VOICE_FILLER, c, c.origin));
+  return xml(
+    filler +
+      '<Pause length="1"/>' +
+      `<Redirect method="POST">${c.origin}/voice/reply/${site.key}/${params.token}</Redirect>`,
+  );
 }
 
 /** Twilio POSTs; GET is accepted so the route can be exercised by hand. */
@@ -155,7 +174,8 @@ async function handle(args: LoaderFunctionArgs | ActionFunctionArgs) {
       const v = site ? verifyVoiceToken(args.params.token, { site: site.key, secret: site.secret }) : null;
       const d = site && v?.ok ? draftById(site.key, v.claim.draft) : null;
       if (site) noteFallbackSpoken(site.key, d?.cartId ?? "unknown", "unknown");
-      const warm = fallbackAudio();
+      const voice = config();
+      const warm = fallbackAudio() ?? (voice ? cachedSpeech(SAFE_LINE, voice, voice.origin).audioUrl : null);
       return (warm ? `<Play>${warm}</Play>` : `<Say>${SAFE_LINE}</Say>`) + LATE_LISTEN(args.params);
     },
   );

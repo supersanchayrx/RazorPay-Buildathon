@@ -70,6 +70,7 @@ the embed tag.
 | **Recovery**       | Notice-only voice calls                 | `SARVAM_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`, `PUBLIC_ORIGIN` | All five required together                                                                        |
 | **Recovery**       | Conversational calls and answer grading | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL_ASSISTANT`, `OPENROUTER_MODEL_GRADER`               | Optional                                                                                          |
 | **Recovery**       | Manual tests during quiet hours         | `VOICE_QUIET_HOURS_TEST_NUMBER`                                                             | Optional; must exactly match the E.164 test destination                                           |
+| **Recovery**       | Discounted payment-link SMS             | `TWILIO_MESSAGING_FROM`, `TWILIO_MESSAGING_SERVICE_SID`                                     | Optional; `TWILIO_FROM` is the default sender, and `PUBLIC_ORIGIN` is required for the link       |
 
 Each dedicated page shows the variables it actually consumes, whether each is
 present, a blank copyable `.env` block, setup steps, and links to the provider's
@@ -152,6 +153,24 @@ with Sarvam rendering, Twilio acceptance, and `[done] Call queued`. Queueing is
 not the same as answering: confirm the final call on the handset or in Twilio's
 call log. An error remains beside the form and names the provider, validation,
 feature control, rate limit, or quiet-hours rule that stopped the attempt.
+
+### Send test message
+
+On **Recovery**, enter an E.164 number, confirm the recipient expects the test,
+and choose **Send test message**. A Full Twilio account receives Chapman's fixed,
+non-promotional body. A Trial account automatically receives Twilio's predefined
+`sms_customer_support` template. Chapman rate-limits the control to one attempt
+every 30 seconds. The message body and destination are not retained in the
+dashboard handoff log.
+
+Trial accounts cannot send the custom discounted-payment message because it
+contains a unique Razorpay URL. Automatic recovery handoff therefore requires a
+Full Twilio account.
+
+The real recovery SMS is not a general channel. It becomes reachable only when
+the merchant enables its dedicated call toggle and a conversational call has
+produced a policy-issued grant and a discounted Razorpay order. It always uses
+the number already attached to that call and it is attempted once per grant.
 
 ## Docker environment lifecycle
 

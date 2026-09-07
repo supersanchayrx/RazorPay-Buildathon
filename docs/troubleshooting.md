@@ -165,6 +165,32 @@ docker compose up -d --force-recreate gateway
 
 ---
 
+## The Send test message button is disabled or the SMS fails
+
+Twilio messaging needs `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and an
+SMS-capable sender. Chapman uses `TWILIO_MESSAGING_SERVICE_SID` first,
+`TWILIO_MESSAGING_FROM` second, and `TWILIO_FROM` as the default fallback.
+`PUBLIC_ORIGIN` is additionally required for real discounted payment links.
+
+The test form needs an E.164 destination and the consent checkbox. A Twilio
+Trial account can send only a predefined template to a verified destination.
+Chapman detects `type: Trial` and automatically uses Twilio's
+`sms_customer_support` template for this test. Read the inline console: it
+reports validation, rate limiting, account type, and Twilio acceptance. After
+changing `.env`, recreate the gateway.
+
+If you see `Invalid template. Trial accounts can only use pre-defined
+templates`, rebuild the current gateway and try once more. Chapman recognizes
+that exact provider error and retries the test once with the predefined
+template. It does not retry a discounted payment-link message: that unique link
+requires a Full Twilio account.
+
+If a real recovery handoff fails, inspect **Recent SMS handoffs**. Chapman does
+not automatically retry a grant after a provider attempt because a lost Twilio
+response could otherwise send the same payment link twice.
+
+---
+
 ## `TypeError: Cannot read properties of null (reading 'use')`
 
 **Symptom.** A dashboard page renders "Application Error" with a stack running
@@ -282,17 +308,17 @@ Or use `cmd.exe`, where `npm` resolves to `npm.cmd` and none of this applies.
 
 Most instructions here are written for a POSIX shell. On Windows:
 
-| POSIX | cmd.exe | PowerShell |
-| --- | --- | --- |
-| `rm -rf x` | `rmdir /s /q x` | `Remove-Item -Recurse -Force x` |
-| `rm x` | `del x` | `Remove-Item x` |
-| `cp -r a b` | `xcopy /e /i a b` | `Copy-Item -Recurse a b` |
-| `export X=1` | `set X=1` | `$env:X = "1"` |
-| `X=1 cmd` | `set X=1 && cmd` | `$env:X="1"; cmd` |
-| `which node` | `where node` | `(Get-Command node).Source` |
+| POSIX        | cmd.exe           | PowerShell                      |
+| ------------ | ----------------- | ------------------------------- |
+| `rm -rf x`   | `rmdir /s /q x`   | `Remove-Item -Recurse -Force x` |
+| `rm x`       | `del x`           | `Remove-Item x`                 |
+| `cp -r a b`  | `xcopy /e /i a b` | `Copy-Item -Recurse a b`        |
+| `export X=1` | `set X=1`         | `$env:X = "1"`                  |
+| `X=1 cmd`    | `set X=1 && cmd`  | `$env:X="1"; cmd`               |
+| `which node` | `where node`      | `(Get-Command node).Source`     |
 
 `rm -rf` in PowerShell is a particularly nasty one: `rm` is aliased to
-`Remove-Item`, so the command is *found* and then fails on the flags, which
+`Remove-Item`, so the command is _found_ and then fails on the flags, which
 reads as a broken command rather than a wrong one.
 
 ---

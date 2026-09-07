@@ -174,19 +174,27 @@ export async function chooseRemedy(opts: {
   if (opts.reason === "shipping_cost") {
     const threshold = freeShippingThreshold(opts.policies);
     const short = threshold - subtotal;
-    return {
-      remedy: {
-        kind: "answer",
-        say:
-          short > 0
-            ? `Delivery is ${inr(60)} on this basket, and it's free over ${inr(threshold)} — you're ${inr(short)} short. ` +
-              `Adding anything above that takes the delivery charge off.`
-            : `That basket is over ${inr(threshold)}, so delivery on it is already free — if you were charged, tell us and we'll look.`,
-        // A true statement of the shop's own published policy. Not a concession,
-        // and it addresses the thing they actually objected to.
-      },
-      blocked: ["they objected to the delivery charge, so the answer is the delivery policy"],
-    };
+    const approvedForDiscount =
+      opts.policy.enabled &&
+      opts.policy.discountFor.includes("shipping_cost") &&
+      meetsTier(opts.standing.tier, opts.policy.requiresTier);
+
+    // Delivery policy remains the free, truthful default. Only an explicit
+    // merchant approval plus an eligible returning/regular shopper lets this
+    // reason continue into the same margin, budget and grant gates as price.
+    if (!approvedForDiscount) {
+      return {
+        remedy: {
+          kind: "answer",
+          say:
+            short > 0
+              ? `Delivery is ${inr(60)} on this basket, and it's free over ${inr(threshold)} — you're ${inr(short)} short. ` +
+                `Adding anything above that takes the delivery charge off.`
+              : `That basket is over ${inr(threshold)}, so delivery on it is already free — if you were charged, tell us and we'll look.`,
+        },
+        blocked: ["they objected to the delivery charge, so the answer is the delivery policy"],
+      };
+    }
   }
 
   if (opts.reason === "shipping_speed" && opts.policies.shipping) {
@@ -242,7 +250,7 @@ export async function chooseRemedy(opts: {
     };
   }
 
-  /* ---- 3. price, and only price, can reach money ------------------ */
+  /* ---- 3. merchant-approved cost objections can reach money ------- */
 
   // Whatever happens below, an existing grant is returned unchanged. This is
   // checked FIRST so that no gate below can produce a different answer on a

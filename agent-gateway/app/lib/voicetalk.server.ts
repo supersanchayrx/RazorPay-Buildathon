@@ -47,10 +47,15 @@
  *    every future run already checks.
  */
 
-import { checkReply } from "./bounds.server";
+import { checkReply, type ApprovedOffer } from "./bounds.server";
 import { addTurn, conversation, reasonHistogram } from "./conversations.server";
 import { classify, REASON_LABEL, type Reason } from "./reasons";
-import { complete, completeStream, isConfigured as modelConfigured, MODELS } from "./openrouter.server";
+import {
+  complete,
+  completeStream,
+  isConfigured as modelConfigured,
+  MODELS,
+} from "./openrouter.server";
 import { standing } from "./loyalty.server";
 import { record } from "./ledger.server";
 import { readSettings } from "./settings.server";
@@ -59,11 +64,17 @@ import { jsonFeedCatalog } from "./catalog.server";
 import { findSite } from "./sites.server";
 import { learn, recall } from "./memory.server";
 import { updateFindings } from "./findings.server";
-import { config as voiceConfig, render, type Rendered, type VoiceConfig } from "./voice.server";
+import {
+  config as voiceConfig,
+  render,
+  type Rendered,
+  type VoiceConfig,
+} from "./voice.server";
 import type { Draft } from "./outreach.server";
 import fs from "node:fs";
 import path from "node:path";
 import { dataPath } from "./paths.server";
+import { resolveVoiceRecovery, voiceRemedyLine } from "./voice-recovery.server";
 
 /* ------------------------------------------------------------------ *
  * The transcript
@@ -79,7 +90,8 @@ export type TranscriptRow = {
   who: "shop" | "shopper";
   text: string;
   /** Where a line came from, so a merchant can tell a template from a model. */
-  source?: "template" | "model" | "fixed" | "bounds_refused" | "model_unavailable";
+  source?:
+    "template" | "model" | "fixed" | "bounds_refused" | "model_unavailable";
   violations?: string[];
 };
 
@@ -94,12 +106,20 @@ export type TranscriptRow = {
 function say(row: Omit<TranscriptRow, "at">): void {
   try {
     fs.mkdirSync(path.dirname(TRANSCRIPT), { recursive: true });
-    fs.appendFileSync(TRANSCRIPT, JSON.stringify({ at: new Date().toISOString(), ...row }) + "\n", "utf8");
+    fs.appendFileSync(
+      TRANSCRIPT,
+      JSON.stringify({ at: new Date().toISOString(), ...row }) + "\n",
+      "utf8",
+    );
   } catch (e) {
     // Deliberately not fatal, and deliberately loud. A call already in progress
     // should not be dropped because a disk is full, but nobody should be able
     // to say afterwards that they did not know.
-    record({ shop: row.shop, kind: "tool_error", message: `voice transcript write failed: ${(e as Error).message}` });
+    record({
+      shop: row.shop,
+      kind: "tool_error",
+      message: `voice transcript write failed: ${(e as Error).message}`,
+    });
   }
 }
 
@@ -123,15 +143,25 @@ export function callTranscript(shop: string, callSid: string): TranscriptRow[] {
 }
 
 /** Distinct calls, newest first. */
-export function calls(shop: string): Array<{ callSid: string; cartId: string; at: string; lines: number }> {
-  const byCall = new Map<string, { callSid: string; cartId: string; at: string; lines: number }>();
+export function calls(
+  shop: string,
+): Array<{ callSid: string; cartId: string; at: string; lines: number }> {
+  const byCall = new Map<
+    string,
+    { callSid: string; cartId: string; at: string; lines: number }
+  >();
   for (const r of transcript(shop, 5000)) {
     const prev = byCall.get(r.callSid);
     if (prev) {
       prev.lines++;
       if (r.at > prev.at) prev.at = r.at;
     } else {
-      byCall.set(r.callSid, { callSid: r.callSid, cartId: r.cartId, at: r.at, lines: 1 });
+      byCall.set(r.callSid, {
+        callSid: r.callSid,
+        cartId: r.cartId,
+        at: r.at,
+        lines: 1,
+      });
     }
   }
   return [...byCall.values()].sort((a, b) => b.at.localeCompare(a.at));
@@ -150,6 +180,8 @@ type Session = {
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
   /** Set once, when the shopper's first real answer has been classified. */
   reason: Reason | null;
+  /** Exact server-issued offers the bounds layer may allow this call to repeat. */
+  approvedOffers: ApprovedOffer[];
   startedAt: number;
 };
 
@@ -187,7 +219,8 @@ const MODEL_BUDGET_MS = Number(process.env.VOICE_MODEL_MS ?? 4200);
 
 function sweep(): void {
   const cutoff = Date.now() - SESSION_TTL_MS;
-  for (const [sid, s] of sessions) if (s.startedAt < cutoff) sessions.delete(sid);
+  for (const [sid, s] of sessions)
+    if (s.startedAt < cutoff) sessions.delete(sid);
 }
 
 /* ------------------------------------------------------------------ *
@@ -231,7 +264,11 @@ function sweep(): void {
  */
 export type CallContext = {
   /** Policy text, verbatim, from the shopper projection of the cortex. */
-  policies?: { returns?: string | null; shipping?: string | null; cod?: string | null };
+  policies?: {
+    returns?: string | null;
+    shipping?: string | null;
+    cod?: string | null;
+  };
   /** Server-written, bounds-checked sentences. Repeatable, never paraphrasable. */
   serviceNotices?: string[];
   /** What this shop remembers about this caller. Durable facts only. */
@@ -300,16 +337,19 @@ export function systemPrompt(
     `"${draft.text}"`,
     ``,
     `RULES, IN ORDER OF IMPORTANCE:`,
-    `1. Never state a discount, offer, percentage, coupon or price reduction. You have none.`,
-    `   If they ask, say you cannot do that on a call and the website shows any live offer.`,
+    `1. Never create, improve or negotiate a discount. A server-written assistant line may later`,
+    `   announce one approved percentage. If that happens, you may only repeat those exact terms.`,
     `2. Never invent a fact. If it is not listed above you do not know it. Say so plainly.`,
     `3. Never promise a delivery date, a refund, a callback, or that anyone will do anything.`,
     `4. Be brief. This is a phone call: one or two sentences. Never a paragraph.`,
-    `5. Answer in whatever language they use. Hinglish is fine and normal.`,
+    `5. Default to short, natural Roman-script Hinglish. If they clearly prefer another language,`,
+    `   answer in that language instead.`,
     `6. No marketing language, no urgency, no "hurry", no "limited time".`,
     `7. If they want to be left alone: apologise for disturbing, and tell them they can press 9`,
     `   to stop these calls.`,
-    ...(shopTone ? [``, `HOW THIS SHOP SOUNDS, in the merchant's own words:`, shopTone] : []),
+    ...(shopTone
+      ? [``, `HOW THIS SHOP SOUNDS, in the merchant's own words:`, shopTone]
+      : []),
     ``,
     `You are a shop being polite, not a salesperson closing. It is completely fine for this`,
     `call to end with them saying no.`,
@@ -338,7 +378,11 @@ export type Utterance = { audioUrl: string | null; text: string };
  * so: Twilio's own voice instead of the shop's. A call that silently drops half
  * its replies is far harder to notice than one that suddenly changes voice.
  */
-export async function speak(text: string, c: VoiceConfig, origin: string): Promise<Utterance> {
+export async function speak(
+  text: string,
+  c: VoiceConfig,
+  origin: string,
+): Promise<Utterance> {
   const out = await render(text, c);
   if (!out.ok) return { audioUrl: null, text };
   return { audioUrl: `${origin}/voice/audio/${path.basename(out.file)}`, text };
@@ -365,9 +409,20 @@ export function openConversation(shop: string, draft: Draft): void {
     shop,
     cartId: draft.cartId,
     customerId: draft.customerId,
-    turn: { kind: "asked", ts: new Date().toISOString(), channel: "voice", draftId: draft.id },
+    turn: {
+      kind: "asked",
+      ts: new Date().toISOString(),
+      channel: "voice",
+      draftId: draft.id,
+    },
   });
-  if (!r.ok) record({ shop, kind: "tool_error", message: `voice asked-turn refused: ${r.error}`, detail: { cartId: draft.cartId } });
+  if (!r.ok)
+    record({
+      shop,
+      kind: "tool_error",
+      message: `voice asked-turn refused: ${r.error}`,
+      detail: { cartId: draft.cartId },
+    });
 }
 
 /**
@@ -409,7 +464,11 @@ async function callContext(shop: string, draft: Draft): Promise<CallContext> {
     // Keyed on the merchant's own customer id, which arrived on the draft and
     // was never typed by anyone. Recall is scoped to (shop, sub) — there is no
     // argument that widens it.
-    ctx.memories = recall({ shop, sub: draft.customerId, query: draft.text }).map((m) => m.text);
+    ctx.memories = recall({
+      shop,
+      sub: draft.customerId,
+      query: draft.text,
+    }).map((m) => m.text);
   } catch {
     /* memory is an enrichment, never a dependency */
   }
@@ -417,7 +476,12 @@ async function callContext(shop: string, draft: Draft): Promise<CallContext> {
   return ctx;
 }
 
-export function beginSession(callSid: string, shop: string, draft: Draft, ctx: CallContext = {}): Session {
+export function beginSession(
+  callSid: string,
+  shop: string,
+  draft: Draft,
+  ctx: CallContext = {},
+): Session {
   sweep();
   const settings = readSettings(shop);
   const s: Session = {
@@ -425,8 +489,14 @@ export function beginSession(callSid: string, shop: string, draft: Draft, ctx: C
     draft,
     turns: 0,
     silences: 0,
-    messages: [{ role: "system", content: systemPrompt(draft.shop, settings.voice, draft, ctx) }],
+    messages: [
+      {
+        role: "system",
+        content: systemPrompt(draft.shop, settings.voice, draft, ctx),
+      },
+    ],
     reason: null,
+    approvedOffers: [],
     startedAt: Date.now(),
   };
   sessions.set(callSid, s);
@@ -440,7 +510,11 @@ export function beginSession(callSid: string, shop: string, draft: Draft, ctx: C
  * to create a session on a turn where Twilio is already waiting. This is the
  * version the call setup uses, where a few hundred milliseconds is free.
  */
-export async function openSession(callSid: string, shop: string, draft: Draft): Promise<Session> {
+export async function openSession(
+  callSid: string,
+  shop: string,
+  draft: Draft,
+): Promise<Session> {
   return beginSession(callSid, shop, draft, await callContext(shop, draft));
 }
 
@@ -458,8 +532,17 @@ export const THE_ASK = "Was there something that put you off?";
  * ------------------------------------------------------------------ */
 
 export type TurnOutcome = (
-  | { kind: "reply"; line: string; source: NonNullable<TranscriptRow["source"]>; last: boolean }
-  | { kind: "hangup"; line: string; source: NonNullable<TranscriptRow["source"]> }
+  | {
+      kind: "reply";
+      line: string;
+      source: NonNullable<TranscriptRow["source"]>;
+      last: boolean;
+    }
+  | {
+      kind: "hangup";
+      line: string;
+      source: NonNullable<TranscriptRow["source"]>;
+    }
 ) & {
   /** Audio already rendered alongside generation, when the overlap paid off. */
   audioUrl?: string | null;
@@ -473,22 +556,46 @@ export type TurnOutcome = (
  * every future run of every channel, by the mechanism that already exists,
  * rather than by a new flag somebody has to remember to check.
  */
-export function optOut(shop: string, callSid: string, draft: Draft): TurnOutcome {
-  const line = "Understood. We won't call you again. Sorry to have bothered you.";
-  say({ shop, cartId: draft.cartId, callSid, who: "shopper", text: "[pressed 9 — asked us to stop]" });
+export function optOut(
+  shop: string,
+  callSid: string,
+  draft: Draft,
+): TurnOutcome {
+  const line =
+    "Understood. We won't call you again. Sorry to have bothered you.";
+  say({
+    shop,
+    cartId: draft.cartId,
+    callSid,
+    who: "shopper",
+    text: "[pressed 9 — asked us to stop]",
+  });
   const r = addTurn({
     shop,
     cartId: draft.cartId,
     customerId: draft.customerId,
-    turn: { kind: "closed", ts: new Date().toISOString(), why: "they said no — pressed 9 on a call" },
+    turn: {
+      kind: "closed",
+      ts: new Date().toISOString(),
+      why: "they said no — pressed 9 on a call",
+    },
   });
   record({
     shop,
     kind: r.ok ? "reply" : "tool_error",
-    message: r.ok ? `voice opt-out recorded for ${draft.customerId}` : `voice opt-out NOT recorded: ${r.error}`,
+    message: r.ok
+      ? `voice opt-out recorded for ${draft.customerId}`
+      : `voice opt-out NOT recorded: ${r.error}`,
     detail: { cartId: draft.cartId },
   });
-  say({ shop, cartId: draft.cartId, callSid, who: "shop", text: line, source: "fixed" });
+  say({
+    shop,
+    cartId: draft.cartId,
+    callSid,
+    who: "shop",
+    text: line,
+    source: "fixed",
+  });
   sessions.delete(callSid);
   return { kind: "hangup", line, source: "fixed" };
 }
@@ -507,8 +614,12 @@ export function optOut(shop: string, callSid: string, draft: Draft): TurnOutcome
  * names two labels, invents one, or is unreachable. A wrong label costs a
  * shopper a wrong remedy; no label costs the shop one remedy.
  */
-async function captureReason(s: Session, callSid: string, said: string): Promise<void> {
-  if (s.reason) return;
+async function captureReason(
+  s: Session,
+  callSid: string,
+  said: string,
+): Promise<boolean> {
+  if (s.reason) return false;
 
   /**
    * The durable check, and it has to be the durable one.
@@ -526,13 +637,21 @@ async function captureReason(s: Session, callSid: string, said: string): Promise
   const existing = conversation(s.shop, s.draft.cartId);
   if (existing?.reason) {
     s.reason = existing.reason;
-    return;
+    return false;
   }
 
   const c = await classify({
     text: said,
     ask: modelConfigured()
-      ? async (prompt) => (await complete({ shop: s.shop, model: MODELS.assistant(), messages: [{ role: "user", content: prompt }], maxTokens: 20, temperature: 0, timeoutMs: 6000 })) ?? ""
+      ? async (prompt) =>
+          (await complete({
+            shop: s.shop,
+            model: MODELS.assistant(),
+            messages: [{ role: "user", content: prompt }],
+            maxTokens: 20,
+            temperature: 0,
+            timeoutMs: 6000,
+          })) ?? ""
       : undefined,
   });
 
@@ -587,6 +706,7 @@ async function captureReason(s: Session, callSid: string, said: string): Promise
   } catch {
     /* the aggregate is bookkeeping; it must never drop a live call */
   }
+  return r.ok;
 }
 
 /**
@@ -632,10 +752,18 @@ export async function takeTurn(opts: {
   c?: VoiceConfig;
   origin?: string;
 }): Promise<TurnOutcome> {
-  const s = sessions.get(opts.callSid) ?? beginSession(opts.callSid, opts.shop, opts.draft);
+  const s =
+    sessions.get(opts.callSid) ??
+    beginSession(opts.callSid, opts.shop, opts.draft);
   const maxTurns = readSettings(opts.shop).outreach.call.maxTurns;
 
-  say({ shop: s.shop, cartId: s.draft.cartId, callSid: opts.callSid, who: "shopper", text: opts.said });
+  say({
+    shop: s.shop,
+    cartId: s.draft.cartId,
+    callSid: opts.callSid,
+    who: "shopper",
+    text: opts.said,
+  });
 
   /**
    * The reason first, and independently of the reply.
@@ -645,11 +773,62 @@ export async function takeTurn(opts: {
    * people said the delivery estimate was too slow has something they can act
    * on next week; a pleasant reply to one shopper expires with the call.
    */
-  await captureReason(s, opts.callSid, opts.said);
+  const newlyAnswered = await captureReason(s, opts.callSid, opts.said);
   rememberFromCall(s, opts.said);
 
   s.turns++;
   s.messages.push({ role: "user", content: opts.said });
+
+  /**
+   * The model never creates the offer or payment order. Once the first answer
+   * is durable, the same deterministic policy used by the web recovery page
+   * decides. Sharp outcomes are spoken from fixed text, then the model may
+   * continue only inside the exact approved terms stored on the session.
+   */
+  if (newlyAnswered && s.reason) {
+    const site = findSite(s.shop);
+    const recovery = site
+      ? await resolveVoiceRecovery(site, s.draft, s.reason)
+      : { ok: false as const, error: "store not found" };
+    const fixed = voiceRemedyLine(recovery);
+    if (fixed && recovery.ok) {
+      if (recovery.decision.remedy.kind === "discount") {
+        const grant = recovery.decision.remedy.grant;
+        s.approvedOffers = [
+          {
+            handle: grant.handle,
+            title: grant.title,
+            percent: Math.round(grant.depth * 100),
+            endsAt: grant.expiresAt.slice(0, 10),
+          },
+        ];
+      }
+      const violations = checkReply(fixed, {
+        groundedStockClaims: [],
+        approvedOffers: s.approvedOffers,
+      });
+      const line = violations.length ? SAFE_LINE : fixed;
+      const source: NonNullable<TranscriptRow["source"]> = violations.length
+        ? "bounds_refused"
+        : "fixed";
+      s.messages.push({ role: "assistant", content: line });
+      say({
+        shop: s.shop,
+        cartId: s.draft.cartId,
+        callSid: opts.callSid,
+        who: "shop",
+        text: line,
+        source,
+        violations: violations.map((violation) => violation.gate),
+      });
+      const closed = recovery.decision.remedy.kind === "closed";
+      const last = closed || s.turns >= maxTurns;
+      if (last) sessions.delete(opts.callSid);
+      return closed
+        ? { kind: "hangup", line, source }
+        : { kind: "reply", line, source, last, audioUrl: null };
+    }
+  }
 
   /**
    * A budget on the WHOLE attempt, not on each try.
@@ -722,7 +901,12 @@ export async function takeTurn(opts: {
         const m = buffer.match(/^(.{15,}?[.!?])(\s|$)/s);
         if (m) {
           const sentence = m[1].trim();
-          if (checkReply(sentence, { groundedStockClaims: [], approvedOffers: [] }).length === 0) {
+          if (
+            checkReply(sentence, {
+              groundedStockClaims: [],
+              approvedOffers: s.approvedOffers,
+            }).length === 0
+          ) {
             spokenChunk = sentence;
             early = render(sentence, opts.c);
           }
@@ -743,14 +927,13 @@ export async function takeTurn(opts: {
     source = "model_unavailable";
   } else {
     /**
-     * `approvedOffers` is EMPTY, deliberately.
-     *
-     * On a call there is no approval in play. The notice announces an approved
-     * offer from its template if one exists; a conversation is not a place to
-     * introduce one. An empty list means every discount claim is refused, which
-     * is the correct posture for a medium with no screenshot.
+     * Empty until server policy has issued a grant. Afterwards the gate permits
+     * only that grant's exact percentage; model prose still cannot improve it.
      */
-    const violations = checkReply(line, { groundedStockClaims: [], approvedOffers: [] });
+    const violations = checkReply(line, {
+      groundedStockClaims: [],
+      approvedOffers: s.approvedOffers,
+    });
     if (violations.length) {
       say({
         shop: s.shop,
@@ -773,7 +956,14 @@ export async function takeTurn(opts: {
   }
 
   s.messages.push({ role: "assistant", content: line });
-  say({ shop: s.shop, cartId: s.draft.cartId, callSid: opts.callSid, who: "shop", text: line, source });
+  say({
+    shop: s.shop,
+    cartId: s.draft.cartId,
+    callSid: opts.callSid,
+    who: "shop",
+    text: line,
+    source,
+  });
 
   /**
    * Claim the overlapped render only if it turned out to be the WHOLE reply.
@@ -800,16 +990,32 @@ export async function takeTurn(opts: {
  * One nudge, then leave. A second prompt into silence is a machine talking to
  * an empty room, and the person may well have put the phone down.
  */
-export function takeSilence(callSid: string, shop: string, draft: Draft): TurnOutcome {
+export function takeSilence(
+  callSid: string,
+  shop: string,
+  draft: Draft,
+): TurnOutcome {
   const s = sessions.get(callSid) ?? beginSession(callSid, shop, draft);
   s.silences++;
   if (s.silences >= 2) {
     const line = "I'll leave you to it. Thanks for your time.";
-    say({ shop, cartId: draft.cartId, callSid, who: "shop", text: line, source: "fixed" });
+    say({
+      shop,
+      cartId: draft.cartId,
+      callSid,
+      who: "shop",
+      text: line,
+      source: "fixed",
+    });
     sessions.delete(callSid);
     return { kind: "hangup", line, source: "fixed" };
   }
-  return { kind: "reply", line: "Are you still there?", source: "fixed", last: false };
+  return {
+    kind: "reply",
+    line: "Are you still there?",
+    source: "fixed",
+    last: false,
+  };
 }
 
 /**
@@ -831,7 +1037,10 @@ export function takeSilence(callSid: string, shop: string, draft: Draft): TurnOu
  */
 let warmedFallback: string | null = null;
 
-export async function warmFallback(c: VoiceConfig, origin: string): Promise<void> {
+export async function warmFallback(
+  c: VoiceConfig,
+  origin: string,
+): Promise<void> {
   if (warmedFallback) return;
   const u = await speak(SAFE_LINE, c, origin);
   warmedFallback = u.audioUrl;
@@ -852,12 +1061,24 @@ export const fallbackAudio = (): string | null => warmedFallback;
  * said, a transcript that records unspoken sentences is worse than none — it is
  * confidently wrong. So the gap is recorded as its own line.
  */
-export function noteFallbackSpoken(shop: string, cartId: string, callSid: string): void {
-  say({ shop, cartId, callSid, who: "shop", text: SAFE_LINE, source: "model_unavailable" });
+export function noteFallbackSpoken(
+  shop: string,
+  cartId: string,
+  callSid: string,
+): void {
+  say({
+    shop,
+    cartId,
+    callSid,
+    who: "shop",
+    text: SAFE_LINE,
+    source: "model_unavailable",
+  });
   record({
     shop,
     kind: "tool_error",
-    message: "voice: response deadline fired — the caller heard the safe line, not the composed reply",
+    message:
+      "voice: response deadline fired — the caller heard the safe line, not the composed reply",
     detail: { cartId, callSid },
   });
 }

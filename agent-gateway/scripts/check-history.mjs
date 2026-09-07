@@ -37,6 +37,15 @@ check(
   `${orders.length + carts.length} records, seed ${inputs.seed}`,
 );
 
+const testPhone = process.env.TWILIO_TEST_TO?.trim();
+if (testPhone) {
+  check(
+    "every synthetic recovery contact uses TWILIO_TEST_TO",
+    [...orders, ...carts].every((r) => r.customer?.phone === testPhone),
+    `${orders.length} orders and ${carts.length} carts checked without printing the destination`,
+  );
+}
+
 /* ---- S1  slow mover with margin room ------------------------------- */
 const units = {};
 for (const o of orders) for (const l of o.lines) units[l.handle] = (units[l.handle] ?? 0) + l.qty;
@@ -129,6 +138,33 @@ check(
   "S6  gifting demand rises inside the Raksha Bandhan window",
   inWin > outWin * 1.5 && inWin < outWin * 4,
   `INR ${inWin.toFixed(0)}/day inside vs ${outWin.toFixed(0)}/day outside (${(inWin / outWin).toFixed(1)}x)`,
+);
+
+/* ---- S7  deterministic loyal recovery shopper -------------------- */
+const demoCustomerId = "cus_demo_regular_delivery";
+const demoOrders = orders.filter(
+  (order) => order.status === "placed" && order.customer?.id === demoCustomerId,
+);
+const demoCart = carts.find((cart) => cart.id === "crt_demo_regular_delivery");
+const demoMarginAfterDiscount = demoCart
+  ? Math.min(
+      ...demoCart.lines.map((line) => {
+        const price = line.unitPrice * 0.92;
+        return ((price - inputs.unitCost[line.sku]) / price) * 100;
+      }),
+    )
+  : 0;
+check(
+  "S7  the recovery demo shopper is visibly very loyal",
+  demoOrders.length >= 10 && demoOrders.at(-1)?.ts >= "2026-08-01",
+  `${demoOrders.length} completed orders; latest ${demoOrders.at(-1)?.ts.slice(0, 10) ?? "missing"}`,
+);
+check(
+  "S7  their abandoned basket is charged delivery and safely clears 8% off",
+  demoCart?.subtotal === 1140 &&
+    demoCart.subtotal < 1200 &&
+    demoMarginAfterDiscount >= inputs.floors.minMarginPct,
+  `subtotal INR ${demoCart?.subtotal ?? 0}; ${demoMarginAfterDiscount.toFixed(1)}% minimum line margin after discount`,
 );
 
 // The counterfactual for a festive discount is NOT the quiet-season baseline.

@@ -1,25 +1,37 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
+import {
+  Form,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+} from "react-router";
 import { findSite } from "../lib/sites.server";
-import { liveCarts } from "../lib/carts.server";
 import { verifyRecoveryToken } from "../lib/identity.server";
 import { jsonFeedCatalog } from "../lib/catalog.server";
 import { addTurn, conversation } from "../lib/conversations.server";
-import { classify, OFFERED_CHOICES, REASON_LABEL, type Reason } from "../lib/reasons";
+import {
+  classify,
+  OFFERED_CHOICES,
+  REASON_LABEL,
+  type Reason,
+} from "../lib/reasons";
 import { standing } from "../lib/loyalty.server";
 import { chooseRemedy, type Remedy } from "../lib/remedies.server";
 import { readSettings } from "../lib/settings.server";
 import { readFindings } from "../lib/findings.server";
-import { findGrant, redeem } from "../lib/grants.server";
+import { findGrant } from "../lib/grants.server";
 import { learn } from "../lib/memory.server";
-import { buildQuote } from "../lib/quote.server";
-import { createOrder, isConfigured, toMinorUnits } from "../lib/razorpay.server";
-import { claim } from "../lib/reservations.server";
-import { savePending } from "../lib/orderstore.server";
+import { createRecoveryCheckout } from "../lib/recovery-checkout.server";
+import {
+  readRecoveryCart,
+  readRecoveryInputs,
+} from "../lib/recovery-context.server";
 import { record } from "../lib/ledger.server";
-import { complete, isConfigured as modelConfigured, MODELS } from "../lib/openrouter.server";
-import fs from "node:fs";
-import { dataPath } from "../lib/paths.server";
+import {
+  complete,
+  isConfigured as modelConfigured,
+  MODELS,
+} from "../lib/openrouter.server";
 
 /**
  * The page a recovery message points at — the inbound half of the loop.
@@ -51,13 +63,7 @@ import { dataPath } from "../lib/paths.server";
  *    turns a recovery page into a lesson in how to game one.
  */
 
-type CartRow = {
-  id: string;
-  ts: string;
-  customer?: { id: string };
-  lines: Array<{ handle: string; title: string; sku: string; qty: number; unitPrice: number; lineTotal: number }>;
-  subtotal?: number;
-};
+type CartRow = NonNullable<ReturnType<typeof readRecoveryCart>>;
 
 /**
  * The basket this link names — seeded or real.
@@ -69,36 +75,23 @@ type CartRow = {
  * of our records and false of their shopping.
  */
 function readCart(shop: string, cartId: string): CartRow | null {
-  const live = liveCarts(shop).find((c) => c.id === cartId);
-  if (live) return live as CartRow;
-  try {
-    return (
-      fs
-        .readFileSync(dataPath("carts.jsonl"), "utf8")
-        .split("\n")
-        .filter(Boolean)
-        .map((l) => JSON.parse(l) as CartRow)
-        .find((c) => c.id === cartId) ?? null
-    );
-  } catch {
-    return null;
-  }
+  return readRecoveryCart(shop, cartId);
 }
 
 function readInputs() {
-  try {
-    return JSON.parse(fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"));
-  } catch {
-    return null;
-  }
+  return readRecoveryInputs();
 }
 
 /** Resolve the token, or say why not. Shared by the loader and the action. */
 function open(params: { site?: string; token?: string }) {
   const site = findSite(params.site ?? null);
-  if (!site) return { error: "This link is for a shop we don't recognise." as const };
+  if (!site)
+    return { error: "This link is for a shop we don't recognise." as const };
 
-  const v = verifyRecoveryToken(params.token, { site: site.key, secret: site.secret });
+  const v = verifyRecoveryToken(params.token, {
+    site: site.key,
+    secret: site.secret,
+  });
   if (!v.ok) {
     return {
       error:
@@ -138,13 +131,27 @@ function ensureAsked(shop: string, cartId: string, sub: string): void {
     shop,
     cartId,
     customerId: sub,
-    turn: { kind: "asked", ts: new Date().toISOString(), channel: "link", draftId: `rcv_${cartId}` },
+    turn: {
+      kind: "asked",
+      ts: new Date().toISOString(),
+      channel: "link",
+      draftId: `rcv_${cartId}`,
+    },
   });
 }
 
 export const loader = async ({ params }: LoaderFunctionArgs) => {
   const o = open(params);
-  if ("error" in o) return { error: o.error, shopName: null, basket: [], state: null, say: null, grant: null, choices: [] };
+  if ("error" in o)
+    return {
+      error: o.error,
+      shopName: null,
+      basket: [],
+      state: null,
+      say: null,
+      grant: null,
+      choices: [],
+    };
 
   const { site, cart, claim } = o;
 
@@ -161,12 +168,23 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
     error: null as string | null,
     shopName: site.name,
     accent: site.accent,
-    basket: cart.lines.map((l) => ({ title: l.title, qty: l.qty, lineTotal: l.lineTotal })),
+    basket: cart.lines.map((l) => ({
+      title: l.title,
+      qty: l.qty,
+      lineTotal: l.lineTotal,
+    })),
     subtotal: cart.subtotal ?? cart.lines.reduce((s, l) => s + l.lineTotal, 0),
     state: conv?.state ?? "asked",
     reason: conv?.reason ?? null,
     say: lastRemedy ? (lastRemedy as { remedy: string }).remedy : null,
-    grant: grant && grant.state === "live" ? { id: grant.id, percent: Math.round(grant.depth * 100), title: grant.title } : null,
+    grant:
+      grant && grant.state === "live"
+        ? {
+            id: grant.id,
+            percent: Math.round(grant.depth * 100),
+            title: grant.title,
+          }
+        : null,
     // A redeemed grant is not a dead end: send them back to the payment page
     // they already have, rather than telling them their discount is gone.
     payUrl:
@@ -202,73 +220,15 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     const conv = conversation(site.key, cart.id);
     const grant = conv?.grantId ? findGrant(site.key, conv.grantId) : null;
     if (!grant) return { error: "There's no discount on this basket." };
-    if (grant.state === "redeemed" && grant.redeemedOrderId) {
-      return { redirect: `/pay/${site.key}/${grant.redeemedOrderId}` };
-    }
-    if (grant.state !== "live") return { error: "That discount has expired." };
-    if (!site.razorpay || !isConfigured(site.razorpay)) return { error: "This shop can't take payments right now." };
-
-    const catalog = jsonFeedCatalog(site.catalogFeedUrl);
-    // Re-priced from the catalogue, with the grant read by ID from disk. The
-    // page sends which grant, never what it is worth.
-    const quoted = await buildQuote({
-      catalog,
-      items: cart.lines.map((l) => ({ handle: l.handle, sku: l.sku, qty: l.qty })),
-      shop: site.key,
-      grantId: grant.id,
+    const checkout = await createRecoveryCheckout({
+      site,
+      cart,
+      customerId: claim.sub,
+      grant,
     });
-    if (!quoted.ok) return { error: quoted.problems[0]?.message ?? "That basket can't be priced right now." };
-    const quote = quoted.quote;
-
-    const order = await createOrder(site.razorpay, {
-      amount: toMinorUnits(quote.total),
-      currency: quote.currency,
-      receipt: `rc_${quote.fingerprint}_${Date.now().toString(36)}`,
-      notes: { site: site.key, fingerprint: quote.fingerprint, customer: claim.sub, grant: grant.id },
-    });
-    if (!order.ok) return { error: order.message };
-
-    const onHand = new Map<string, number>();
-    for (const l of quote.lines) {
-      const p = await catalog.get(l.handle).catch(() => null);
-      onHand.set(l.sku, p?.variants.find((x) => x.sku === l.sku)?.inventoryQuantity ?? 0);
-    }
-    const held = claim_(site.key, order.order.id, quote.lines, onHand);
-    if (!held) return { error: "Someone else is checking out with the last of that. Try again in a few minutes." };
-
-    // Spent at order creation, not at settlement: the exposure exists the
-    // moment a discounted order does. `redeemedOrderId` is what stops that from
-    // punishing a closed tab — a shopper who comes back is sent to the same
-    // payment page rather than told the discount is gone.
-    const spent = redeem(site.key, grant.id, order.order.id);
-    if (!spent.ok) return { error: "That discount has already been used." };
-
-    savePending({
-      gatewayOrderId: order.order.id,
-      shop: site.key,
-      createdAt: new Date().toISOString(),
-      amount: quote.total,
-      currency: quote.currency,
-      fingerprint: quote.fingerprint,
-      customer: claim.sub,
-      lines: quote.lines.map((l) => ({
-        handle: l.handle,
-        title: l.title,
-        sku: l.sku,
-        qty: l.qty,
-        unitPrice: l.unitPrice,
-        lineTotal: l.lineTotal,
-      })),
-    });
-
-    record({
-      shop: site.key,
-      kind: "payment_started",
-      message: `recovery checkout ${order.order.id} for ${quote.total} ${quote.currency}`,
-      detail: { grant: grant.id, discount: quote.discount, cartId: cart.id },
-    });
-
-    return { redirect: `/pay/${site.key}/${order.order.id}` };
+    return checkout.ok
+      ? { redirect: checkout.path }
+      : { error: checkout.error };
   }
 
   /* ---------------- answer the question ---------------- */
@@ -279,7 +239,8 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
 
   const chosen = (String(form.get("choice") ?? "") || null) as Reason | null;
   const text = String(form.get("text") ?? "").slice(0, 600) || null;
-  if (!chosen && !text?.trim()) return { error: "Tell us in a word or two, or pick one above." };
+  if (!chosen && !text?.trim())
+    return { error: "Tell us in a word or two, or pick one above." };
 
   /**
    * The classifier gets the sentence and nothing else.
@@ -342,13 +303,23 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
    */
   if (text) {
     try {
-      learn({ shop: site.key, sub: claim.sub, said: text, route: "open", source: "recovery" });
+      learn({
+        shop: site.key,
+        sub: claim.sub,
+        said: text,
+        route: "open",
+        source: "recovery",
+      });
     } catch {
       /* enrichment, never a dependency — the ANSWER is what must not be lost */
     }
   }
   if (!recorded.ok) {
-    record({ shop: site.key, kind: "tool_error", message: `recovery answer not recorded: ${recorded.error}` });
+    record({
+      shop: site.key,
+      kind: "tool_error",
+      message: `recovery answer not recorded: ${recorded.error}`,
+    });
     return { error: "Something went wrong saving that. Try once more?" };
   }
 
@@ -361,12 +332,21 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     cartId: cart.id,
     reason: cls.reason,
     standing: who,
-    basket: cart.lines.map((l) => ({ handle: l.handle, title: l.title, sku: l.sku, qty: l.qty, unitPrice: l.unitPrice })),
+    basket: cart.lines.map((l) => ({
+      handle: l.handle,
+      title: l.title,
+      sku: l.sku,
+      qty: l.qty,
+      unitPrice: l.unitPrice,
+    })),
     policy: settings.recovery,
     inputs: readInputs(),
     catalog,
     policies: await catalog.policies().catch(() => ({})),
-    serviceNotice: notices.find((n) => n.about.includes("netbanking") || n.about.includes("card"))?.text ?? null,
+    serviceNotice:
+      notices.find(
+        (n) => n.about.includes("netbanking") || n.about.includes("card"),
+      )?.text ?? null,
   });
 
   addTurn({
@@ -377,7 +357,10 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       kind: "remedied",
       ts: new Date().toISOString(),
       remedy: decision.remedy.say,
-      grantId: decision.remedy.kind === "discount" ? decision.remedy.grant.id : undefined,
+      grantId:
+        decision.remedy.kind === "discount"
+          ? decision.remedy.grant.id
+          : undefined,
       blocked: decision.blocked,
     },
   });
@@ -389,7 +372,11 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       shop: site.key,
       cartId: cart.id,
       customerId: claim.sub,
-      turn: { kind: "closed", ts: new Date().toISOString(), why: `they said no (${cls.reason})` },
+      turn: {
+        kind: "closed",
+        ts: new Date().toISOString(),
+        why: `they said no (${cls.reason})`,
+      },
     });
   }
 
@@ -397,23 +384,17 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     error: null,
     say: decision.remedy.say,
     kind: decision.remedy.kind,
-    products: decision.remedy.kind === "cross_sell" ? decision.remedy.products : [],
+    products:
+      decision.remedy.kind === "cross_sell" ? decision.remedy.products : [],
     grant:
       decision.remedy.kind === "discount"
-        ? { id: decision.remedy.grant.id, percent: Math.round(decision.remedy.grant.depth * 100) }
+        ? {
+            id: decision.remedy.grant.id,
+            percent: Math.round(decision.remedy.grant.depth * 100),
+          }
         : null,
   };
 };
-
-/** Small wrapper so the import name `claim` is not shadowed by the form field. */
-function claim_(
-  shop: string,
-  orderId: string,
-  lines: Array<{ sku: string; qty: number }>,
-  availableFromCatalogue: Map<string, number>,
-): boolean {
-  return claim({ shop, orderId, lines: lines.map((l) => ({ sku: l.sku, qty: l.qty })), availableFromCatalogue }).ok;
-}
 
 /* ------------------------------------------------------------------ */
 
@@ -444,14 +425,23 @@ button:disabled { opacity:.5; cursor:default; }
 export default function Recover() {
   const d = useLoaderData<typeof loader>();
   const a = useActionData<typeof action>() as
-    | { error?: string | null; say?: string; kind?: string; products?: Array<{ handle: string; title: string; price: number }>; grant?: { id: string; percent: number } | null; redirect?: string; done?: boolean }
+    | {
+        error?: string | null;
+        say?: string;
+        kind?: string;
+        products?: Array<{ handle: string; title: string; price: number }>;
+        grant?: { id: string; percent: number } | null;
+        redirect?: string;
+        done?: boolean;
+      }
     | undefined;
   const busy = useNavigation().state !== "idle";
 
   // The action returns a redirect target rather than throwing one, so the
   // browser navigation happens after React has the result — same pattern the
   // checkout widget uses.
-  if (a?.redirect && typeof window !== "undefined") window.location.href = a.redirect;
+  if (a?.redirect && typeof window !== "undefined")
+    window.location.href = a.redirect;
 
   if (d.error) {
     return (
@@ -475,8 +465,8 @@ export default function Recover() {
       <div className="wrap">
         <h1>{d.shopName}</h1>
         <p className="lede">
-          You left this behind. We&rsquo;re not going to badger you about it — but if you have ten
-          seconds, knowing what stopped you genuinely helps.
+          You left this behind. We&rsquo;re not going to badger you about it —
+          but if you have ten seconds, knowing what stopped you genuinely helps.
         </p>
 
         <div className="panel">
@@ -488,7 +478,15 @@ export default function Recover() {
               <span>₹{l.lineTotal.toLocaleString("en-IN")}</span>
             </div>
           ))}
-          <div className="row" style={{ borderTop: "1px solid var(--line)", marginTop: 6, paddingTop: 8, fontWeight: 600 }}>
+          <div
+            className="row"
+            style={{
+              borderTop: "1px solid var(--line)",
+              marginTop: 6,
+              paddingTop: 8,
+              fontWeight: 600,
+            }}
+          >
             <span>Subtotal</span>
             <span>₹{(d.subtotal ?? 0).toLocaleString("en-IN")}</span>
           </div>
@@ -516,14 +514,18 @@ export default function Recover() {
                 </label>
               ))}
             </div>
-            <textarea name="text" rows={2} placeholder="Or say it in your own words — one line is plenty." />
+            <textarea
+              name="text"
+              rows={2}
+              placeholder="Or say it in your own words — one line is plenty."
+            />
             {a?.error ? <p className="err">{a.error}</p> : null}
             <button type="submit" disabled={busy}>
               {busy ? "…" : "Send"}
             </button>
             <p className="muted" style={{ marginTop: 10 }}>
-              This goes to {d.shopName}, not to an advertiser. We don&rsquo;t sell it and we don&rsquo;t
-              share it.
+              This goes to {d.shopName}, not to an advertiser. We don&rsquo;t
+              sell it and we don&rsquo;t share it.
             </p>
           </Form>
         )}
@@ -550,15 +552,17 @@ export default function Recover() {
                   {busy ? "…" : `Pay with ${grant.percent}% off`}
                 </button>
                 <p className="muted" style={{ marginTop: 8 }}>
-                  The discount is applied by the shop when the payment page opens. There&rsquo;s no code
-                  to enter, and it only works on this basket.
+                  The discount is applied by the shop when the payment page
+                  opens. There&rsquo;s no code to enter, and it only works on
+                  this basket.
                 </p>
               </Form>
             ) : null}
 
             {d.payUrl ? (
               <p className="muted" style={{ marginTop: 12 }}>
-                You already have a payment open for this basket — <a href={d.payUrl}>pick it up here</a>.
+                You already have a payment open for this basket —{" "}
+                <a href={d.payUrl}>pick it up here</a>.
               </p>
             ) : null}
           </>

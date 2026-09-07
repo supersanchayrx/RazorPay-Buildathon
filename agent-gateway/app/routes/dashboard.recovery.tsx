@@ -61,9 +61,14 @@ import { REASON_LABEL, REASONS } from "../lib/reasons";
 import { allGrants, monthlySpend } from "../lib/grants.server";
 import { liveCarts } from "../lib/carts.server";
 import { updateFindings } from "../lib/findings.server";
-import { voiceSetup } from "../lib/integration-setup.server";
+import { messagingSetup, voiceSetup } from "../lib/integration-setup.server";
 import { placeVoiceTestCall } from "../lib/voice-test.server";
 import type { TestCallResult } from "../lib/voice-test.server";
+import {
+  readMessageHandoffs,
+  sendTestMessage,
+  type MessageResult,
+} from "../lib/recovery-message.server";
 
 /**
  * The recovery campaign, as a merchant sees it before anything goes out.
@@ -99,6 +104,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       sent: 0,
       channels: CHANNELS,
       voiceSetup: voiceSetup(),
+      messagingSetup: messagingSetup(),
+      messageHandoffs: [],
     };
 
   const run = runRecovery({
@@ -243,6 +250,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       note: c.note,
     })),
     voiceSetup: voiceSetup(),
+    messagingSetup: messagingSetup(),
+    messageHandoffs: readMessageHandoffs(site.key),
   };
 };
 
@@ -282,6 +291,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       };
     }
     return placeVoiceTestCall(site, String(form.get("phone") ?? ""));
+  }
+
+  if (act === "test_message") {
+    if (form.get("confirmExpected") !== "on") {
+      const error =
+        "Confirm that this number belongs to you or expects the test message.";
+      return {
+        ok: false,
+        error,
+        logs: [{ level: "error" as const, message: error }],
+      };
+    }
+    const site = sitesForMerchant(merchant.sites).find(
+      (entry) => entry.key === shop,
+    );
+    if (!site) {
+      const error = "The selected store is not available.";
+      return {
+        ok: false,
+        error,
+        logs: [{ level: "error" as const, message: error }],
+      };
+    }
+    return sendTestMessage(site, String(form.get("phone") ?? ""));
   }
 
   if (act === "settings") {
@@ -345,6 +378,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             maxTurns: Number(form.get("maxTurns")),
             speaker: String(form.get("speaker") ?? "priya"),
             language: String(form.get("language") ?? "en-IN"),
+            discountHandoff:
+              form.get("discountHandoff") === "on" ? "sms" : "off",
           },
         },
       },
@@ -881,7 +916,13 @@ function CallForm({
   busy,
 }: {
   shop: string;
-  call: { mode: string; maxTurns: number; speaker: string; language: string };
+  call: {
+    mode: string;
+    discountHandoff: string;
+    maxTurns: number;
+    speaker: string;
+    language: string;
+  };
   busy: boolean;
 }) {
   const [mode, setMode] = useState(
@@ -890,6 +931,9 @@ function CallForm({
   const [maxTurns, setMaxTurns] = useState<number | null>(call.maxTurns);
   const [speaker, setSpeaker] = useState(call.speaker);
   const [language, setLanguage] = useState(call.language);
+  const [discountHandoff, setDiscountHandoff] = useState(
+    call.discountHandoff === "sms",
+  );
 
   return (
     <Card>
@@ -911,9 +955,19 @@ function CallForm({
             <RadioListItem
               value="conversation"
               label="Hold a conversation"
-              description="Same opening sentence, then asks what put them off and answers what they say. It cannot offer a discount — it is never told one exists. Every reply is checked by the same gate as your storefront assistant before it is spoken, and both sides are transcribed below."
+              description="Asks what put them off and records the answer. A model may converse, but only the deterministic recovery policy can approve a discount; the model never chooses or negotiates one."
             />
           </RadioList>
+          <Divider />
+          <Switch
+            label="Send an approved discounted-payment link by SMS"
+            description="Only to the number on this call, only after a real grant and Razorpay order exist, and at most once per grant. This does not enable generic SMS campaigns."
+            htmlName="discountHandoff"
+            value={discountHandoff}
+            onChange={setDiscountHandoff}
+            isDisabled={mode !== "conversation"}
+            disabledMessage="Choose Hold a conversation first."
+          />
           <Divider />
           <HStack gap={4} vAlign="end" wrap="wrap">
             <NumberInput
@@ -1181,6 +1235,119 @@ function TestCallForm({
                 ) : null}
               </div>
             ) : null}
+          </VStack>
+        </fetcher.Form>
+      </Card>
+    </Block>
+  );
+}
+
+function TestMessageForm({
+  shop,
+  available,
+}: {
+  shop: string;
+  available: boolean;
+}) {
+  const fetcher = useFetcher<typeof action>();
+  const [phone, setPhone] = useState("");
+  const [confirmed, setConfirmed] = useState(false);
+  const busy = fetcher.state !== "idle";
+  const result =
+    fetcher.data && typeof fetcher.data === "object" && "logs" in fetcher.data
+      ? (fetcher.data as MessageResult)
+      : null;
+  const logs = busy
+    ? [
+        { level: "working", message: "Request sent to Chapman." },
+        {
+          level: "working",
+          message:
+            "Checking the Twilio account type and selecting an allowed test body…",
+        },
+      ]
+    : (result?.logs ?? []);
+
+  return (
+    <Block
+      title="Test the SMS connection"
+      hint="Full accounts receive Chapman's fixed integration text. Trial accounts receive Twilio's predefined customer-support test template. Neither path creates a basket, discount or payment order."
+    >
+      <Card>
+        <fetcher.Form method="post">
+          <input type="hidden" name="shop" value={shop} />
+          <input type="hidden" name="act" value="test_message" />
+          <VStack gap={4}>
+            <TextInput
+              label="Number to message"
+              description="Use international E.164 format. Twilio trial accounts require a verified destination and permit only Twilio's predefined message templates."
+              htmlName="phone"
+              value={phone}
+              onChange={setPhone}
+              placeholder="+919876543210"
+              width="min(420px, 100%)"
+            />
+            <CheckboxInput
+              label="This number belongs to me or to someone expecting this test message"
+              htmlName="confirmExpected"
+              value={confirmed}
+              onChange={setConfirmed}
+            />
+            <HStack gap={3} vAlign="center" wrap="wrap">
+              <Button
+                type="submit"
+                variant="primary"
+                label={busy ? "Queueing test message…" : "Send test message"}
+                isLoading={busy}
+                isDisabled={
+                  busy || !available || !confirmed || phone.trim().length === 0
+                }
+              />
+              {!available ? (
+                <Text type="supporting" color="secondary">
+                  Add the required messaging variables above before testing.
+                </Text>
+              ) : null}
+            </HStack>
+            {(busy || result) && (
+              <div
+                role="log"
+                aria-live="polite"
+                aria-label="Test message log"
+                style={{
+                  background: "#111814",
+                  border: "1px solid #30433a",
+                  borderRadius: 10,
+                  color: "#d8e5dd",
+                  fontFamily:
+                    'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                  maxWidth: 720,
+                  padding: "14px 16px",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                <div style={{ color: "#8ba99a", marginBottom: 6 }}>
+                  $ chapman message:test
+                </div>
+                {logs.map((entry, index) => (
+                  <div
+                    key={`${entry.level}-${index}-${entry.message}`}
+                    style={{
+                      color: entry.level === "error" ? "#ff9b9b" : undefined,
+                    }}
+                  >
+                    [{entry.level}] {entry.message}
+                  </div>
+                ))}
+                {!busy && result?.ok ? (
+                  <div style={{ color: "#83d6a2", marginTop: 6 }}>
+                    [done] Message queued.
+                  </div>
+                ) : null}
+              </div>
+            )}
           </VStack>
         </fetcher.Form>
       </Card>
@@ -1604,6 +1771,15 @@ export default function Recovery() {
 
         <Divider />
 
+        <IntegrationSetup guide={d.messagingSetup} />
+
+        <TestMessageForm
+          shop={shop}
+          available={d.messagingSetup.status === "ready"}
+        />
+
+        <Divider />
+
         <Block
           title="Your limits"
           hint="Every one of these can only reduce what goes out."
@@ -1732,6 +1908,57 @@ export default function Recovery() {
           <CallForm shop={shop} call={o.call} busy={busy} />
         </Block>
       </Setup>
+
+      {d.messageHandoffs.length > 0 ? (
+        <Block
+          title="Recent SMS handoffs"
+          hint="Delivery state without storing the phone number or message body in this log."
+        >
+          <Card padding={0}>
+            <Table
+              data={d.messageHandoffs.map((entry) => ({
+                id: `${entry.id}-${entry.ts}-${entry.status}`,
+                at: entry.ts.slice(0, 16).replace("T", " "),
+                kind:
+                  entry.kind === "integration_test"
+                    ? "Integration test"
+                    : "Discounted payment link",
+                status: entry.status,
+                detail: entry.error ?? entry.ref ?? "",
+              }))}
+              idKey="id"
+              density="balanced"
+              dividers="rows"
+              columns={[
+                { key: "at", header: "When", width: pixel(160) },
+                { key: "kind", header: "Message", width: proportional(1) },
+                {
+                  key: "status",
+                  header: "Status",
+                  width: pixel(120),
+                  renderCell: (entry) => (
+                    <Token
+                      size="sm"
+                      color={entry.status === "queued" ? "green" : "gray"}
+                      label={String(entry.status)}
+                    />
+                  ),
+                },
+                {
+                  key: "detail",
+                  header: "Provider",
+                  width: proportional(1),
+                  renderCell: (entry) => (
+                    <Text type="supporting" color="secondary">
+                      {String(entry.detail)}
+                    </Text>
+                  ),
+                },
+              ]}
+            />
+          </Card>
+        </Block>
+      ) : null}
 
       {d.calls.length > 0 ? (
         <Block

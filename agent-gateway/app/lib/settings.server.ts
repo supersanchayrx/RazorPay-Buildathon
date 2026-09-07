@@ -111,6 +111,14 @@ export type OutreachSettings = {
 export type CallSettings = {
   mode: "notice" | "conversation";
   /**
+   * What happens after a conversational call produces a real recovery grant.
+   *
+   * This is deliberately narrower than enabling SMS as an outreach channel:
+   * it can only send the signed checkout link to the same number already on
+   * the call, and only after `chooseRemedy` has issued a grant.
+   */
+  discountHandoff: "off" | "sms";
+  /**
    * Hard ceiling on exchanges before the call is wound up politely.
    *
    * A ceiling like every other in this file: it can only ever shorten a call.
@@ -125,7 +133,6 @@ export type CallSettings = {
   /** BCP-47 language for both synthesis and recognition. */
   language: string;
 };
-
 
 /**
  * What the recovery agent may do about an answer, and how far it may go.
@@ -190,7 +197,13 @@ export const DEFAULTS: MerchantSettings = {
     minMarginAtStake: 150,
     cartAgeHours: { min: 4, max: 336 },
     channels: ["draft"],
-    call: { mode: "notice", maxTurns: 6, speaker: "priya", language: "en-IN" },
+    call: {
+      mode: "notice",
+      discountHandoff: "off",
+      maxTurns: 6,
+      speaker: "priya",
+      language: "en-IN",
+    },
   },
   recovery: {
     enabled: false,
@@ -220,31 +233,64 @@ const file = (shop: string) =>
 export function readSettings(shop: string): MerchantSettings {
   let raw: Partial<MerchantSettings> = {};
   try {
-    raw = JSON.parse(fs.readFileSync(file(shop), "utf8")) as Partial<MerchantSettings>;
+    raw = JSON.parse(
+      fs.readFileSync(file(shop), "utf8"),
+    ) as Partial<MerchantSettings>;
   } catch {
-    return { ...DEFAULTS, outreach: { ...DEFAULTS.outreach }, recovery: { ...DEFAULTS.recovery } };
+    return {
+      ...DEFAULTS,
+      outreach: { ...DEFAULTS.outreach },
+      recovery: { ...DEFAULTS.recovery },
+    };
   }
   const o = (raw.outreach ?? {}) as Partial<OutreachSettings>;
   return {
-    voice: typeof raw.voice === "string" && raw.voice.trim() ? raw.voice.trim() : null,
+    voice:
+      typeof raw.voice === "string" && raw.voice.trim()
+        ? raw.voice.trim()
+        : null,
     outreach: {
       enabled: o.enabled ?? DEFAULTS.outreach.enabled,
       consentBasis: o.consentBasis ?? DEFAULTS.outreach.consentBasis,
       quietHours: { ...DEFAULTS.outreach.quietHours, ...(o.quietHours ?? {}) },
       cooldownDays: num(o.cooldownDays, DEFAULTS.outreach.cooldownDays),
-      maxPerCustomerPerMonth: num(o.maxPerCustomerPerMonth, DEFAULTS.outreach.maxPerCustomerPerMonth),
+      maxPerCustomerPerMonth: num(
+        o.maxPerCustomerPerMonth,
+        DEFAULTS.outreach.maxPerCustomerPerMonth,
+      ),
       maxPerRun: num(o.maxPerRun, DEFAULTS.outreach.maxPerRun),
-      minMarginAtStake: num(o.minMarginAtStake, DEFAULTS.outreach.minMarginAtStake),
-      cartAgeHours: { ...DEFAULTS.outreach.cartAgeHours, ...(o.cartAgeHours ?? {}) },
-      channels: Array.isArray(o.channels) ? o.channels : DEFAULTS.outreach.channels,
+      minMarginAtStake: num(
+        o.minMarginAtStake,
+        DEFAULTS.outreach.minMarginAtStake,
+      ),
+      cartAgeHours: {
+        ...DEFAULTS.outreach.cartAgeHours,
+        ...(o.cartAgeHours ?? {}),
+      },
+      channels: Array.isArray(o.channels)
+        ? o.channels
+        : DEFAULTS.outreach.channels,
       call: {
         // Field by field, and `mode` falls back to `notice` on anything it does
         // not recognise. A settings file corrupted into `mode: "conversatoin"`
         // must not silently become the more capable thing.
-        mode: o.call?.mode === "conversation" ? "conversation" : DEFAULTS.outreach.call.mode,
+        mode:
+          o.call?.mode === "conversation"
+            ? "conversation"
+            : DEFAULTS.outreach.call.mode,
+        discountHandoff:
+          o.call?.discountHandoff === "sms"
+            ? "sms"
+            : DEFAULTS.outreach.call.discountHandoff,
         maxTurns: num(o.call?.maxTurns, DEFAULTS.outreach.call.maxTurns),
-        speaker: typeof o.call?.speaker === "string" && o.call.speaker.trim() ? o.call.speaker.trim() : DEFAULTS.outreach.call.speaker,
-        language: typeof o.call?.language === "string" && o.call.language.trim() ? o.call.language.trim() : DEFAULTS.outreach.call.language,
+        speaker:
+          typeof o.call?.speaker === "string" && o.call.speaker.trim()
+            ? o.call.speaker.trim()
+            : DEFAULTS.outreach.call.speaker,
+        language:
+          typeof o.call?.language === "string" && o.call.language.trim()
+            ? o.call.language.trim()
+            : DEFAULTS.outreach.call.language,
       },
     },
     recovery: {
@@ -256,10 +302,22 @@ export function readSettings(shop: string): MerchantSettings {
       discountFor: Array.isArray(raw.recovery?.discountFor)
         ? (raw.recovery.discountFor as Reason[])
         : DEFAULTS.recovery.discountFor,
-      maxDepthPct: num(raw.recovery?.maxDepthPct, DEFAULTS.recovery.maxDepthPct),
-      monthlyGrantCap: num(raw.recovery?.monthlyGrantCap, DEFAULTS.recovery.monthlyGrantCap),
-      monthlyMarginCap: num(raw.recovery?.monthlyMarginCap, DEFAULTS.recovery.monthlyMarginCap),
-      grantTtlHours: num(raw.recovery?.grantTtlHours, DEFAULTS.recovery.grantTtlHours),
+      maxDepthPct: num(
+        raw.recovery?.maxDepthPct,
+        DEFAULTS.recovery.maxDepthPct,
+      ),
+      monthlyGrantCap: num(
+        raw.recovery?.monthlyGrantCap,
+        DEFAULTS.recovery.monthlyGrantCap,
+      ),
+      monthlyMarginCap: num(
+        raw.recovery?.monthlyMarginCap,
+        DEFAULTS.recovery.monthlyMarginCap,
+      ),
+      grantTtlHours: num(
+        raw.recovery?.grantTtlHours,
+        DEFAULTS.recovery.grantTtlHours,
+      ),
     },
     updatedAt: raw.updatedAt ?? null,
     updatedBy: raw.updatedBy ?? null,
@@ -290,21 +348,38 @@ export function writeSettings(
   const o = { ...current.outreach, ...(patch.outreach ?? {}) };
   const r = { ...current.recovery, ...(patch.recovery ?? {}) };
 
-  if (patch.outreach?.quietHours) o.quietHours = { ...current.outreach.quietHours, ...patch.outreach.quietHours };
-  if (patch.outreach?.cartAgeHours) o.cartAgeHours = { ...current.outreach.cartAgeHours, ...patch.outreach.cartAgeHours };
-  if (patch.outreach?.call) o.call = { ...current.outreach.call, ...patch.outreach.call };
+  if (patch.outreach?.quietHours)
+    o.quietHours = {
+      ...current.outreach.quietHours,
+      ...patch.outreach.quietHours,
+    };
+  if (patch.outreach?.cartAgeHours)
+    o.cartAgeHours = {
+      ...current.outreach.cartAgeHours,
+      ...patch.outreach.cartAgeHours,
+    };
+  if (patch.outreach?.call)
+    o.call = { ...current.outreach.call, ...patch.outreach.call };
 
   const bad = (error: string) => ({ ok: false, error, settings: current });
 
-  if (o.cooldownDays < 1) return bad("a cooldown under a day is not a cooldown");
+  if (o.cooldownDays < 1)
+    return bad("a cooldown under a day is not a cooldown");
   if (o.maxPerCustomerPerMonth < 1 || o.maxPerCustomerPerMonth > 4)
-    return bad("between 1 and 4 messages a month per person; above that this is not recovery");
-  if (o.maxPerRun < 1 || o.maxPerRun > 500) return bad("a run sends between 1 and 500 messages");
+    return bad(
+      "between 1 and 4 messages a month per person; above that this is not recovery",
+    );
+  if (o.maxPerRun < 1 || o.maxPerRun > 500)
+    return bad("a run sends between 1 and 500 messages");
   if (o.minMarginAtStake < 0) return bad("margin at stake cannot be negative");
-  if (o.cartAgeHours.min < 1) return bad("wait at least an hour — they may still be checking out");
-  if (o.cartAgeHours.max <= o.cartAgeHours.min) return bad("the age window must be a window");
-  if (!(o.quietHours.fromHour >= 0 && o.quietHours.fromHour <= 23)) return bad("quiet hours start is a clock hour");
-  if (!(o.quietHours.toHour >= 0 && o.quietHours.toHour <= 23)) return bad("quiet hours end is a clock hour");
+  if (o.cartAgeHours.min < 1)
+    return bad("wait at least an hour — they may still be checking out");
+  if (o.cartAgeHours.max <= o.cartAgeHours.min)
+    return bad("the age window must be a window");
+  if (!(o.quietHours.fromHour >= 0 && o.quietHours.fromHour <= 23))
+    return bad("quiet hours start is a clock hour");
+  if (!(o.quietHours.toHour >= 0 && o.quietHours.toHour <= 23))
+    return bad("quiet hours end is a clock hour");
 
   /**
    * The call, and the one ceiling here that is not ours.
@@ -318,8 +393,12 @@ export function writeSettings(
    */
   if (o.call.mode !== "notice" && o.call.mode !== "conversation")
     return bad("a call is either a notice or a conversation");
+  if (o.call.discountHandoff !== "off" && o.call.discountHandoff !== "sms")
+    return bad("a call discount handoff is either off or SMS");
   if (!(o.call.maxTurns >= 1 && o.call.maxTurns <= 8))
-    return bad("between 1 and 8 exchanges — beyond that a call outruns the number of steps the carrier allows it");
+    return bad(
+      "between 1 and 8 exchanges — beyond that a call outruns the number of steps the carrier allows it",
+    );
 
   /**
    * The recovery policy, validated hard because it is the only thing in CHAPMAN
@@ -328,18 +407,27 @@ export function writeSettings(
    */
   if (r.enabled) {
     if (!(r.maxDepthPct >= 1 && r.maxDepthPct <= 50))
-      return bad("a recovery discount is between 1% and 50% — and your own discount ceiling caps it further");
+      return bad(
+        "a recovery discount is between 1% and 50% — and your own discount ceiling caps it further",
+      );
     if (r.requiresTier === "new")
       return bad(
         "a recovery discount cannot be offered to first-time shoppers — money for whoever complains teaches everybody to complain",
       );
     if (!(r.monthlyGrantCap >= 1 && r.monthlyGrantCap <= 500))
       return bad("between 1 and 500 grants a month");
-    if (!(r.monthlyMarginCap > 0)) return bad("a monthly margin cap of zero would issue nothing; switch it off instead");
+    if (!(r.monthlyMarginCap > 0))
+      return bad(
+        "a monthly margin cap of zero would issue nothing; switch it off instead",
+      );
     if (!(r.grantTtlHours >= 1 && r.grantTtlHours <= 168))
-      return bad("a grant lives between an hour and a week — it answers a conversation, it is not a coupon");
+      return bad(
+        "a grant lives between an hour and a week — it answers a conversation, it is not a coupon",
+      );
     if (!Array.isArray(r.discountFor) || r.discountFor.length === 0)
-      return bad("say which answers a discount may respond to, or switch it off");
+      return bad(
+        "say which answers a discount may respond to, or switch it off",
+      );
   }
 
   const next: MerchantSettings = {
@@ -379,9 +467,15 @@ export function writeSettings(
 export function quietNow(s: MerchantSettings, asOf = new Date()): boolean {
   const { fromHour, toHour, tz } = s.outreach.quietHours;
   const hour = Number(
-    new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: tz }).format(asOf),
+    new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      hour12: false,
+      timeZone: tz,
+    }).format(asOf),
   );
-  return fromHour > toHour ? hour >= fromHour || hour < toHour : hour >= fromHour && hour < toHour;
+  return fromHour > toHour
+    ? hour >= fromHour || hour < toHour
+    : hour >= fromHour && hour < toHour;
 }
 
 /** Test seam. */

@@ -22,6 +22,9 @@ import { record } from "./ledger.server";
 import { release } from "./reservations.server";
 import { markRecovered } from "./carts.server";
 import { findPending, settle, type PlacedOrder } from "./orderstore.server";
+import { addTurn, conversations } from "./conversations.server";
+import { updateFindings } from "./findings.server";
+import { remember } from "./memory.server";
 
 export type SettleInput = {
   shop: string;
@@ -95,7 +98,11 @@ export function settlePayment(input: SettleInput): SettleOutcome {
       shop: input.shop,
       kind: "payment_rejected",
       message: `amount mismatch: quoted ${pending.amount}, paid ${amount}`,
-      detail: { orderId: input.gatewayOrderId, paymentId: input.gatewayPaymentId, by: input.by },
+      detail: {
+        orderId: input.gatewayOrderId,
+        paymentId: input.gatewayPaymentId,
+        by: input.by,
+      },
     });
     return { order: result.order, duplicate: result.duplicate, mismatch: true };
   }
@@ -110,6 +117,44 @@ export function settlePayment(input: SettleInput): SettleOutcome {
    */
   if (status === "paid" && pending.cartRef) {
     markRecovered(input.shop, pending.cartRef);
+
+    if (pending.recoveryGrantId && !result.duplicate) {
+      addTurn({
+        shop: input.shop,
+        cartId: pending.cartRef,
+        customerId: pending.customer ?? "unknown",
+        turn: {
+          kind: "recovered",
+          ts: new Date().toISOString(),
+          gatewayOrderId: input.gatewayOrderId,
+          total: amount,
+        },
+      });
+
+      if (pending.customer) {
+        remember({
+          shop: input.shop,
+          sub: pending.customer,
+          kind: "context",
+          text: "A price-related recovery remedy helped them complete an earlier purchase.",
+          source: "recovery",
+        });
+      }
+
+      const withGrant = conversations(input.shop).filter(
+        (item) => item.grantId,
+      );
+      const paid = withGrant.filter(
+        (item) => item.state === "recovered",
+      ).length;
+      updateFindings(input.shop, {
+        recoveryOutcomes: {
+          grantsIssued: withGrant.length,
+          paidOrders: paid,
+          conversionRate: withGrant.length ? paid / withGrant.length : 0,
+        },
+      });
+    }
   }
 
   record({

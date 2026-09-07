@@ -34,12 +34,18 @@ import fs from "node:fs";
 import { dataPath } from "./paths.server";
 import type { CatalogSource, ShopPolicies } from "./catalog.server";
 import { readLedger } from "./ledger.server";
+import { conversations } from "./conversations.server";
 import type { Region } from "./calendar.server";
 import type { Site } from "./sites.server";
 import { readSettings } from "./settings.server";
-import { findingsAgeDays, readFindings, type ServiceNotice } from "./findings.server";
+import {
+  findingsAgeDays,
+  readFindings,
+  type ServiceNotice,
+} from "./findings.server";
 
-export type Provenance = "merchant" | "catalogue" | "orders" | "ledger" | "derived";
+export type Provenance =
+  "merchant" | "catalogue" | "orders" | "ledger" | "derived";
 
 export type Fact<T> = {
   value: T;
@@ -50,7 +56,12 @@ export type Fact<T> = {
   staleAfterDays: number | null;
 };
 
-const fact = <T>(value: T, from: Provenance, staleAfterDays: number | null, at = new Date().toISOString()): Fact<T> => ({
+const fact = <T>(
+  value: T,
+  from: Provenance,
+  staleAfterDays: number | null,
+  at = new Date().toISOString(),
+): Fact<T> => ({
   value,
   from,
   at,
@@ -106,6 +117,16 @@ export type ShopCortex = {
   }>;
 
   /**
+   * MERCHANT-ONLY. Aggregate recovery evidence derived from conversation
+   * states. It intentionally carries no cart or customer identifiers.
+   */
+  recoveryOutcomes: Fact<{
+    grantsIssued: number;
+    paidOrders: number;
+    conversionRate: number;
+  }>;
+
+  /**
    * MERCHANT-ONLY. What the last analysis run concluded.
    *
    * The return path that was missing. The cortex has always fed the proposer;
@@ -113,7 +134,12 @@ export type ShopCortex = {
    * a merchant can see both what was found and how long ago it was found.
    */
   findings: Fact<{
-    incidents: Array<{ id: string; title: string; onsetAt: string; detectedAt: string }>;
+    incidents: Array<{
+      id: string;
+      title: string;
+      onsetAt: string;
+      detectedAt: string;
+    }>;
     topActions: Array<{ id: string; title: string; monthlyValue: number }>;
     stopped: number;
     recovery: {
@@ -124,7 +150,17 @@ export type ShopCortex = {
       enabled: boolean;
     } | null;
     /** Why shoppers said they didn't buy. Merchant-only, like everything above. */
-    reasons: { total: number; enough: boolean; counts: Array<{ reason: string; count: number; share: number }> } | null;
+    reasons: {
+      total: number;
+      enough: boolean;
+      counts: Array<{ reason: string; count: number; share: number }>;
+    } | null;
+    /** Aggregate evidence that issued recovery grants led to paid orders. */
+    recoveryOutcomes?: {
+      grantsIssued: number;
+      paidOrders: number;
+      conversionRate: number;
+    } | null;
   }> | null;
 
   /**
@@ -158,7 +194,12 @@ function readMerchantInputs(): {
   }
 }
 
-function readOrderSummary(): { ordersPerMonth: number; avgOrderValue: number; bestsellers: string[]; windowDays: number } | null {
+function readOrderSummary(): {
+  ordersPerMonth: number;
+  avgOrderValue: number;
+  bestsellers: string[];
+  windowDays: number;
+} | null {
   try {
     const rows = fs
       .readFileSync(dataPath("orders.jsonl"), "utf8")
@@ -210,7 +251,9 @@ const CACHE_MS = 60_000;
  * Keyed on the site, which is also the isolation boundary: two shops run by the
  * same person are two entries with no path between them.
  */
-export async function getCortex(opts: Parameters<typeof buildCortex>[0]): Promise<ShopCortex> {
+export async function getCortex(
+  opts: Parameters<typeof buildCortex>[0],
+): Promise<ShopCortex> {
   const hit = cache.get(opts.site.key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.cortex;
   const cortex = await buildCortex(opts);
@@ -225,13 +268,18 @@ export async function buildCortex(opts: {
   voice?: string | null;
 }): Promise<ShopCortex> {
   const products = await opts.catalog.search({ limit: 500 }).catch(() => []);
-  const policies = await opts.catalog.policies().catch(() => ({}) as ShopPolicies);
+  const policies = await opts.catalog
+    .policies()
+    .catch(() => ({}) as ShopPolicies);
   const ledger = readLedger(5000);
   const floors = readMerchantInputs();
   const orders = readOrderSummary();
   const settings = readSettings(opts.site.key);
   const found = readFindings(opts.site.key);
   const foundAge = findingsAgeDays(found);
+  const recovery = conversations(opts.site.key);
+  const grantsIssued = recovery.filter((c) => Boolean(c.grantId)).length;
+  const paidOrders = recovery.filter((c) => c.state === "recovered").length;
 
   /**
    * An explicit argument still wins over the stored setting.
@@ -242,16 +290,21 @@ export async function buildCortex(opts: {
    */
   const voice = opts.voice ?? settings.voice;
 
-  const prices = products.flatMap((p) => [Number(p.minPrice), Number(p.maxPrice)]).filter(Number.isFinite);
+  const prices = products
+    .flatMap((p) => [Number(p.minPrice), Number(p.maxPrice)])
+    .filter(Number.isFinite);
   const byGate: Record<string, number> = {};
-  for (const e of ledger) if (e.kind === "refusal" && e.gate) byGate[e.gate] = (byGate[e.gate] ?? 0) + 1;
+  for (const e of ledger)
+    if (e.kind === "refusal" && e.gate)
+      byGate[e.gate] = (byGate[e.gate] ?? 0) + 1;
 
   const gaps: ShopCortex["gaps"] = [];
   if (!voice)
     gaps.push({
       what: "How the shop should sound — a sentence or two in the merchant's own words",
       who: "merchant",
-      unlocks: "A reasoner that sounds like this shop rather than like a chatbot",
+      unlocks:
+        "A reasoner that sounds like this shop rather than like a chatbot",
     });
   if (!floors)
     gaps.push({
@@ -263,7 +316,8 @@ export async function buildCortex(opts: {
     gaps.push({
       what: "Order history — connected source or Shopify Admin",
       who: "merchant",
-      unlocks: "Cross-sell from real co-purchase, replenishment reminders, offer proposals",
+      unlocks:
+        "Cross-sell from real co-purchase, replenishment reminders, offer proposals",
     });
   if (!found)
     gaps.push({
@@ -277,7 +331,8 @@ export async function buildCortex(opts: {
     gaps.push({
       what: `A fresh analysis — the last one ran ${Math.round(foundAge)} days ago`,
       who: "us",
-      unlocks: "Findings that describe this week rather than the one before last",
+      unlocks:
+        "Findings that describe this week rather than the one before last",
     });
   gaps.push({
     what: "Signed shopper identity",
@@ -290,7 +345,9 @@ export async function buildCortex(opts: {
     name: opts.site.name,
     currency: products[0]?.currency ?? "INR",
     regions: opts.regions ?? ["IN"],
-    voice: voice ? fact(voice, "merchant", null, settings.updatedAt ?? undefined) : null,
+    voice: voice
+      ? fact(voice, "merchant", null, settings.updatedAt ?? undefined)
+      : null,
     policies: fact(policies, "catalogue", 7),
     catalogue: fact(
       {
@@ -298,8 +355,12 @@ export async function buildCortex(opts: {
         variants: products.reduce((s, p) => s + p.variants.length, 0),
         priceMin: prices.length ? Math.min(...prices) : 0,
         priceMax: prices.length ? Math.max(...prices) : 0,
-        categories: [...new Set(products.map((p) => p.productType).filter(Boolean))] as string[],
-        outOfStock: products.filter((p) => (p.totalInventory ?? 0) === 0).map((p) => p.handle),
+        categories: [
+          ...new Set(products.map((p) => p.productType).filter(Boolean)),
+        ] as string[],
+        outOfStock: products
+          .filter((p) => (p.totalInventory ?? 0) === 0)
+          .map((p) => p.handle),
       },
       "catalogue",
       // Stock moves. A catalogue snapshot older than a day is a liability, not
@@ -317,6 +378,15 @@ export async function buildCortex(opts: {
       "ledger",
       null,
     ),
+    recoveryOutcomes: fact(
+      {
+        grantsIssued,
+        paidOrders,
+        conversionRate: grantsIssued ? paidOrders / grantsIssued : 0,
+      },
+      "derived",
+      null,
+    ),
     findings: found
       ? fact(
           {
@@ -325,6 +395,7 @@ export async function buildCortex(opts: {
             stopped: found.stopped,
             recovery: found.recovery,
             reasons: found.reasons ?? null,
+            recoveryOutcomes: found.recoveryOutcomes ?? null,
           },
           "derived",
           // A week. Long enough that a weekly run keeps it fresh, short enough
@@ -334,7 +405,12 @@ export async function buildCortex(opts: {
           found.ranAt,
         )
       : null,
-    serviceNotices: fact(found?.serviceNotices ?? [], "derived", 7, found?.ranAt),
+    serviceNotices: fact(
+      found?.serviceNotices ?? [],
+      "derived",
+      7,
+      found?.ranAt,
+    ),
     gaps,
   };
 }
@@ -377,10 +453,16 @@ export function shopperView(c: ShopCortex): ShopperView {
     currency: c.currency,
     voice: c.voice?.value ?? null,
     policies: c.policies.value,
-    sells: { categories: c.catalogue.value.categories, products: c.catalogue.value.products },
+    sells: {
+      categories: c.catalogue.value.categories,
+      products: c.catalogue.value.products,
+    },
     serviceNotices: isStale(c.serviceNotices)
       ? []
-      : c.serviceNotices.value.map((n) => ({ text: n.text, about: n.about ?? [] })),
+      : c.serviceNotices.value.map((n) => ({
+          text: n.text,
+          about: n.about ?? [],
+        })),
   };
 }
 

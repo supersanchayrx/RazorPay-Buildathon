@@ -28,13 +28,13 @@ each dashboard feature. Start with [README.md](../README.md) for setup and use
 
 > ### Reads are tools. Speech and money are chokepoints.
 
-A model may call reads freely, in any order, as often as it likes. It never calls the things that talk to a shopper or move money — its output *passes through* them.
+A model may call reads freely, in any order, as often as it likes. It never calls the things that talk to a shopper or move money — its output _passes through_ them.
 
 Which produces the claim the whole project rests on:
 
 > **A bound that lives inside the reasoner is not a bound.**
 
-If `check_bounds` were a tool the model *chose* to call, a model having a bad day would skip it. So it is not a tool. The shopper is downstream of the bounds check and there is no other path to them. That is enforcement by structure, not by instruction — and you can verify it by reading the repo rather than trusting a prompt.
+If `check_bounds` were a tool the model _chose_ to call, a model having a bad day would skip it. So it is not a tool. The shopper is downstream of the bounds check and there is no other path to them. That is enforcement by structure, not by instruction — and you can verify it by reading the repo rather than trusting a prompt.
 
 > ### The client sends WHAT. The server decides HOW MUCH.
 
@@ -144,11 +144,11 @@ flowchart LR
 
 **Harness third.** The tool loop is reserved for messages where answering genuinely requires composing two tools — where the second call's arguments come out of the first call's results. There are exactly three such shapes, and they are named rather than guessed at:
 
-| Shape | Example | Chain |
-|---|---|---|
-| **pairing** | *"something to go with masala chai"* | `search_products`, then `products_that_go_with` |
-| **totalling** | *"what would two of those cost delivered?"* | `search_products`, then `price_basket` |
-| **unrouted** | the router could not decide at all | its own signal |
+| Shape         | Example                                     | Chain                                           |
+| ------------- | ------------------------------------------- | ----------------------------------------------- |
+| **pairing**   | _"something to go with masala chai"_        | `search_products`, then `products_that_go_with` |
+| **totalling** | _"what would two of those cost delivered?"_ | `search_products`, then `price_basket`          |
+| **unrouted**  | the router could not decide at all          | its own signal                                  |
 
 Everything else takes the cheap path. Escalating every message would multiply latency and rate-limit burn fourfold to serve the fraction of traffic that needs it.
 
@@ -156,14 +156,14 @@ Everything else takes the cheap path. Escalating every message would multiply la
 
 Four gates, in code, outside the model, on the only path to a shopper.
 
-| Gate | Blocks |
-|---|---|
+| Gate                    | Blocks                                               |
+| ----------------------- | ---------------------------------------------------- |
 | `unverifiable_discount` | any price reduction with no approved offer behind it |
-| `unverifiable_urgency` | deadlines, "hurry", scarcity that no tool returned |
-| `unapproved_event` | festive stock claims, "prices go up after" |
-| `assumed_observance` | assuming what a shopper celebrates or believes |
+| `unverifiable_urgency`  | deadlines, "hurry", scarcity that no tool returned   |
+| `unapproved_event`      | festive stock claims, "prices go up after"           |
+| `assumed_observance`    | assuming what a shopper celebrates or believes       |
 
-A **true** stock number is allowed. If inventory really is 3, *"only 3 left"* is a fact, checked against what the tools returned. One digit different and the verdict flips.
+A **true** stock number is allowed. If inventory really is 3, _"only 3 left"_ is a fact, checked against what the tools returned. One digit different and the verdict flips.
 
 **Streaming does not buy latitude.** Text is not forwarded as it arrives and checked at the end — by then the shopper has read it. The guard holds everything until a sentence completes, runs the full check, and only then releases. Verified at every chunk size from 1 to 500: a gate that depends on how the model happens to chunk is not a gate.
 
@@ -202,15 +202,15 @@ flowchart TB
     style diag fill:#4a4030,stroke:#332c21,color:#fff
 ```
 
-**Two registries, not one with a permission flag.** A single registry would need a check on every tool asking *"is this caller a merchant?"*, and that check is one forgotten line from handing a storefront visitor the merchant's unit costs — which are their negotiating position, not a product attribute. Two disjoint registries make the separation structural. Same reasoning that keeps the shop cortex and a shopper's memory in different stores.
+**Two registries, not one with a permission flag.** A single registry would need a check on every tool asking _"is this caller a merchant?"_, and that check is one forgotten line from handing a storefront visitor the merchant's unit costs — which are their negotiating position, not a product attribute. Two disjoint registries make the separation structural. Same reasoning that keeps the shop cortex and a shopper's memory in different stores.
 
 **Every tool in both registries is a read.** There is no `checkout.start`, no `approve_offer`, no `publish`, no `refund`. Not an oversight to be filled in later — it is the architecture. A model that can call a tool that moves money is a model you are trusting with money. Approval stays a human clicking a button with an exposure cap in front of them.
 
 Because the registry is data, it can be printed. The console shows a merchant the complete list of what the assistant is able to do, which is a much stronger assurance than a paragraph promising it behaves.
 
-**Three of the merchant tools are about the recovery loop**, and one of them answers a question nothing else in the shop can. `recovery_queue` is who would be written to and — the more useful half — who would not, with the reason each was left alone. `recovery_grants` is what the discount policy has actually cost and how much budget is left. And `why_they_did_not_buy` returns what shoppers *said*, counted by reason: every other tool in either registry reports what happened, and this is the only one that reports why, because the why never touched the server. It carries its own sample floor, so a merchant cannot read four answers as a pattern by forgetting to check.
+**Three of the merchant tools are about the recovery loop**, and one of them answers a question nothing else in the shop can. `recovery_queue` is who would be written to and — the more useful half — who would not, with the reason each was left alone. `recovery_grants` is what the discount policy has actually cost and how much budget is left. And `why_they_did_not_buy` returns what shoppers _said_, counted by reason: every other tool in either registry reports what happened, and this is the only one that reports why, because the why never touched the server. It carries its own sample floor, so a merchant cannot read four answers as a pattern by forgetting to check.
 
-**The diagnostics are excluded on purpose.** A tool earns a place if a merchant would ask for it in those words. Nobody says *"give me the Wilson lower bound of 12 out of 29"* — and a model reaching for one is a signal that the deterministic pipeline should already have done that work and put the answer on a page.
+**The diagnostics are excluded on purpose.** A tool earns a place if a merchant would ask for it in those words. Nobody says _"give me the Wilson lower bound of 12 out of 29"_ — and a model reaching for one is a signal that the deterministic pipeline should already have done that work and put the answer on a page.
 
 ### How a tool is called
 
@@ -263,7 +263,7 @@ sequenceDiagram
 
 **A cart holds no stock; a checkout does.** An agent comparing five shops must not be able to freeze inventory at all five.
 
-**An agent sees the same offers a person does, and cannot invent one.** Merchant-approved offers ride on every product, are listed by `get_promotions`, and come back as a negative `items_discount` line in the cart total — already applied, by the same server that will charge for it. The agent surface carries *terms* (10% off, until the 13th) and never an amount, because a product has no basket: the number exists only once a cart does. There is no field an agent can send a discount in. A recovery grant, which is bound to one shopper's basket and single-use, can be **redeemed** by an agent the buyer handed the code to — `discount_codes` on `create_cart` — but it can never be **discovered**: `get_promotions` will not list one.
+**An agent sees the same offers a person does, and cannot invent one.** Merchant-approved offers ride on every product, are listed by `get_promotions`, and come back as a negative `items_discount` line in the cart total — already applied, by the same server that will charge for it. The agent surface carries _terms_ (10% off, until the 13th) and never an amount, because a product has no basket: the number exists only once a cart does. There is no field an agent can send a discount in. A recovery grant, which is bound to one shopper's basket and single-use, can be **redeemed** by an agent the buyer handed the code to — `discount_codes` on `create_cart` — but it can never be **discovered**: `get_promotions` will not list one.
 
 <details>
 <summary><b>A real bug, and how it hid</b></summary>
@@ -272,13 +272,13 @@ sequenceDiagram
 
 </details>
 
-**Escalation is not a shortfall.** `status: "requires_escalation"` with a `continue_url` is a defined outcome in the protocol, and on Indian rails it is the *only* honest one for the dominant payment method. Razorpay authenticates the payer directly — UPI inside their own banking app, cards and netbanking on Razorpay's hosted page — so there is no token an agent can hold that completes a purchase. We probed the Server-to-Server API to be sure rather than assuming: it is not open on this account. Advertising a capability we would fail at is the fabrication this codebase exists to avoid.
+**Escalation is not a shortfall.** `status: "requires_escalation"` with a `continue_url` is a defined outcome in the protocol, and on Indian rails it is the _only_ honest one for the dominant payment method. Razorpay authenticates the payer directly — UPI inside their own banking app, cards and netbanking on Razorpay's hosted page — so there is no token an agent can hold that completes a purchase. We probed the Server-to-Server API to be sure rather than assuming: it is not open on this account. Advertising a capability we would fail at is the fabrication this codebase exists to avoid.
 
 **Agent identity is a document you must be able to serve.** `meta["ucp-agent"].profile` is fetched and logged. It is not authentication — it proves whoever is calling controls a reachable URL — but it makes every stock hold attributable to a host, which is what a rate limit and an audit need. Reads stay anonymous, because a catalogue is public and refusing to answer protects nothing.
 
 **Verified in both directions.** On 2026-09-06 the gateway was driven by the `ucp` CLI v0.8.0 — a reference client Shopify wrote and we did not — and, separately, by Claude over MCP with no adapter, which completed order `cho_TYfqxtQIEG5ObO`: two tins of Nilgiri Frost Green Tea, ₹960 less a ₹96 merchant-approved discount plus ₹60 shipping, **₹924 paid**. Our own probe passing is not the same thing as somebody else's client passing.
 
-What survives as ours: UCP standardises *transacting* and has no opinion on bounds, the ledger, merchant approval, or Indian payment rails.
+What survives as ours: UCP standardises _transacting_ and has no opinion on bounds, the ledger, merchant approval, or Indian payment rails.
 
 ---
 
@@ -315,30 +315,30 @@ The same sentence is refused, then permitted after one click, then refused again
 All measured against the deterministic fixture.
 
 - **Lift is the wrong default for co-purchase.** Rare pairs that co-occur twice by chance produce enormous lift. Hyper-lift divides by a hypergeometric quantile instead and demotes them.
-- **The obvious pattern is the least valuable.** The highest-leverage pair is *already* bought together 42% of the time, so there is no headroom left in it. The surprising pair is where the money is — and that falls out of the arithmetic rather than being asserted.
-- **Significance alone is not enough.** A planted trap — *"kettle buyers prefer COD"*, 2 of 3 orders — **passes** Fisher's exact at p = 0.028. It takes a Wilson lower bound, a sample floor, *and* false-discovery-rate control to kill it. None of the traps is special-cased: the detectors find them because they look like real patterns, and the floors are what stop them.
-- **A normal-theory CUSUM is wrong for rare binary events.** Standardising a 0/1 outcome at an 11% base rate makes every failure a 2.9σ jump, so *two consecutive failures* clear a decision interval of 4. It raised a false alarm on two ordinary retries and dated a real outage four weeks early. Replaced with the sequential likelihood-ratio form.
-- **Regularity must be measured per customer, then pooled.** Pooling every gap first measures the spread *between* people, not whether anyone has a cycle — masala chai came out at CV 0.88 that way and the detector found nothing at all.
+- **The obvious pattern is the least valuable.** The highest-leverage pair is _already_ bought together 42% of the time, so there is no headroom left in it. The surprising pair is where the money is — and that falls out of the arithmetic rather than being asserted.
+- **Significance alone is not enough.** A planted trap — _"kettle buyers prefer COD"_, 2 of 3 orders — **passes** Fisher's exact at p = 0.028. It takes a Wilson lower bound, a sample floor, _and_ false-discovery-rate control to kill it. None of the traps is special-cased: the detectors find them because they look like real patterns, and the floors are what stop them.
+- **A normal-theory CUSUM is wrong for rare binary events.** Standardising a 0/1 outcome at an 11% base rate makes every failure a 2.9σ jump, so _two consecutive failures_ clear a decision interval of 4. It raised a false alarm on two ordinary retries and dated a real outage four weeks early. Replaced with the sequential likelihood-ratio form.
+- **Regularity must be measured per customer, then pooled.** Pooling every gap first measures the spread _between_ people, not whether anyone has a cycle — masala chai came out at CV 0.88 that way and the detector found nothing at all.
 - **We cannot estimate price elasticity and will not pretend to.** The store has never changed a price, so elasticity is unidentified, not merely biased. The proposer states the break-even lift and leaves the judgement to the merchant.
 - **The most loyal customers are the worst discount target.** A cohort that reorders on a regular cycle is the definition of "sure things". Send a reminder — it costs nothing and does the same work.
 
 ### Three lanes, because they are three different kinds of thing
 
-| Lane | Contains | Cadence | Margin cost |
-|---|---|---|---|
-| **Incidents** | payment-failure step changes, A-item stockouts, deep cover | immediate, not ranked | none |
-| **Margin-safe actions** | cross-sell placement, replenishment reminders, cart outreach | weekly, ranked | zero |
-| **Price experiments** | anything that gives up margin | one at a time, its own gate | bounded by a cap |
+| Lane                    | Contains                                                     | Cadence                     | Margin cost      |
+| ----------------------- | ------------------------------------------------------------ | --------------------------- | ---------------- |
+| **Incidents**           | payment-failure step changes, A-item stockouts, deep cover   | immediate, not ranked       | none             |
+| **Margin-safe actions** | cross-sell placement, replenishment reminders, cart outreach | weekly, ranked              | zero             |
+| **Price experiments**   | anything that gives up margin                                | one at a time, its own gate | bounded by a cap |
 
-A payment outage is not an offer proposal. Putting it in a weekly ranked digest next to *"consider pairing these two teas"* is a category error, so the lanes are separate and only lane A is ranked.
+A payment outage is not an offer proposal. Putting it in a weekly ranked digest next to _"consider pairing these two teas"_ is a category error, so the lanes are separate and only lane A is ranked.
 
 ---
 
 ## 7. Basket recovery — the third chokepoint
 
-The proposer finds the *opportunity* — "82 baskets held a kettle and were never completed". A finding is not a campaign, and the distance between the two is where abandoned-cart tools go wrong.
+The proposer finds the _opportunity_ — "82 baskets held a kettle and were never completed". A finding is not a campaign, and the distance between the two is where abandoned-cart tools go wrong.
 
-**Outreach is speech at a distance.** It reaches someone who is not in a conversation, on a channel they gave us for a different purpose, with nobody present to say *that's wrong*. So the bar is the widget's bar and then some — the opposite of the direction marketing tools drift.
+**Outreach is speech at a distance.** It reaches someone who is not in a conversation, on a channel they gave us for a different purpose, with nobody present to say _that's wrong_. So the bar is the widget's bar and then some — the opposite of the direction marketing tools drift.
 
 ```mermaid
 flowchart TD
@@ -371,7 +371,7 @@ Three properties, each enforced by code rather than by care:
 
 **It never asks for a discount.** There is no code path that creates an offer. If the merchant has already approved one on something in the basket, the message may ANNOUNCE it — exact percentage, real end date, applied by the server at the payment page. Otherwise it is a plain reminder, and that is the intended outcome, not a degraded one. Money off pays people who were going to buy anyway and teaches the rest to abandon deliberately.
 
-**Its best answer is often "we broke it".** A basket that died on the payment step during a live payment incident is not a wavering shopper; it is our failure wearing a shopper's clothes. The recovery agent reads the incident detector for exactly this — and still hedges, because a cart record carries no payment method, so we cannot tie *this* basket to *that* bank.
+**Its best answer is often "we broke it".** A basket that died on the payment step during a live payment incident is not a wavering shopper; it is our failure wearing a shopper's clothes. The recovery agent reads the incident detector for exactly this — and still hedges, because a cart record carries no payment method, so we cannot tie _this_ basket to _that_ bank.
 
 **Suppression is computed first and shown in full**, the same discipline as `rejected` on the offers page. 214 of 226 baskets are left alone, each with one of sixteen named reasons and — where a threshold fired — the value and the threshold it missed. A campaign tool that shows you only its reach has hidden the number that can embarrass you.
 
@@ -381,11 +381,11 @@ Three properties, each enforced by code rather than by care:
 
 ### Channels are capabilities, not config flags
 
-`whatsapp`, `sms` and `email` have **no `deliver` function**, only a sentence saying what would unlock them. A boolean can be flipped by editing a settings file; a missing function cannot.
+`whatsapp`, generic campaign `sms`, and `email` have **no `deliver` function**, only a sentence saying what would unlock them. A boolean can be flipped by editing a settings file; a missing function cannot. Recovery has one deliberately separate SMS handoff: it accepts an existing grant and prepared payment order, always targets the number on the active call, and accepts no arbitrary message body.
 
 **Voice is the exception that proves the rule** — it does deliver, and what gates it is still not a preference: availability is computed from whether the credentials exist. The suite removes one environment variable and asserts the channel goes dark, then enables outreach and raises every ceiling and asserts it stays dark. A settings file cannot buy a Twilio account.
 
-**On the constraint being the feature.** WhatsApp needs Meta-approved templates; SMS needs DLT registration — entity, sender header and *every content template* filed with the Indian regulator before one message sends. DLT is usually described as friction. It is really an externally enforced version of the rule this codebase already imposes on itself: **the body is fixed, reviewed by someone who is not us, and only the variables move.** Our templates map onto DLT templates one to one because they were written under the same constraint. A system that generated free-form recovery copy with a language model *could not be sent over Indian SMS at all.*
+**On the constraint being the feature.** WhatsApp needs Meta-approved templates; SMS needs DLT registration — entity, sender header and _every content template_ filed with the Indian regulator before one message sends. DLT is usually described as friction. It is really an externally enforced version of the rule this codebase already imposes on itself: **the body is fixed, reviewed by someone who is not us, and only the variables move.** Our templates map onto DLT templates one to one because they were written under the same constraint. A system that generated free-form recovery copy with a language model _could not be sent over Indian SMS at all._
 
 ---
 
@@ -408,6 +408,12 @@ flowchart TD
     R -->|"price, and only price"| G{"8 gates"}
     G -->|"any one fails"| CS["cheaper things,<br/>actually in stock"]
     G --> GR["<b>grant</b><br/>bound · capped · single-use<br/>never negotiated"]
+    GR --> RO["server-priced<br/>Razorpay order"]
+    RO --> SM["fixed SMS to the call's number<br/>Full Twilio account"]
+    SM --> PY["buyer pays"]
+    PY --> OR["order recorded"]
+    OR -.-> PM["safe personal<br/>outcome memory"]
+    OR -.-> CX
     T -.->|"counted, never quoted"| CX[("shop cortex")]
 
     style X fill:#8a2f2f,stroke:#5c1f1f,color:#fff
@@ -421,7 +427,7 @@ Eleven reasons plus `unknown` — `price_too_high` · `shipping_cost` · `shippi
 
 **The classifier never learns which answer pays out.** Its prompt mentions no discount, no offer, no standing and no basket value — it is labelling a sentence. A classifier that knows one label leads to money is a classifier with an incentive.
 
-**Eight gates stand in front of one discount**, and the two that matter most: `requiresTier` may not be `new` — refused when the merchant saves, not merely defaulted, because an agent that pays whoever complains has taught everyone to complain — and the depth is the *smaller* of the recovery policy and the merchant's existing discount ceiling, then refused outright if the discounted basket falls through the margin floor.
+**Eight gates stand in front of one discount**, and the two that matter most: `requiresTier` may not be `new` — refused when the merchant saves, not merely defaulted, because an agent that pays whoever complains has taught everyone to complain — and the depth is the _smaller_ of the recovery policy and the merchant's existing discount ceiling, then refused outright if the discounted basket falls through the margin floor.
 
 **The guarantee, verified live rather than only asserted:**
 
@@ -433,7 +439,7 @@ Eleven reasons plus `unknown` — `price_too_high` · `shipping_cost` · `shippi
 
 An agent that improves its offer under pressure has taught the customer base to push, and that lesson travels faster than any campaign. The grant reaches `buildQuote` **by id**, never as terms; it does not stack with an approved offer; and it is dead the moment it is spent — but the redemption keeps the order id, so a shopper who closed the tab lands back on the same payment page instead of being told their discount is gone.
 
-**And "I changed my mind" ends it.** There is no counter-offer branch, deliberately, and the refusal silences that *person* rather than that basket. Every instinct in commerce says this is the moment to try one more thing. It is the moment somebody told you plainly that they do not want it.
+**And "I changed my mind" ends it.** There is no counter-offer branch, deliberately, and the refusal silences that _person_ rather than that basket. Every instinct in commerce says this is the moment to try one more thing. It is the moment somebody told you plainly that they do not want it.
 
 ### Voice: the channel that had to earn it
 
@@ -443,7 +449,9 @@ An agent that improves its offer under pressure has taught the customer base to 
 
 `conversation` lets the shopper answer, because **the reason is the product and people say more than they type.** A web form gets an answer from the minority who click; somebody already mid-sentence on the phone just tells you. The spoken answer is classified into the same labels and lands in the same histogram as a typed one — there is no second store of voice reasons, because two stores of the same fact is how a merchant ends up with two answers to "why aren't they buying".
 
-Voice is the one channel where a fabricated discount leaves no screenshot, cannot be retracted and cannot be disproved. So the guarantee is not a prompt instruction — **the model is handed no discount, no ceiling and no mention that grants exist.** Its entire world of facts is the array the drafting layer already uses to bound a written message. On a live call it was pushed five ways — politely, then on loyalty, then desperation, then a fabricated *"your owner said I'd get one"* — and refused every time, because there was no figure in its context to concede.
+Voice is the one channel where a fabricated discount leaves no screenshot, cannot be retracted and cannot be disproved. So the guarantee is not a prompt instruction: **the model cannot create a grant or pass a percentage into checkout.** The classifier receives no policy, tier, margin, or indication that one label can lead to money. Only after the answer is durably recorded does server policy issue a grant. The spoken offer is fixed text built from that grant, and later model turns may repeat only the exact bounds-licensed terms; they cannot improve or negotiate them.
+
+When the SMS handoff is enabled, the server prices the basket from the live catalogue, applies the grant by id, creates the Razorpay order, reserves stock, records the pending checkout, and then sends that order's public payment page. Settlement is unchanged: Razorpay's signed browser result or webhook creates the order once, marks the cart recovered, writes a non-sensitive personal outcome memory, and refreshes shop-wide grant-to-paid counts. The cortex receives only those aggregate counts, never the caller, cart, phone number, or transcript.
 
 And **press 9 stops it.** A written message can say "reply STOP"; a spoken one cannot, and an instruction the listener cannot follow only sounds like an opt-out. A keypress writes the same `closed` turn the web page writes, which is the suppression every future run already reads.
 
@@ -453,7 +461,7 @@ And **press 9 stops it.** A written message can say "reply STOP"; a spoken one c
 
 ## 9. Two memories, and why they are not one
 
-The shop cortex holds what is true about a **merchant**: policies, catalogue shape, floors, what the last analysis found. It has no field that can carry a person, and that is the guarantee rather than an omission — `check-cortex` asserts it against real secret *values*, not key names.
+The shop cortex holds what is true about a **merchant**: policies, catalogue shape, floors, what the last analysis found. It has no field that can carry a person, and that is the guarantee rather than an omission — `check-cortex` asserts it against real secret _values_, not key names.
 
 So where does "this shopper drinks it black" go? Into its own store, keyed `(merchant, shopper)`.
 
@@ -481,18 +489,18 @@ flowchart LR
 
 > **Memory supplies the question. Tools supply the answer.**
 
-Memory says *"they prefer low caffeine."* The catalogue then says which products are low caffeine, at what price, in stock today. So a stale memory can be wrong about a preference — recoverable, the shopper corrects it in a sentence — and can never be wrong about a price, **because it is not allowed to contain one.** That is `checkMemory`, the bounds layer pointed at storage instead of at speech, and it runs on the way *in*: the only place it can run, because the sentence will be read back in March.
+Memory says _"they prefer low caffeine."_ The catalogue then says which products are low caffeine, at what price, in stock today. So a stale memory can be wrong about a preference — recoverable, the shopper corrects it in a sentence — and can never be wrong about a price, **because it is not allowed to contain one.** That is `checkMemory`, the bounds layer pointed at storage instead of at speech, and it runs on the way _in_: the only place it can run, because the sentence will be read back in March.
 
 Four more properties, each structural:
 
 - **No identity, no memory.** An anonymous shopper is never persisted — with no identity there is no way to honour a deletion request later, so collecting would be taking something we could never give back.
 - **Per merchant, always.** The same human at two CHAPMAN shops has two disjoint memories that never meet.
-- **Stated, not silent.** The prompt block tells the model to say so when it uses one — *"last time you were after something low-caffeine, still?"* — because stated memory is correctable and silent memory is spooky and, when wrong, invisible.
+- **Stated, not silent.** The prompt block tells the model to say so when it uses one — _"last time you were after something low-caffeine, still?"_ — because stated memory is correctable and silent memory is spooky and, when wrong, invisible.
 - **It ages out.** 180 days, refreshed on use, deletable by the shopper from the widget and by the merchant from the console.
 
-**The summariser, and the guard that makes one safe.** One line per extracted fact becomes a pile, so above eight lines a small model rewrites them as fewer, clearer ones. It is a model writing sentences that will be said to a customer as things the shop knows about them, so asking it nicely not to invent is not a control. Every line must clear three checks — the same content gate, *grounded in the input* (it must overlap a line it could have come from), and *it may only reduce* — and if any line fails, **the whole merge is abandoned** and the originals stand. A half-merged pile is worse than an untidy one. A boundary (*"don't contact me"*) is never merged and is never shown to the summariser at all.
+**The summariser, and the guard that makes one safe.** One line per extracted fact becomes a pile, so above eight lines a small model rewrites them as fewer, clearer ones. It is a model writing sentences that will be said to a customer as things the shop knows about them, so asking it nicely not to invent is not a control. Every line must clear three checks — the same content gate, _grounded in the input_ (it must overlap a line it could have come from), and _it may only reduce_ — and if any line fails, **the whole merge is abandoned** and the originals stand. A half-merged pile is worse than an untidy one. A boundary (_"don't contact me"_) is never merged and is never shown to the summariser at all.
 
-Measured: twelve lines to nine in 3.9s on `lfm-2.5-2.6b`, with merges like *"usually orders two packets every six weeks for a small office."* Small model first, deliberately — a 26B head took **eleven seconds** for the same job, and the two fastest models available leak their chain of thought into `content`, which in a list-of-lines job would make every leaked paragraph a candidate memory.
+Measured: twelve lines to nine in 3.9s on `lfm-2.5-2.6b`, with merges like _"usually orders two packets every six weeks for a small office."_ Small model first, deliberately — a 26B head took **eleven seconds** for the same job, and the two fastest models available leak their chain of thought into `content`, which in a list-of-lines job would make every leaked paragraph a candidate memory.
 
 **What crosses into the cortex is a count.** The reason histogram, the answer rate — never a sentence, never a person. And it crosses through `updateFindings`, which merges one section, because the whole-document writer would blank the service notices and stop the assistant warning shoppers mid-outage.
 
@@ -523,7 +531,7 @@ sequenceDiagram
 Three things the capture endpoint refuses to take from the browser, each of which looks fine in a demo:
 
 1. **A price.** A posted line is `{handle, sku, qty}` — the same shape the checkout uses — so a basket cannot be inflated in the console into a recovery target worth chasing, and the margin floor is not computed from a number the shopper chose.
-2. **A phone number.** Accepting contact from a page would let anyone aim the shop's outbound calls at a stranger's handset. The page proves *who* it is with the signed session token the merchant already puts there; resolving that to *how to reach them* is the merchant's business, answered server to server over the same signed request that serves their orders. No token means no contact, which means the basket is suppressed as `no_channel` — **shown, with that reason.** The correct outcome, not a gap.
+2. **A phone number.** Accepting contact from a page would let anyone aim the shop's outbound calls at a stranger's handset. The page proves _who_ it is with the signed session token the merchant already puts there; resolving that to _how to reach them_ is the merchant's business, answered server to server over the same signed request that serves their orders. No token means no contact, which means the basket is suppressed as `no_channel` — **shown, with that reason.** The correct outcome, not a gap.
 3. **An identity it merely asserts.**
 
 **The question is asked on the merchant's domain.** A shopper who was on monsoonmarket.example should not answer "why didn't you buy?" on a gateway domain they have never heard of — that reads like phishing and gets closed. So the merchant proxies two paths, exactly the `/.well-known/ucp` pattern and about as much code, and the token is unchanged by moving: it is signed with the site secret and verified by us, so relocating the URL relocates no trust. Both directions are forwarded, because forwarding only the GET would render the question perfectly and throw the answer away.
@@ -540,11 +548,11 @@ The obvious fix — have `buildCortex` call `runProposals` — is wrong: the cor
 
 Exactly one thing crosses to a shopper:
 
-> *"Some HDFC netbanking payments have not been going through recently. If one fails, UPI and cards are working normally."*
+> _"Some HDFC netbanking payments have not been going through recently. If one fails, UPI and cards are working normally."_
 
 Written by the server from the detector's own facts, bounds-checked before it was stored, dropped after seven days whether or not anyone re-ran the analysis. Note the three absences: **no failure rate** (telling a shopper 41% of netbanking fails invites them to distrust the methods that work), **no date** (the onset is a window, and the honest version of a window is not a customer-service sentence), and no apology for something we have not confirmed is ours.
 
-**Relevance is a routing decision, not a model's judgement.** That was learned the hard way. The notice was first placed in the FACTS block with an instruction that it "may be repeated when relevant" — and a shopper who said their netbanking payment had just failed, during the outage, with the sentence sitting right there, was told that payment troubleshooting is handled by the support team. Then a model that had declined to use one announced to a shopper that *"there is no service notice in our system right now"*.
+**Relevance is a routing decision, not a model's judgement.** That was learned the hard way. The notice was first placed in the FACTS block with an instruction that it "may be repeated when relevant" — and a shopper who said their netbanking payment had just failed, during the outage, with the sentence sitting right there, was told that payment troubleshooting is handled by the support team. Then a model that had declined to use one announced to a shopper that _"there is no service notice in our system right now"_.
 
 So the model never sees a notice at all. `router.server.ts` classifies the message as `payment_trouble`, the notice's subject is matched against the method the shopper actually named — somebody whose **card** was declined is not handed a sentence about netbanking — and the answer is returned verbatim with no model in the path.
 
@@ -684,15 +692,24 @@ flowchart LR
     Review --> Channel[Channel capability check]
     Channel --> Sarvam[Sarvam speech rendering]
     Sarvam --> Twilio[Twilio call]
+    Twilio --> Answer[Reason recorded and classified]
+    Answer --> Policy[Deterministic remedy and exposure gates]
+    Policy -->|approved grant| Order[Discounted Razorpay order]
+    Order --> SMS[Twilio SMS to the same number]
+    SMS --> Pay[Buyer payment page]
+    Pay --> Settlement[Browser confirmation or webhook]
+    Settlement --> Recorded[Order, personal outcome, aggregate cortex result]
     TestForm[Test call form and consent] --> Fixed[Fixed integration-test notice]
     Fixed --> Limit[Quiet hours and rate limit]
     Limit --> Sarvam
+    TestSMS[Test message form and consent] --> FixedSMS[Fixed neutral SMS]
+    FixedSMS --> SMSAPI[Twilio Messages API]
     Twilio --> SendLog[Audited send log]
 ```
 
-The test form supplies only the destination. It does not load a customer record
+The test forms supply only the destination. They do not load a customer record
 or place the number in model input. Test calls use notice mode even when normal
-recovery is conversational.
+recovery is conversational, and test messages contain no offer or payment link.
 
 ### Shopper memory
 
@@ -785,24 +802,24 @@ static feature list cannot.
 
 ## 13. Where each rule is enforced
 
-| Rule | Enforced in | The failure it prevents |
-|---|---|---|
-| Reads are tools | `tools.server.ts`, `merchanttools.server.ts` | a model calling something that moves money |
-| Speech is a chokepoint | `bounds.server.ts` — the only egress | an invented discount, deadline or scarcity claim reaching a shopper |
-| Money is a chokepoint | `quote.server.ts` + `reservations.server.ts` | a price arriving from the client |
-| Only an approval licenses a price claim | `approvals.server.ts` | an assistant that can be argued into a discount |
-| Anything countable is counted by code | `stats.server.ts`, `detectors.server.ts`, `economics.server.ts` | a plausible number that is wrong |
-| Floors run before the model | `floors.server.ts` | a trap that passes Fisher's exact reaching a merchant |
-| A grant is passed by id, never as terms | `grants.server.ts`, then `buildQuote` | a caller that could pass a depth could pass 90% |
-| Memory may not hold anything that expires | `checkMemory` in `memory.server.ts` | a price read back to a shopper in March |
-| The cortex may not hold a person | `cortex.server.ts` + `check-cortex` | merchant unit costs, or a shopper, in the wrong projection |
-| Identity comes only from a signed session | `identity.server.ts` | order lookup by an email a stranger can type |
-| One settlement path, idempotent | `settle.server.ts` | double-settling, overselling, a forged webhook |
-| Three credential classes stay apart | `sites.server.ts`, `auth.server.ts`, `razorpay.server.ts` | one credential quietly standing in for another |
-| Channels are capabilities | `outreach.server.ts` | a settings file that appears to buy a Twilio account |
-| A model is optional | `reasoner.server.ts`, `pickReasoner()` | an outage that looks like a product failure |
-| A published page carries terms, never a discounted number | `agentview.server.ts` | a browsing model quoting a total nobody will honour |
-| The legibility layer computes nothing on the merchant's side | `demo-store/agentfront.go` | a second place prices come from, free to disagree with the first |
+| Rule                                                         | Enforced in                                                     | The failure it prevents                                             |
+| ------------------------------------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Reads are tools                                              | `tools.server.ts`, `merchanttools.server.ts`                    | a model calling something that moves money                          |
+| Speech is a chokepoint                                       | `bounds.server.ts` — the only egress                            | an invented discount, deadline or scarcity claim reaching a shopper |
+| Money is a chokepoint                                        | `quote.server.ts` + `reservations.server.ts`                    | a price arriving from the client                                    |
+| Only an approval licenses a price claim                      | `approvals.server.ts`                                           | an assistant that can be argued into a discount                     |
+| Anything countable is counted by code                        | `stats.server.ts`, `detectors.server.ts`, `economics.server.ts` | a plausible number that is wrong                                    |
+| Floors run before the model                                  | `floors.server.ts`                                              | a trap that passes Fisher's exact reaching a merchant               |
+| A grant is passed by id, never as terms                      | `grants.server.ts`, then `buildQuote`                           | a caller that could pass a depth could pass 90%                     |
+| Memory may not hold anything that expires                    | `checkMemory` in `memory.server.ts`                             | a price read back to a shopper in March                             |
+| The cortex may not hold a person                             | `cortex.server.ts` + `check-cortex`                             | merchant unit costs, or a shopper, in the wrong projection          |
+| Identity comes only from a signed session                    | `identity.server.ts`                                            | order lookup by an email a stranger can type                        |
+| One settlement path, idempotent                              | `settle.server.ts`                                              | double-settling, overselling, a forged webhook                      |
+| Three credential classes stay apart                          | `sites.server.ts`, `auth.server.ts`, `razorpay.server.ts`       | one credential quietly standing in for another                      |
+| Channels are capabilities                                    | `outreach.server.ts`                                            | a settings file that appears to buy a Twilio account                |
+| A model is optional                                          | `reasoner.server.ts`, `pickReasoner()`                          | an outage that looks like a product failure                         |
+| A published page carries terms, never a discounted number    | `agentview.server.ts`                                           | a browsing model quoting a total nobody will honour                 |
+| The legibility layer computes nothing on the merchant's side | `demo-store/agentfront.go`                                      | a second place prices come from, free to disagree with the first    |
 
 ---
 

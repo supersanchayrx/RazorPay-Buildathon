@@ -74,7 +74,10 @@ export type ServiceNotice = {
  */
 export const PAYMENT_WORDS: Array<{ token: string; re: RegExp }> = [
   { token: "upi", re: /\bupi\b|\bgpay\b|\bphonepe\b|\bpaytm\b/i },
-  { token: "card", re: /\bcards?\b|\bcredit card\b|\bdebit card\b|\bvisa\b|\bmastercard\b|\brupay\b/i },
+  {
+    token: "card",
+    re: /\bcards?\b|\bcredit card\b|\bdebit card\b|\bvisa\b|\bmastercard\b|\brupay\b/i,
+  },
   { token: "netbanking", re: /\bnet\s?banking\b/i },
   { token: "wallet", re: /\bwallet\b/i },
   { token: "emi", re: /\bemi\b/i },
@@ -88,7 +91,12 @@ export function methodsMentioned(message: string): string[] {
 export type ShopFindings = {
   shop: string;
   ranAt: string;
-  incidents: Array<{ id: string; title: string; onsetAt: string; detectedAt: string }>;
+  incidents: Array<{
+    id: string;
+    title: string;
+    onsetAt: string;
+    detectedAt: string;
+  }>;
   topActions: Array<{ id: string; title: string; monthlyValue: number }>;
   stopped: number;
   /** Aggregates only. Never a cart, never a customer. */
@@ -111,7 +119,17 @@ export type ShopFindings = {
    * `enough` carries the sample floor with the data, so a consumer cannot read
    * four answers as a finding by forgetting to check.
    */
-  reasons: { total: number; enough: boolean; counts: Array<{ reason: string; count: number; share: number }> } | null;
+  reasons: {
+    total: number;
+    enough: boolean;
+    counts: Array<{ reason: string; count: number; share: number }>;
+  } | null;
+  /** Shop-wide recovery outcomes only; no cart, customer or phone can fit here. */
+  recoveryOutcomes?: {
+    grantsIssued: number;
+    paidOrders: number;
+    conversionRate: number;
+  } | null;
 
   /**
    * When the reason counts were last refreshed, which is NOT when the analysis
@@ -144,18 +162,29 @@ const file = (shop: string) =>
  */
 export const NOTICE_TTL_DAYS = 7;
 
-export function readFindings(shop: string, asOf = new Date()): ShopFindings | null {
+export function readFindings(
+  shop: string,
+  asOf = new Date(),
+): ShopFindings | null {
   let f: ShopFindings;
   try {
     f = JSON.parse(fs.readFileSync(file(shop), "utf8")) as ShopFindings;
   } catch {
     return null;
   }
-  return { ...f, serviceNotices: (f.serviceNotices ?? []).filter((n) => Date.parse(n.until) > asOf.getTime()) };
+  return {
+    ...f,
+    serviceNotices: (f.serviceNotices ?? []).filter(
+      (n) => Date.parse(n.until) > asOf.getTime(),
+    ),
+  };
 }
 
 /** Age of the last analysis, in days. Null when there has never been one. */
-export function findingsAgeDays(f: ShopFindings | null, asOf = new Date()): number | null {
+export function findingsAgeDays(
+  f: ShopFindings | null,
+  asOf = new Date(),
+): number | null {
   if (!f) return null;
   return (asOf.getTime() - Date.parse(f.ranAt)) / 86_400_000;
 }
@@ -164,7 +193,11 @@ export function findingsAgeDays(f: ShopFindings | null, asOf = new Date()): numb
  * Writing
  * ------------------------------------------------------------------ */
 
-type IncidentLike = { id: string; title: string; facts: Array<{ label: string; value: string }> };
+type IncidentLike = {
+  id: string;
+  title: string;
+  facts: Array<{ label: string; value: string }>;
+};
 type ActionLike = { id: string; title: string; reach: number; impact: number };
 
 /**
@@ -180,7 +213,10 @@ type ActionLike = { id: string; title: string; reach: number; impact: number };
  *
  * What it does carry is the only actionable part: another way to pay.
  */
-function noticeFor(incident: IncidentLike, until: string): ServiceNotice | null {
+function noticeFor(
+  incident: IncidentLike,
+  until: string,
+): ServiceNotice | null {
   const key = incident.id.replace(/^payment_incident:/, "");
   const [method] = key.split("/");
   const bank = key.includes("/") ? key.split("/")[1] : null;
@@ -218,7 +254,9 @@ export function publishFindings(input: {
   asOf?: Date;
 }): { ok: boolean; findings: ShopFindings; error?: string } {
   const asOf = input.asOf ?? new Date();
-  const until = new Date(asOf.getTime() + NOTICE_TTL_DAYS * 86_400_000).toISOString();
+  const until = new Date(
+    asOf.getTime() + NOTICE_TTL_DAYS * 86_400_000,
+  ).toISOString();
 
   const findings: ShopFindings = {
     shop: input.shop,
@@ -237,7 +275,10 @@ export function publishFindings(input: {
     stopped: input.stopped,
     recovery: input.recovery,
     reasons: input.reasons ?? null,
-    conversationsAt: input.reasons ? asOf.toISOString() : (readFindings(input.shop, asOf)?.conversationsAt ?? null),
+    recoveryOutcomes: readFindings(input.shop, asOf)?.recoveryOutcomes ?? null,
+    conversationsAt: input.reasons
+      ? asOf.toISOString()
+      : (readFindings(input.shop, asOf)?.conversationsAt ?? null),
     serviceNotices: input.incidents
       .filter((i) => i.id.startsWith("payment_incident:"))
       .map((i) => noticeFor(i, until))
@@ -246,7 +287,11 @@ export function publishFindings(input: {
 
   try {
     fs.mkdirSync(path.dirname(file(input.shop)), { recursive: true });
-    fs.writeFileSync(file(input.shop), JSON.stringify(findings, null, 2) + "\n", "utf8");
+    fs.writeFileSync(
+      file(input.shop),
+      JSON.stringify(findings, null, 2) + "\n",
+      "utf8",
+    );
   } catch (e) {
     return { ok: false, findings, error: (e as Error).message };
   }
@@ -283,7 +328,9 @@ export function _file(shop: string): string {
  */
 export function updateFindings(
   shop: string,
-  patch: Partial<Pick<ShopFindings, "reasons" | "recovery">>,
+  patch: Partial<
+    Pick<ShopFindings, "reasons" | "recovery" | "recoveryOutcomes">
+  >,
   asOf = new Date(),
 ): ShopFindings | null {
   const current = readFindings(shop, asOf);
@@ -295,6 +342,9 @@ export function updateFindings(
       ? { reasons: patch.reasons, conversationsAt: asOf.toISOString() }
       : {}),
     ...(patch.recovery !== undefined ? { recovery: patch.recovery } : {}),
+    ...(patch.recoveryOutcomes !== undefined
+      ? { recoveryOutcomes: patch.recoveryOutcomes }
+      : {}),
   };
 
   try {

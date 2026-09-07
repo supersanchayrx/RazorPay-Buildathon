@@ -162,7 +162,7 @@ console.log("");
 
 /* ---- 3. render first, so a TTS failure is not a wasted call ------ */
 
-const rendered = await VOI.render(draft.text, c);
+const rendered = await VOI.render(draft.text, c, { timeoutMs: 10_000 });
 if (!rendered.ok) {
   console.error(`sarvam refused: ${rendered.error}`);
   process.exit(1);

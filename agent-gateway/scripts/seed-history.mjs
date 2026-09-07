@@ -7,10 +7,11 @@
  *
  * Three rules govern everything below.
  *
- * 1. DETERMINISTIC. A fixed seed drives one PRNG. Re-running produces the same
- *    bytes. Without this you cannot tell whether the proposer's output changed
- *    because you improved the proposer or because the dice rolled differently,
- *    and every regression becomes unfalsifiable.
+ * 1. DETERMINISTIC. A fixed seed drives one PRNG. Re-running with the same
+ *    optional TWILIO_TEST_TO produces the same bytes. Without this you cannot
+ *    tell whether the proposer's output changed because you improved the
+ *    proposer or because the dice rolled differently, and every regression
+ *    becomes unfalsifiable.
  *
  * 2. LABELLED. Every record carries `synthetic: true` and the seed that made
  *    it. A synthetic number must never be able to reach a merchant-facing claim
@@ -33,8 +34,57 @@ const SEED = 20260905;
 const SHOP = "pk_monsoon_market";
 const TODAY = new Date("2026-09-05T00:00:00Z");
 const DAYS = 180;
+const TEST_PHONE = process.env.TWILIO_TEST_TO?.trim() ?? "";
+
+if (TEST_PHONE && !/^\+[1-9]\d{7,14}$/.test(TEST_PHONE)) {
+  throw new Error(
+    "TWILIO_TEST_TO must be an E.164 phone number, including the leading +",
+  );
+}
 
 const OUT = DATA_DIR;
+const LOYAL_DEMO_CUSTOMER = "cus_demo_regular_delivery";
+const LOYAL_DEMO_CART = "crt_demo_regular_delivery";
+
+/**
+ * Re-seeding is the demo reset button for the planted recovery story.
+ *
+ * Orders and carts are deterministic, but outreach state intentionally lives
+ * in separate append-only files. Without clearing only this planted identity,
+ * the first rehearsal puts it inside the normal 30-day cooldown and every
+ * subsequent rehearsal has no callback target. Never match the shared test
+ * phone here: every synthetic shopper uses it, so doing that would erase the
+ * audit trail for the entire fixture.
+ */
+function resetLoyalDemoRuntime() {
+  const files = [
+    "outreach-drafts.jsonl",
+    "outreach-log.jsonl",
+    "recovery-conversations.jsonl",
+    "recovery-grants.jsonl",
+    "recovery-message-log.jsonl",
+    "voice-transcripts.jsonl",
+  ];
+  let removed = 0;
+
+  for (const name of files) {
+    const file = path.join(OUT, name);
+    if (!fs.existsSync(file)) continue;
+    const lines = fs.readFileSync(file, "utf8").split("\n").filter(Boolean);
+    const kept = lines.filter((line) => {
+      const belongsToDemo =
+        line.includes(`\"customerId\":\"${LOYAL_DEMO_CUSTOMER}\"`) ||
+        line.includes(`\"cartId\":\"${LOYAL_DEMO_CART}\"`);
+      if (belongsToDemo) removed += 1;
+      return !belongsToDemo;
+    });
+    if (kept.length !== lines.length) {
+      fs.writeFileSync(file, kept.length ? `${kept.join("\n")}\n` : "", "utf8");
+    }
+  }
+
+  return removed;
+}
 
 /* ------------------------------------------------------------------ *
  * PLANTED
@@ -59,6 +109,9 @@ const OUT = DATA_DIR;
  *   S6  gifting demand rises in the two weeks before Raksha Bandhan (14–29 Aug
  *       2026). Real seasonality, so the detectors have something to be right
  *       about — and something that must not be mistaken for a trend change.
+ *   S7  one named demo shopper has twelve recent orders and a ₹1,140 abandoned
+ *       basket. It sits below free delivery and safely clears the 8% margin
+ *       floor, making the recovery-call story repeatable rather than lucky.
  *
  * Traps — things a naive proposer will find that are NOT there:
  *
@@ -199,10 +252,10 @@ const leadTable = (() => {
 })();
 
 /* ------------------------------------------------------------------ *
- * Customers. Contacts are obviously fake by construction — +9199xx and
- * @example.invalid — so a leak into a real outbound channel fails loudly
- * instead of dialling a stranger. `.invalid` is reserved by RFC 2606 and can
- * never resolve.
+ * Customers. Email stays fake by construction: `.invalid` is reserved by RFC
+ * 2606 and can never resolve. For a controlled voice demo, TWILIO_TEST_TO may
+ * replace every synthetic phone number with the presenter's own handset. The
+ * value comes from the environment and is never committed.
  * ------------------------------------------------------------------ */
 const NAMES = [
   "arjun",
@@ -254,7 +307,8 @@ function makeCustomers(n) {
     cs.push({
       id: `cus_syn_${String(i).padStart(3, "0")}`,
       name,
-      phone: `+9199${String(10000000 + i * 7919).slice(0, 8)}`,
+      phone:
+        TEST_PHONE || `+9199${String(10000000 + i * 7919).slice(0, 8)}`,
       email: `${name}${i}@example.invalid`,
     });
   }
@@ -587,12 +641,80 @@ for (let k = 0; k < kettleDays.length; k++) {
   });
 }
 
+/* S7 — the golden-path recovery call used in the presentation. */
+const demoCustomer = {
+  id: LOYAL_DEMO_CUSTOMER,
+  phone: TEST_PHONE || "+919900000777",
+  email: "demo.regular@example.invalid",
+};
+const demoLine = (sku, qty = 1) => ({
+  handle: HANDLE[sku],
+  title: TITLE[HANDLE[sku]],
+  sku,
+  qty,
+  unitPrice: PRICE[sku],
+  unitCost: UNIT_COST[sku],
+  lineTotal: PRICE[sku] * qty,
+});
+const demoAt = (daysAgo, hour) => {
+  const d = new Date(TODAY);
+  d.setUTCDate(d.getUTCDate() - daysAgo);
+  d.setUTCHours(hour, 0, 0, 0);
+  return d.toISOString();
+};
+
+for (const [i, daysAgo] of [170, 154, 138, 122, 106, 90, 74, 58, 42, 28, 18, 8].entries()) {
+  const basketLines = [demoLine(i % 2 === 0 ? "MCB-100" : "SEA-250")];
+  const subtotal = basketLines[0].lineTotal;
+  const shipping = 60;
+  orders.push({
+    id: `ord_demo_regular_${String(i + 1).padStart(2, "0")}`,
+    synthetic: true,
+    seed: SEED,
+    shop: SHOP,
+    ts: demoAt(daysAgo, 14),
+    customer: demoCustomer,
+    lines: basketLines,
+    subtotal,
+    shipping,
+    total: subtotal + shipping,
+    currency: "INR",
+    channel: "web",
+    payment: {
+      method: "upi",
+      bank: null,
+      status: "captured",
+      amount: subtotal + shipping,
+      currency: "INR",
+      attempts: [{ status: "captured", bank: null }],
+      settled: true,
+    },
+    status: "placed",
+  });
+}
+
+const demoCartLines = [demoLine("MCB-250"), demoLine("SEA-250")];
+carts.push({
+  id: LOYAL_DEMO_CART,
+  synthetic: true,
+  seed: SEED,
+  shop: SHOP,
+  ts: demoAt(0, 18),
+  customer: demoCustomer,
+  lines: demoCartLines,
+  subtotal: demoCartLines.reduce((sum, line) => sum + line.lineTotal, 0),
+  currency: "INR",
+  lastStep: "address",
+  recovered: false,
+});
+
 orders.sort((a, b) => a.ts.localeCompare(b.ts));
 carts.sort((a, b) => a.ts.localeCompare(b.ts));
 
 /* ------------------------------------------------------------------ */
 
 fs.mkdirSync(OUT, { recursive: true });
+const resetRows = resetLoyalDemoRuntime();
 
 const write = (name, rows) =>
   fs.writeFileSync(
@@ -646,3 +768,4 @@ console.log(
 console.log(
   `written     data/orders.jsonl, data/carts.jsonl, data/merchant-inputs.json`,
 );
+console.log(`demo reset  ${resetRows} prior loyal-shopper runtime rows removed`);

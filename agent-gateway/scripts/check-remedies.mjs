@@ -159,6 +159,11 @@ check(
   RSN.classifyByPhrases("shipping was too expensive").evidence,
 );
 check(
+  "plural delivery charges in a Hinglish sentence still classify deterministically",
+  RSN.classifyByPhrases("delivery charges bahut jyada hai, discount de sakte ho")?.reason === "shipping_cost",
+  RSN.classifyByPhrases("delivery charges bahut jyada hai, discount de sakte ho")?.evidence,
+);
+check(
   "“too expensive” on its own is about price",
   RSN.classifyByPhrases("honestly it was just too expensive for me").reason === "price_too_high",
 );
@@ -246,6 +251,25 @@ check(
   "no money is offered for it",
   ship.remedy.kind !== "discount",
   ship.blocked.join("; "),
+);
+
+const approvedShipping = await remedy({
+  reason: "shipping_cost",
+  cartId: "cart_ship_regular_approved",
+  basket: [{ ...basket[0], qty: 1 }],
+  policy: policyOn({
+    discountFor: ["price_too_high", "shipping_cost"],
+    requiresTier: "regular",
+  }),
+});
+check(
+  "an approved delivery-cost complaint from a regular shopper reaches the 8% grant",
+  approvedShipping.remedy.kind === "discount" &&
+    Math.round(approvedShipping.remedy.grant.depth * 100) === 8 &&
+    approvedShipping.remedy.grant.tier === "regular",
+  approvedShipping.remedy.kind === "discount"
+    ? `${Math.round(approvedShipping.remedy.grant.depth * 100)}% for ${approvedShipping.remedy.grant.tier}`
+    : approvedShipping.blocked.join("; "),
 );
 
 const slow = await remedy({ reason: "shipping_speed", cartId: "cart_slow" });

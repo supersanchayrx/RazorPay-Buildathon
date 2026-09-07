@@ -7,10 +7,10 @@ a script tag and, optionally, a discovery route for shopping agents.
 
 Choose one runtime:
 
-| Runtime | Requirement |
-|---|---|
-| Docker | Docker Desktop and Docker Compose |
-| Native | Node.js `>=20.19 <22` or `>=22.12` |
+| Runtime | Requirement                        |
+| ------- | ---------------------------------- |
+| Docker  | Docker Desktop and Docker Compose  |
+| Native  | Node.js `>=20.19 <22` or `>=22.12` |
 
 A real storefront also needs a public origin and a JSON catalogue feed. HTTPS
 is required in production. The feed format is documented in
@@ -85,14 +85,14 @@ Sign in and select **Configure your storefront**.
 
 For the Docker demo, use:
 
-| Field | Value |
-|---|---|
-| Store name | `Monsoon Market` |
-| Public site key | `pk_monsoon_market` |
-| Browser origin | `http://localhost:4000` |
-| Catalogue URL | `http://store:4000/catalog.json` |
-| Product URL template | `/product.html?handle={handle}` |
-| Order feed | leave blank |
+| Field                | Value                            |
+| -------------------- | -------------------------------- |
+| Store name           | `Monsoon Market`                 |
+| Public site key      | `pk_monsoon_market`              |
+| Browser origin       | `http://localhost:4000`          |
+| Catalogue URL        | `http://store:4000/catalog.json` |
+| Product URL template | `/product.html?handle={handle}`  |
+| Order feed           | leave blank                      |
 
 The browser uses `localhost`. The gateway container uses the Compose service
 name `store`.
@@ -106,11 +106,11 @@ storefront, install discovery, import orders, or create analytics.
 
 Chapman keeps three states separate:
 
-| State | Meaning |
-|---|---|
-| Registered | The merchant saved the site in Chapman |
-| Installed | Chapman detected the embed or discovery route |
-| Provider configured | Required server-side keys are present |
+| State               | Meaning                                       |
+| ------------------- | --------------------------------------------- |
+| Registered          | The merchant saved the site in Chapman        |
+| Installed           | Chapman detected the embed or discovery route |
+| Provider configured | Required server-side keys are present         |
 
 **Feature controls** are policy switches. A switch being on does not prove that
 an integration is installed.
@@ -128,8 +128,8 @@ Open **Assistant** and copy the generated script tag. Its basic form is:
 <script
   src="https://your-gateway.example/embed.js"
   data-site="pk_yourstore"
-  defer>
-</script>
+  defer
+></script>
 ```
 
 Place it before `</body>` on each page that should show the assistant. For the
@@ -146,12 +146,12 @@ live verification button.
 
 Examples:
 
-| Server | Rule |
-|---|---|
-| Netlify | `/.well-known/ucp https://gateway.example/ucp/pk_yourstore/profile 302` |
-| nginx | `location = /.well-known/ucp { return 302 https://gateway.example/ucp/pk_yourstore/profile; }` |
-| Apache | `Redirect 302 /.well-known/ucp https://gateway.example/ucp/pk_yourstore/profile` |
-| Application server | Return a 302 redirect from the route |
+| Server             | Rule                                                                                           |
+| ------------------ | ---------------------------------------------------------------------------------------------- |
+| Netlify            | `/.well-known/ucp https://gateway.example/ucp/pk_yourstore/profile 302`                        |
+| nginx              | `location = /.well-known/ucp { return 302 https://gateway.example/ucp/pk_yourstore/profile; }` |
+| Apache             | `Redirect 302 /.well-known/ucp https://gateway.example/ucp/pk_yourstore/profile`               |
+| Application server | Return a 302 redirect from the route                                                           |
 
 For the bundled demo only, set:
 
@@ -181,14 +181,15 @@ docker compose up -d gateway
 
 ### Key groups
 
-| Feature page | Variables | Requirement |
-|---|---|---|
-| Assistant | `OPENROUTER_API_KEY` | Optional; fallback works without it |
-| Analyst | `OPENROUTER_API_KEY` | Required |
-| Shopper memory | OpenRouter key and summariser model | Optional |
-| Agent front | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | Both required for checkout |
-| Agent front | `RAZORPAY_WEBHOOK_SECRET`, `PUBLIC_ORIGIN` | Recommended for reliable settlement |
-| Recovery | `SARVAM_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`, `PUBLIC_ORIGIN` | All required for voice |
+| Feature page         | Variables                                                                                   | Requirement                                         |
+| -------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Assistant            | `OPENROUTER_API_KEY`                                                                        | Optional; fallback works without it                 |
+| Analyst              | `OPENROUTER_API_KEY`                                                                        | Required                                            |
+| Shopper memory       | OpenRouter key and summariser model                                                         | Optional                                            |
+| Agent front          | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`                                                    | Both required for checkout                          |
+| Agent front          | `RAZORPAY_WEBHOOK_SECRET`, `PUBLIC_ORIGIN`                                                  | Recommended for reliable settlement                 |
+| Recovery voice       | `SARVAM_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`, `PUBLIC_ORIGIN` | All required for voice                              |
+| Recovery SMS handoff | `TWILIO_MESSAGING_FROM` or `TWILIO_MESSAGING_SERVICE_SID`                                   | Optional; `TWILIO_FROM` is used when neither is set |
 
 Optional model variables are:
 
@@ -326,6 +327,39 @@ The result stays beside the form. During quiet hours, an error also points to
 entered in the form. After changing `.env`, recreate the gateway before trying
 again.
 
+### SMS test and discounted payment handoff
+
+Open **Recovery**, enter a verified E.164 test number, confirm it expects the
+message, and select **Send test message**. A Full Twilio account receives
+Chapman's fixed integration text. A Trial account automatically receives
+Twilio's predefined `sms_customer_support` template. Neither creates or claims
+a discount. The inline console ends with `[done] Message queued` only after
+Twilio accepts it.
+
+`TWILIO_FROM` is the default SMS sender. If voice and SMS use different Twilio
+numbers, set `TWILIO_MESSAGING_FROM`; a Messaging Service can instead be set as
+`TWILIO_MESSAGING_SERVICE_SID`.
+
+To enable the real recovery flow:
+
+1. Link Razorpay to the Chapman storefront and verify its keys.
+2. Enable Recovery and Voice in **Feature controls**.
+3. In **Recovery**, choose **Hold a conversation**.
+4. Enable **Recovery discounts**, set the eligible reason, customer tier,
+   percentage, lifetime, grant count, and margin budget.
+5. Enable **Send an approved discounted-payment link by SMS** and save.
+
+This last option requires a Full Twilio account. Trial accounts accept only
+predefined SMS templates and therefore cannot include Chapman's unique Razorpay
+payment URL. Chapman checks the account type before creating the payment order.
+
+The call defaults to Roman-script Hinglish. If the first recorded reason passes
+the policy, Chapman issues one cart-bound grant, creates the server-priced
+Razorpay order, and sends its payment page to the same number that is on the
+call. A paid browser confirmation or Razorpay webhook records the order and
+updates the recovery outcome counts. Production messaging in India still
+requires the applicable DLT registration and approved templates.
+
 ### Automated checks
 
 ```bash
@@ -413,14 +447,14 @@ implementation.
 
 Use HTTPS and persistent storage. Important variables are:
 
-| Variable | Purpose |
-|---|---|
-| `NODE_ENV=production` | Disables development fallbacks |
-| `CHAPMAN_DATA_DIR` | Persistent application data |
-| `CHAPMAN_CONFIG` | Site registry path |
-| `CONSOLE_SESSION_SECRET` | Stable merchant sessions |
-| `GATEWAY_ORIGIN` | Browser-facing public gateway URL |
-| `SITE_SECRET_<KEY>` | Per-site shopper and feed signatures |
+| Variable                 | Purpose                              |
+| ------------------------ | ------------------------------------ |
+| `NODE_ENV=production`    | Disables development fallbacks       |
+| `CHAPMAN_DATA_DIR`       | Persistent application data          |
+| `CHAPMAN_CONFIG`         | Site registry path                   |
+| `CONSOLE_SESSION_SECRET` | Stable merchant sessions             |
+| `GATEWAY_ORIGIN`         | Browser-facing public gateway URL    |
+| `SITE_SECRET_<KEY>`      | Per-site shopper and feed signatures |
 
 Store production credentials in a secret manager. Back up the data directory,
 site registry, and secrets. Run:
@@ -432,10 +466,10 @@ npm run check
 
 ## Data and resets
 
-| Command | Result |
-|---|---|
-| `docker compose down` | Stops services and keeps data |
-| `docker compose up -d --build gateway` | Rebuilds the gateway and keeps data |
+| Command                                                        | Result                                                                                                      |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `docker compose down`                                          | Stops services and keeps data                                                                               |
+| `docker compose up -d --build gateway`                         | Rebuilds the gateway and keeps data                                                                         |
 | `docker compose --profile "*" down --volumes --remove-orphans` | Stops every profile and deletes the merchant account, configuration, secrets, ledger, and demo-store orders |
 
 Use the all-profile `down --volumes` command only for an intentional complete
@@ -479,12 +513,12 @@ docker compose logs gateway
 docker compose run --rm gateway npm run doctor
 ```
 
-| Symptom | Check |
-|---|---|
-| Bubble is missing | Exact browser origin, site key, Assistant control, and `embed.js` |
-| Chat fails | Assistant test, gateway logs, and container-reachable catalogue URL |
-| Discovery is uninstalled | The storefront's own `/.well-known/ucp` route |
-| Razorpay is absent | Setup checkbox plus both required keys |
-| Test call is disabled | All five voice variables, E.164 number, and consent |
+| Symptom                  | Check                                                               |
+| ------------------------ | ------------------------------------------------------------------- |
+| Bubble is missing        | Exact browser origin, site key, Assistant control, and `embed.js`   |
+| Chat fails               | Assistant test, gateway logs, and container-reachable catalogue URL |
+| Discovery is uninstalled | The storefront's own `/.well-known/ucp` route                       |
+| Razorpay is absent       | Setup checkbox plus both required keys                              |
+| Test call is disabled    | All five voice variables, E.164 number, and consent                 |
 
 More fixes are in [docs/troubleshooting.md](docs/troubleshooting.md).

@@ -68,6 +68,8 @@ manager. Explain and request only the group needed for the feature I choose:
   and PUBLIC_ORIGIN are recommended for reliable settlement.
 - Recovery calls: SARVAM_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
   TWILIO_FROM, and PUBLIC_ORIGIN are all required together.
+- Recovery SMS may reuse TWILIO_FROM. TWILIO_MESSAGING_FROM or
+  TWILIO_MESSAGING_SERVICE_SID is optional when messaging uses another sender.
 Leave unknown values blank. After a Razorpay env change in the bundled demo,
 recreate both consumers with
 `docker compose --profile demo up -d --force-recreate gateway store`.
@@ -87,6 +89,8 @@ Verify with evidence, not assumptions:
 - the Assistant page Test chat assistant action returns a grounded result
 - never place a real test phone call unless I give an E.164 destination,
   confirm the recipient expects it, and explicitly ask you to place it
+- never send a real test SMS unless I give an E.164 destination, confirm the
+  recipient expects it, and explicitly ask you to send it
 - run the relevant checks, and report any check you could not run.
 
 At the end, report: services and URLs, what is registered, what is actually

@@ -286,3 +286,82 @@ export function voiceSetup(): IntegrationSetupGuide {
     ],
   };
 }
+
+export function messagingSetup(): IntegrationSetupGuide {
+  const variables = [
+    variable(
+      "TWILIO_ACCOUNT_SID",
+      "Identifies the Twilio account that sends the message.",
+      "required",
+      "AC...",
+    ),
+    variable(
+      "TWILIO_AUTH_TOKEN",
+      "Authenticates the server-side Twilio Messages API request.",
+      "required",
+      "<paste-your-twilio-auth-token>",
+    ),
+    variable(
+      "TWILIO_FROM",
+      "Default Twilio sender. The same number used for calls can be used when it is SMS-capable.",
+      "required",
+      "+1...",
+    ),
+    variable(
+      "TWILIO_MESSAGING_FROM",
+      "Optional SMS-specific sender. It overrides TWILIO_FROM.",
+      "optional",
+      "+1...",
+    ),
+    variable(
+      "TWILIO_MESSAGING_SERVICE_SID",
+      "Optional Messaging Service sender. When set, it is used instead of either From number.",
+      "optional",
+      "MG...",
+    ),
+    variable(
+      "PUBLIC_ORIGIN",
+      "Public HTTPS gateway origin placed in the payment link sent to a phone.",
+      "required",
+      "https://<your-subdomain>.ngrok-free.app",
+    ),
+  ];
+  const ready =
+    variables[0].configured &&
+    variables[1].configured &&
+    variables[5].configured &&
+    (variables[2].configured ||
+      variables[3].configured ||
+      variables[4].configured);
+
+  return {
+    title: "Twilio SMS for discounted payment links",
+    summary:
+      "The test button adapts to Full and Trial Twilio accounts. Automated discounted-payment SMS needs a Full account because the unique checkout URL cannot fit into Twilio's predefined trial templates.",
+    status: ready ? "ready" : "attention",
+    statusLabel: ready ? "SMS configured" : "SMS setup incomplete",
+    variables,
+    envExample: envExample(variables),
+    steps: [
+      "Use an SMS-capable Twilio sender. Trial accounts can send only Twilio's predefined templates to verified destination numbers.",
+      ROOT_ENV_STEP,
+      "For local Docker, expose Chapman through the tunnel profile and set PUBLIC_ORIGIN to that HTTPS gateway URL.",
+      RESTART_STEP,
+      "Use Send test message below first. Chapman detects Trial accounts and uses Twilio's predefined sms_customer_support template automatically.",
+      "Upgrade Twilio before enabling automatic discounted-payment links. Trial templates cannot include a per-order Razorpay URL, and Chapman stops before creating an undeliverable order.",
+      "For production messaging in India, complete the applicable DLT entity, sender and content-template registration before sending customer traffic.",
+    ],
+    verify:
+      "The status above says SMS configured and the fixed test message reaches a phone you control.",
+    docs: [
+      {
+        label: "Twilio trial SMS",
+        href: "https://www.twilio.com/docs/usage/trials/try-out-sms",
+      },
+      {
+        label: "Twilio Messages API",
+        href: "https://www.twilio.com/docs/messaging/api/message-resource",
+      },
+    ],
+  };
+}

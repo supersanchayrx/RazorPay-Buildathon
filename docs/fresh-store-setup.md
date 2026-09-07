@@ -341,7 +341,7 @@ Use a funded accessible model for a predictable demo, recreate the gateway,
 then open **Analyst** and choose a suggested question. Verify that the answer
 shows at least one tool call. It cannot change a price or approve an offer.
 
-## 12. Basket recovery and test calls
+## 12. Basket recovery, test calls, and payment-link SMS
 
 Recovery needs a captured cart before it needs a phone provider.
 
@@ -390,6 +390,41 @@ OPENROUTER_MODEL_ASSISTANT=
 OPENROUTER_MODEL_GRADER=
 ```
 
+Use **Send test message** with the same consent confirmation before enabling
+the automated handoff. A Full Twilio account receives Chapman's fixed neutral
+body. A Trial account automatically receives Twilio's predefined
+`sms_customer_support` template. Neither is a recovery offer. By default SMS is
+sent from `TWILIO_FROM`; optionally set one of:
+
+```dotenv
+TWILIO_MESSAGING_FROM=
+TWILIO_MESSAGING_SERVICE_SID=
+```
+
+To test the complete recovery flow:
+
+1. Link Razorpay for this Chapman storefront and confirm the Agent front page
+   says checkout is configured.
+2. In Recovery, enable the discount policy. Keep `price_too_high` selected,
+   choose `returning` or `regular`, and set the depth and monthly exposure caps.
+3. Under **On the telephone**, choose **Hold a conversation** and enable
+   **Send an approved discounted-payment link by SMS**.
+
+Step 3 requires a Full Twilio account. Trial templates cannot include the unique
+Razorpay payment URL, so Chapman stops before creating an undeliverable order. 4. Save, then place a recovery call for an eligible captured cart. A manual
+integration test call never creates a discount or order. 5. When the shopper says price was the blocker, Chapman records the reason,
+checks tier, cost, floor, quantity, expiry and monthly budgets, then creates
+a discounted Razorpay order. Only after that succeeds does it send the
+payment link to the number on the call. 6. Pay through the link with Razorpay test mode. Browser confirmation or the
+configured webhook records the order, closes the abandoned cart, adds a
+non-sensitive shopper outcome memory, and updates shop-wide aggregate
+recovery results.
+
+The model can hold the Hinglish conversation but cannot choose a percentage.
+Exact offer terms come only from the grant written by server policy. The SMS
+handoff is attempted once per grant and is separate from the generic SMS
+campaign channel, which remains unavailable in this release.
+
 ## 13. Ledger and test bench
 
 Neither needs an external key.
@@ -408,15 +443,15 @@ docker compose run --rm gateway npm run check
 
 ## Setup matrix
 
-| Capability                | Storefront change                      | Server data or key                                          | Direct test                            |
-| ------------------------- | -------------------------------------- | ----------------------------------------------------------- | -------------------------------------- |
-| Assistant                 | Embed on every page                    | OpenRouter optional                                         | Test chat assistant                    |
-| Agent-readable storefront | `/.well-known/ucp` route               | No provider key                                             | Verify install                         |
-| Razorpay checkout         | Already integrated in Monsoon Market   | Key ID and Key Secret; Chapman link only for agent checkout | Add to cart and Razorpay test checkout |
-| Personal orders           | Signed session and order feed          | Generated site secret                                       | Signed-in order question               |
-| Shopper memory            | Signed session                         | OpenRouter summariser optional                              | State a preference, inspect Memory     |
-| Shop cortex               | None beyond connected sources          | Catalogue, voice, history                                   | Inspect gaps and projections           |
-| Offers                    | None                                   | Costs, floors, 30 orders                                    | Review and approve one proposal        |
-| Analyst                   | None                                   | OpenRouter required                                         | Ask and inspect tool transcript        |
-| Recovery                  | Cart capture and signed contact lookup | Voice provider keys only for calls                          | Capture cart, then Place test call     |
-| Ledger and test bench     | None                                   | None                                                        | Run the page actions                   |
+| Capability                | Storefront change                      | Server data or key                                          | Direct test                             |
+| ------------------------- | -------------------------------------- | ----------------------------------------------------------- | --------------------------------------- |
+| Assistant                 | Embed on every page                    | OpenRouter optional                                         | Test chat assistant                     |
+| Agent-readable storefront | `/.well-known/ucp` route               | No provider key                                             | Verify install                          |
+| Razorpay checkout         | Already integrated in Monsoon Market   | Key ID and Key Secret; Chapman link only for agent checkout | Add to cart and Razorpay test checkout  |
+| Personal orders           | Signed session and order feed          | Generated site secret                                       | Signed-in order question                |
+| Shopper memory            | Signed session                         | OpenRouter summariser optional                              | State a preference, inspect Memory      |
+| Shop cortex               | None beyond connected sources          | Catalogue, voice, history                                   | Inspect gaps and projections            |
+| Offers                    | None                                   | Costs, floors, 30 orders                                    | Review and approve one proposal         |
+| Analyst                   | None                                   | OpenRouter required                                         | Ask and inspect tool transcript         |
+| Recovery                  | Cart capture and signed contact lookup | Voice keys; Twilio SMS sender; Razorpay for payment links   | Test call, test SMS, then eligible cart |
+| Ledger and test bench     | None                                   | None                                                        | Run the page actions                    |
