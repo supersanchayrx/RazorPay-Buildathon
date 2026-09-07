@@ -19,11 +19,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
+	"net/mail"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -62,6 +65,7 @@ type customer struct {
 }
 
 type store struct {
+	mu         sync.RWMutex
 	byCustomer map[string][]order
 	byEmail    map[string]customer
 	secret     string
@@ -212,7 +216,10 @@ func (s *store) handleOrders(w http.ResponseWriter, r *http.Request) {
 	// Only ever this customer's rows. The merchant scopes the query; CHAPMAN
 	// re-checks on arrival. Two independent checks, because a leak here would
 	// be a leak of the merchant's customers by the merchant's own code.
-	rows := s.byCustomer[sub]
+	s.mu.RLock()
+	rows := append([]order(nil), s.byCustomer[sub]...)
+	c, haveCustomer := s.byIDLocked(sub)
+	s.mu.RUnlock()
 	if rows == nil {
 		rows = []order{}
 	}
@@ -229,7 +236,7 @@ func (s *store) handleOrders(w http.ResponseWriter, r *http.Request) {
 	// A merchant who does not want outreach simply omits this object, and every
 	// basket is then suppressed as `no_channel` with that reason shown.
 	out := map[string]any{"orders": rows}
-	if c, ok := s.byID(sub); ok {
+	if haveCustomer {
 		out["customer"] = map[string]string{"id": c.ID, "email": c.Email, "phone": c.Phone}
 	}
 	json.NewEncoder(w).Encode(out)
@@ -240,14 +247,38 @@ func (s *store) handleOrders(w http.ResponseWriter, r *http.Request) {
 const sessionCookie = "np_customer"
 
 func (s *store) handleLogin(w http.ResponseWriter, r *http.Request) {
-	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
-	c, ok := s.byEmail[email]
-	if !ok {
-		http.Redirect(w, r, "/account.html?error=1", http.StatusSeeOther)
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
 		return
 	}
+	email := strings.ToLower(strings.TrimSpace(r.FormValue("email")))
+	parsed, err := mail.ParseAddress(email)
+	if err != nil || !strings.EqualFold(parsed.Address, email) {
+		http.Redirect(w, r, "/account.html?error=invalid", http.StatusSeeOther)
+		return
+	}
+
+	// A fresh demo intentionally has no seeded customers or orders. Requiring a
+	// pre-existing email made its passwordless form impossible to use in exactly
+	// that state. Any valid address now creates a local fixture account; this is
+	// demo-store behaviour, not authentication advice for a real merchant.
+	s.mu.Lock()
+	c, ok := s.byEmail[email]
+	if !ok {
+		sum := sha256.Sum256([]byte(email))
+		local := strings.SplitN(email, "@", 2)[0]
+		name := titleCase(strings.TrimRight(local, "0123456789"))
+		if name == "" {
+			name = "Shopper"
+		}
+		c = customer{ID: fmt.Sprintf("demo_%x", sum[:8]), Email: email, Name: name}
+		s.byEmail[email] = c
+		s.byCustomer[c.ID] = []order{}
+	}
+	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: c.ID, Path: "/", HttpOnly: true, MaxAge: 3600,
+		Name: sessionCookie, Value: c.ID, Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, MaxAge: 3600,
 	})
 	http.Redirect(w, r, "/account.html", http.StatusSeeOther)
 }
@@ -259,6 +290,12 @@ func (s *store) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // byID looks a customer up by the merchant's own id.
 func (s *store) byID(id string) (customer, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.byIDLocked(id)
+}
+
+func (s *store) byIDLocked(id string) (customer, bool) {
 	for _, c := range s.byEmail {
 		if c.ID == id {
 			return c, true
@@ -273,12 +310,7 @@ func (s *store) current(r *http.Request) (customer, bool) {
 	if err != nil || ck.Value == "" {
 		return customer{}, false
 	}
-	for _, c := range s.byEmail {
-		if c.ID == ck.Value {
-			return c, true
-		}
-	}
-	return customer{}, false
+	return s.byID(ck.Value)
 }
 
 // sessionScript is injected into every page. Signed out, it defines nothing and
@@ -301,24 +333,31 @@ func accountsBlock(s *store, r *http.Request) string {
 	c, ok := s.current(r)
 	if !ok {
 		var b strings.Builder
+		if r.URL.Query().Get("error") == "invalid" {
+			b.WriteString(`<p class="account-error" role="alert">Enter a valid email address.</p>`)
+		}
 		b.WriteString(`<form method="post" action="/login" class="signin">
       <label for="email">Email</label>
       <input id="email" name="email" type="email" placeholder="you@example.com" required>
       <button type="submit">Sign in</button>
     </form>
-    <p class="hint">No password — this is a demo shop. Try one of these accounts:</p>
+	    <p class="hint">No password — enter any valid email to create a local demo account.</p>`)
+		suggestions := s.someEmails(4)
+		if len(suggestions) > 0 {
+			b.WriteString(`<p class="hint">Or sign in to an account with existing test orders:</p>
     <ul class="accounts">`)
-		for _, a := range s.someEmails(4) {
-			fmt.Fprintf(&b, `<li><a href="#" onclick="document.getElementById('email').value='%s';return false;">%s</a> <span>%d orders</span></li>`,
-				a.Email, a.Email, len(s.byCustomer[a.ID]))
+			for _, a := range suggestions {
+				fmt.Fprintf(&b, `<li><form method="post" action="/login"><button class="account-pick" type="submit" name="email" value="%s">%s</button> <span>%d orders</span></form></li>`,
+					html.EscapeString(a.Email), html.EscapeString(a.Email), s.orderCount(a.ID))
+			}
+			b.WriteString(`</ul>`)
 		}
-		b.WriteString(`</ul>`)
 		return b.String()
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, `<p class="signedin">Signed in as <b>%s</b> · <a href="/logout">Sign out</a></p>`, c.Email)
-	rows := s.byCustomer[c.ID]
+	fmt.Fprintf(&b, `<p class="signedin">Signed in as <b>%s</b> · <a href="/logout">Sign out</a></p>`, html.EscapeString(c.Email))
+	rows := s.ordersFor(c.ID)
 	if len(rows) == 0 {
 		b.WriteString(`<p class="hint">No orders on this account.</p>`)
 		return b.String()
@@ -340,9 +379,23 @@ func accountsBlock(s *store, r *http.Request) string {
 	return b.String()
 }
 
+func (s *store) ordersFor(customerID string) []order {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]order(nil), s.byCustomer[customerID]...)
+}
+
+func (s *store) orderCount(customerID string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.byCustomer[customerID])
+}
+
 // someEmails gives the sign-in page a few real addresses to offer, since the
 // fixture's customers are synthetic and nobody could guess them.
 func (s *store) someEmails(n int) []customer {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	out := make([]customer, 0, len(s.byEmail))
 	for _, c := range s.byEmail {
 		if len(s.byCustomer[c.ID]) >= 3 {

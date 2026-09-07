@@ -25,6 +25,8 @@ import { isConfigured, openRouterReasoner, withFallback } from "./openrouter.ser
 export type Turn = { role: "user" | "assistant"; content: string };
 
 export type ReasonerContext = {
+  /** Public site key, used to attribute provider failures to the right shop. */
+  shop?: string;
   message: string;
   history: Turn[];
   shopName: string;

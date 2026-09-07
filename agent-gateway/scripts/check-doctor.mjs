@@ -46,7 +46,9 @@ const cleanup = () => {
 /** Sentinels. If any of these reaches the output, something is printing values. */
 const SECRETS = {
   SITE_SECRET_MONSOON_MARKET: "sentinel-site-secret-9f2c",
+  RAZORPAY_TEST_API_KEY_ID1: "sentinel-rzp-id-3a72",
   RAZORPAY_TEST_API_KEY_SECRET1: "sentinel-rzp-secret-4b81",
+  RAZORPAY_WEBHOOK_SECRET1: "sentinel-rzp-hook-6c14",
   CONSOLE_SESSION_SECRET: "sentinel-console-secret-7d30",
 };
 
@@ -220,6 +222,58 @@ if (good.json) {
     writable?.detail,
   );
 }
+
+/* ------------------------------------------------------------------ *
+ * 1b. Legacy Docker key names satisfy the canonical site references
+ * ------------------------------------------------------------------ */
+
+console.log("\n-- legacy Razorpay environment names --\n");
+
+const aliasConfig = path.join(tmp, "alias.config.json");
+fs.writeFileSync(
+  aliasConfig,
+  JSON.stringify({
+    sites: [
+      {
+        key: "pk_alias_test",
+        name: "Alias Test Store",
+        origins: ["http://localhost:4000"],
+        catalogFeedUrl: "http://localhost:4000/catalog.json",
+        secretEnv: "SITE_SECRET_MONSOON_MARKET",
+        razorpay: {
+          keyIdEnv: "RAZORPAY_KEY_ID",
+          keySecretEnv: "RAZORPAY_KEY_SECRET",
+          webhookSecretEnv: "RAZORPAY_WEBHOOK_SECRET",
+        },
+      },
+    ],
+  }),
+);
+
+const aliases = doctor({
+  CHAPMAN_CONFIG: aliasConfig,
+  // Empty canonical variables reproduce `docker compose exec`: the startup
+  // shell's exports are absent, while the legacy variables from Compose remain.
+  RAZORPAY_KEY_ID: "",
+  RAZORPAY_KEY_SECRET: "",
+  RAZORPAY_WEBHOOK_SECRET: "",
+});
+check(
+  "doctor accepts legacy Razorpay keys for canonical config references",
+  statuses(aliases.json, "Razorpay keys").join(",") === "PASS",
+  rowsIn(aliases.json, "Razorpay keys")[0]?.detail,
+);
+check(
+  "doctor accepts the legacy webhook secret for its canonical reference",
+  statuses(aliases.json, "Razorpay webhook").join(",") === "PASS",
+  rowsIn(aliases.json, "Razorpay webhook")[0]?.detail,
+);
+check(
+  "Razorpay alias values remain absent from doctor output",
+  !Object.values(SECRETS).some((value) =>
+    JSON.stringify(aliases.json).includes(value),
+  ),
+);
 
 /* ------------------------------------------------------------------ *
  * 2. A broken config

@@ -23,7 +23,8 @@ docker compose logs gateway
 
 `docker compose down` does not clear the volume. If the existing data is wanted,
 keep it. If this is intentionally a disposable demo and a complete reset is
-required, back up anything important before using `docker compose down -v`.
+required, back up anything important before using the all-profile reset in
+[Fresh storefront setup](fresh-store-setup.md#1-reset-the-demo).
 
 Also confirm these values have not opted into a fixture:
 
@@ -33,6 +34,21 @@ CHAPMAN_SEED=false
 ```
 
 `chapman.config.demo.json` must only be selected explicitly for tests.
+
+---
+
+## `down -v` says a volume or network is still in use
+
+A service started under the `demo` or `tunnel` profile is probably still
+running. Activate every profile while tearing the project down:
+
+```powershell
+docker compose --profile "*" down --volumes --remove-orphans
+```
+
+This is a complete reset and deletes Chapman and demo-store Docker data. If an
+interrupted run still leaves resources behind, use the project-labeled force
+cleanup in [Fresh storefront setup](fresh-store-setup.md#1-reset-the-demo).
 
 ---
 
@@ -55,6 +71,12 @@ Common causes are:
 - the root `.env` changed but the gateway was not recreated;
 - the browser origin does not exactly match the registered scheme and host.
 
+If activity says `free daily quota reached (429)`, the key was accepted but the
+OpenRouter account exhausted its free-model allowance. Use a funded accessible
+model via `OPENROUTER_MODEL_ASSISTANT`, or remove the key to use Chapman's
+deterministic fallback. A `404` saying a model is unavailable for free means
+that model slug left the free tier.
+
 For the bundled demo, the catalogue URL must be
 `http://store:4000/catalog.json`. OpenRouter is optional for the storefront
 assistant; removing an invalid key should leave the deterministic fallback
@@ -62,10 +84,22 @@ available.
 
 ---
 
-## Razorpay keys exist but checkout is not advertised
+## Monsoon Market says test checkout is not configured
+
+Monsoon Market's cart does not depend on a Chapman tag or registration. Confirm
+both `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` are non-empty in the root
+`.env`, then recreate the store so Docker applies them:
+
+```powershell
+docker compose --profile demo up -d --build --force-recreate store
+```
+
+Do not run the Chapman Razorpay linker for this problem.
+
+## Chapman does not advertise agent checkout
 
 Both `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` must be non-empty, and the
-storefront must be linked to those variable names. For first-store onboarding,
+Chapman site must be linked to those variable names. For first-store onboarding,
 that link is created by selecting **Configure Razorpay for this storefront**.
 
 After editing `.env`, run:
@@ -74,13 +108,21 @@ After editing `.env`, run:
 docker compose up -d gateway
 ```
 
+If the site was registered without the Razorpay checkbox, link Chapman's agent
+checkout with:
+
+```bash
+docker compose run --rm gateway npm run site:enable-razorpay -- --site pk_monsoon_market
+docker compose up -d --force-recreate gateway
+```
+
 Open **Agent front** and inspect its Razorpay setup status. A webhook secret is
 recommended for settlement reliability but is not required to advertise basic
 checkout.
 
 ---
 
-## The Place test call button is disabled
+## The Place test call button is disabled or appears to do nothing
 
 Recovery voice requires all of these values:
 
@@ -98,6 +140,28 @@ expects the call. During quiet hours, the destination must exactly match
 
 The action makes a real provider call and can consume credit. A successful UI
 render alone does not verify Twilio or Sarvam.
+
+After pressing the button, use the inline console directly below it:
+
+- No console means the form was not submitted. Check that all five variables
+  show as configured, the number is present, and the consent box is selected.
+- `[working]` means the request is still running.
+- `[error]` gives the exact validation, provider, feature-control,
+  rate-limit, or quiet-hours refusal.
+- `[done] Call queued` means Twilio accepted the request. It does not by itself
+  prove the handset answered; check the phone or Twilio call log for the final
+  result.
+
+If the console reports quiet hours, add the exact test destination to `.env`
+and recreate the gateway:
+
+```dotenv
+VOICE_QUIET_HOURS_TEST_NUMBER=+919876543210
+```
+
+```bash
+docker compose up -d --force-recreate gateway
+```
 
 ---
 

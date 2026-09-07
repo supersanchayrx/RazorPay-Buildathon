@@ -1,8 +1,9 @@
 // Monsoon Market — demo storefront server.
 //
 // A custom (non-Shopify) merchant site, used to develop the tier-3 integration
-// path. Deliberately dumb: static files, no templating, no database. The store
-// exists to be integrated with, not to be impressive.
+// path. Deliberately small: static files, a merchant-owned Razorpay checkout,
+// no templating and no database. The store exists to be integrated with, not
+// to be impressive.
 //
 //	go run ./demo-store          -> http://127.0.0.1:4000
 //	go run ./demo-store -addr :5000
@@ -210,6 +211,7 @@ func main() {
 		log.Printf("  order history unavailable (%v) — sign-in and order lookup are off", err)
 		shop = &store{byCustomer: map[string][]order{}, byEmail: map[string]customer{}, secret: *secret, site: *site}
 	}
+	payments := newCheckout(root, shop)
 
 	// The merchant's entire agent-readable integration: one well-known path,
 	// proxied from the gateway. See ucp.go.
@@ -241,6 +243,11 @@ func main() {
 	// not the same shop without CHAPMAN.
 	mux.HandleFunc("/login", shop.handleLogin)
 	mux.HandleFunc("/logout", shop.handleLogout)
+	// The merchant's own Razorpay integration. This is intentionally outside
+	// the Chapman switch: a fresh store can transact before Chapman knows it
+	// exists. Only test credentials are supplied by the demo Compose profile.
+	mux.HandleFunc("/api/checkout", payments.handle)
+	mux.HandleFunc("/api/razorpay/webhook", payments.handleWebhook)
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Bare /product should still resolve to the product page.
 		if r.URL.Path == "/product" {
@@ -286,6 +293,14 @@ func main() {
 	}
 
 	log.Printf("Monsoon Market demo store serving %s", root)
+	if payments.keyID != "" && payments.keySecret != "" {
+		log.Printf("  Razorpay test checkout: ready (merchant-owned)")
+	} else {
+		log.Printf("  Razorpay test checkout: keys missing; cart can price but Pay explains what to add")
+	}
+	if payments.webhookSecret != "" {
+		log.Printf("  Razorpay webhook: /api/razorpay/webhook (requires a public store URL)")
+	}
 	if *chapmanOn {
 		log.Printf("  agent gateway: %s  (browser)", base)
 		if up != base {
@@ -301,7 +316,7 @@ func main() {
 	} else {
 		log.Printf("  CHAPMAN: OFF (-chapman=false)")
 		log.Printf("    /.well-known/ucp, /recover/, /restore/, /api/orders and tier C are unregistered.")
-		log.Printf("    This is the shop as it was before any of it. Static files and nothing else.")
+		log.Printf("    Catalogue, accounts and merchant-owned Razorpay checkout still work.")
 	}
 	log.Printf("  -> http://%s", *addr)
 	if err := http.ListenAndServe(*addr, logging(noCache(handler))); err != nil {

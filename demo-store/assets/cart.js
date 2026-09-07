@@ -5,7 +5,9 @@
 // Every line here is {handle, sku, qty} and nothing more. There is no field to
 // put a price in, so there is no number for a tampered client to send and no
 // number for the server to be tempted to trust. Every total shown to the
-// shopper is fetched from CHAPMAN, which reads it from the catalogue.
+// shopper is fetched from Monsoon Market's own server, which reads it from the
+// catalogue. Checkout works before CHAPMAN is installed; CHAPMAN only receives
+// optional recovery events after its embed is added.
 //
 // That is not caution about our own code — it is the oldest bug in
 // e-commerce, and the insecure version is the one that is easier to write and
@@ -13,24 +15,11 @@
 (function () {
   var KEY = "np_cart_v1";
 
-  // The gateway URL is already on the page: the embed tag points at it. Reading
-  // it back beats a second copy that can drift.
+  // Checkout belongs to this merchant storefront. The Chapman tag, when the
+  // merchant adds one later, is used only for optional recovery beacons.
   var tag = document.querySelector('script[src*="/embed.js"]');
-  var BASE = tag ? tag.src.replace(/\/embed\.js.*$/, "") : "";
+  var CHAPMAN_BASE = tag ? tag.src.replace(/\/embed\.js.*$/, "") : "";
   var SITE = tag ? tag.getAttribute("data-site") : "";
-
-  // WITH NO TAG ON THE PAGE, THIS CART CANNOT PRICE ANYTHING.
-  //
-  // Not a defensive nicety. Every total in this cart is fetched from CHAPMAN,
-  // because the cart holds no prices — that is the point of the file. Take the
-  // tag away and BASE is "", so every fetch goes to this store's own origin and
-  // 404s: a buy button that looks alive, does nothing, and says nothing.
-  //
-  // So the shop degrades on purpose and out loud. The buttons go quiet and the
-  // reason is on the page. It is also the honest "before" for a demo: the
-  // difference the one tag makes is a dead button becoming a live one, which is
-  // visible from across a room.
-  var LIVE = !!(tag && BASE && SITE);
 
   function read() {
     try {
@@ -86,11 +75,11 @@
 
   function beacon(op, lines) {
     var r = ref();
-    if (!BASE || !SITE || !r) return;
+    if (!CHAPMAN_BASE || !SITE || !r) return;
     var payload = { site: SITE, ref: r, op: op, lines: lines || [] };
     if (window.CHAPMAN_SESSION) payload.session = window.CHAPMAN_SESSION;
     try {
-      fetch(BASE + "/embed/cart", {
+      fetch(CHAPMAN_BASE + "/embed/cart", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -138,10 +127,9 @@
   }
 
   function post(op, extra) {
-    var payload = { site: SITE, op: op, items: read(), ref: ref() };
-    if (window.CHAPMAN_SESSION) payload.session = window.CHAPMAN_SESSION;
+    var payload = { op: op, items: read() };
     for (var k in extra || {}) payload[k] = extra[k];
-    return fetch(BASE + "/embed/checkout", {
+    return fetch("/api/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -157,8 +145,6 @@
   var panel, body, btn, badge;
 
   function build() {
-    if (!LIVE) return buildInert();
-
     btn = document.createElement("button");
     btn.className = "np-cart-btn";
     btn.type = "button";
@@ -273,8 +259,19 @@
     // browser chose.
     post("start").then(function (res) {
       if (!res.body.ok) {
-        payBtn.disabled = false;
-        refresh();
+        body.innerHTML = "";
+        var problem = document.createElement("div");
+        problem.className = "np-problems";
+        var message = document.createElement("p");
+        message.textContent = res.body.error || "Could not start test checkout.";
+        problem.appendChild(message);
+        body.appendChild(problem);
+        var retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "np-clear";
+        retry.textContent = "Back to cart";
+        retry.addEventListener("click", refresh);
+        body.appendChild(retry);
         return;
       }
       var d = res.body;
@@ -331,35 +328,9 @@
     });
   }
 
-  /* ---------- no tag: say so, and stop ---------- */
-
-  /**
-   * What the shop looks like before the integration.
-   *
-   * Disable rather than hide. A missing button reads as a shop that never sold
-   * anything; a disabled one with a reason next to it reads as the thing that
-   * is one line of HTML away from working — which is what it is.
-   */
-  function buildInert() {
-    [].forEach.call(document.querySelectorAll(".buy"), function (b) {
-      b.disabled = true;
-      b.title = "No agent gateway configured on this page.";
-      if (!/unavailable/i.test(b.textContent)) b.textContent = "Unavailable";
-    });
-
-    var note = document.createElement("div");
-    note.className = "np-cart-btn np-inert";
-    note.setAttribute("role", "status");
-    note.style.cursor = "default";
-    note.style.opacity = "0.75";
-    note.textContent = "Cart offline — no gateway tag on this page";
-    document.body.appendChild(note);
-  }
-
   /* ---------- wire the product page ---------- */
 
   function wireBuyButton() {
-    if (!LIVE) return;
     document.addEventListener("click", function (e) {
       var b = e.target.closest ? e.target.closest(".buy") : null;
       if (!b || b.disabled) return;

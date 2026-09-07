@@ -380,9 +380,9 @@ function readSite(
           }
         }
       }
-      // A named-but-unset key is legal: the shop runs, payments decline
-      // politely, and `isConfigured()` already returns false. It is still
-      // almost always a mistake, so it is said out loud.
+      // A named-but-unset key is legal: the shop still boots and doctor says
+      // what is incomplete. The two API credentials block checkout; the
+      // optional webhook secret only removes the asynchronous settlement path.
       for (const field of [
         "keyIdEnv",
         "keySecretEnv",
@@ -392,7 +392,9 @@ function readSite(
         if (isNonEmptyString(name) && !opts.resolveSecret(name)) {
           warn(
             `razorpay.${field}`,
-            `${name} is named here but not set in the environment. Payments will decline until it is.`,
+            field === "webhookSecretEnv"
+              ? `${name} is named here but not set in the environment. Browser-confirmed checkout still works, but reliable settlement after the buyer closes the page needs this webhook secret.`
+              : `${name} is named here but not set in the environment. Payments will decline until it is.`,
           );
         }
       }

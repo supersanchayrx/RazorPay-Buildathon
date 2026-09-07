@@ -7,6 +7,7 @@ import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Divider } from "@astryxdesign/core/Divider";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { HStack } from "@astryxdesign/core/HStack";
+import { List, ListItem } from "@astryxdesign/core/List";
 import { MetadataList, MetadataListItem } from "@astryxdesign/core/MetadataList";
 import { Table, pixel, proportional } from "@astryxdesign/core/Table";
 import { Text } from "@astryxdesign/core/Text";
@@ -128,6 +129,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       ask: modelConfigured()
         ? async (prompt) =>
             (await complete({
+              shop,
               model: MODELS.summariser(),
               messages: [{ role: "user", content: prompt }],
               maxTokens: 300,
@@ -359,6 +361,36 @@ export default function MemoryPage() {
       </Block>
 
       <Setup title="What it may and may not remember">
+        <VStack gap={3}>
+          <MetadataList label={{ position: "start", width: 220 }}>
+            <MetadataListItem label="Install">
+              <Text>
+                Enable Shopper memory in Feature controls, install the assistant on every page, and
+                connect signed shopper identity. A site key alone is not identity.
+              </Text>
+            </MetadataListItem>
+          </MetadataList>
+          <Card>
+            <List listStyle="decimal" density="spacious">
+              <ListItem label="Enable Shopper memory in Feature controls" />
+              <ListItem
+                label="Connect server-signed shopper identity"
+                description="For Monsoon Market, enable DEMO_STORE_CHAPMAN and keep the CHAPMAN_SESSION marker immediately before the embed tag. A real store must mint the token from its own authenticated session."
+              />
+              <ListItem
+                label="Sign in on the storefront Account page"
+                description="Then tell the assistant a durable first-person preference, for example: I prefer low-caffeine tea."
+              />
+              <ListItem
+                label="Reload this page"
+                description="The shopper and the exact stored statement should appear below. Anonymous messages are deliberately not remembered."
+              />
+            </List>
+          </Card>
+        </VStack>
+
+        <Divider />
+
         <IntegrationSetup guide={d.modelSetup} />
 
         <Divider />

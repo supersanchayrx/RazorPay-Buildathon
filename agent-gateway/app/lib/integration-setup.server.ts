@@ -16,7 +16,7 @@ import type { Site } from "./sites.server";
 const ROOT_ENV_STEP =
   "Open the .env beside docker-compose.yml in the repository root and add the variables shown above.";
 const RESTART_STEP =
-  "Apply the new environment with docker compose up -d gateway, then reload this page.";
+  "Apply the new environment and any durable config change with docker compose up -d --force-recreate gateway, then reload this page.";
 
 const variable = (
   name: string,
@@ -53,7 +53,7 @@ export function openRouterSetup(
     ),
     variable(
       modelVariable,
-      "Optional model override. Leave it empty to use Chapman's tested fallback chain.",
+      "Optional model override. For a predictable demo, use one funded model your OpenRouter account can access; free model quotas and slugs change independently.",
       "optional",
       "<optional-openrouter-model-id>",
     ),
@@ -84,6 +84,7 @@ export function openRouterSetup(
     steps: [
       "Create an OpenRouter API key and keep it server-side.",
       ROOT_ENV_STEP,
+      "For a predictable live demo, fund the OpenRouter account and set the model override above. Leaving it empty tries free models, which can exhaust their daily quota; removing the API key uses Chapman's deterministic fallback instead.",
       RESTART_STEP,
     ],
     verify:
@@ -173,7 +174,7 @@ export function razorpaySetup(site: Site): IntegrationSetupGuide {
       ...(linked
         ? []
         : [
-            "Link this storefront's razorpay configuration to the Key ID, Key Secret and webhook variable names shown above.",
+            `From the repository root, run docker compose run --rm gateway npm run site:enable-razorpay -- --site ${site.key}. It stores only the variable names and is safe to run again.`,
           ]),
       "For webhooks, start a public tunnel and set PUBLIC_ORIGIN to its HTTPS URL.",
       `Register <PUBLIC_ORIGIN>/webhooks/razorpay/${site.key} in Razorpay with the same webhook secret.`,

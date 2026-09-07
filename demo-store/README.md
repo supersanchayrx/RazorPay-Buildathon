@@ -29,14 +29,28 @@ the Go reference routes for the discovery part of the demo. That flag is a demo
 fixture; a real merchant installs the redirect or proxy generated on Agent
 front.
 
-It is deliberately dumb: Go, static files, no templating, no database, no build
-step. A storefront exists here to be integrated *with*, not to be impressive —
-if the integration needed anything clever, that would be the finding.
+It is deliberately small: Go, static files, no templating and no database. It
+already has a merchant-owned Razorpay test checkout, because this release
+assumes payments exist before Chapman is installed. A storefront exists here to
+be integrated *with*, not to be impressive.
 
 ```bash
 go run . -agent http://localhost:3000
 # -> http://127.0.0.1:4000
 ```
+
+For Docker test checkout, the entire payment setup is two values in the root
+`.env` before the services start:
+
+```dotenv
+RAZORPAY_KEY_ID=rzp_test_...
+RAZORPAY_KEY_SECRET=...
+```
+
+The store creates orders from `/api/checkout` and confirms successful payments
+against Razorpay. `RAZORPAY_WEBHOOK_SECRET` is optional for local interaction;
+using it requires registering the store's public
+`/api/razorpay/webhook` URL in Razorpay.
 
 | Flag | Default | What |
 |---|---|---|
@@ -98,7 +112,10 @@ merchant can do:
   is not an open endpoint that hands every customer to whoever guesses the URL.
 
 The sign-in form itself is a fixture — a real merchant already has a login. It
-exists so the signed-in and signed-out paths can both be demonstrated.
+accepts any valid email and creates a passwordless local demo account so a
+fresh, deliberately unseeded store is still testable. Accounts with existing
+test orders appear as shortcuts. It exists so the signed-in and signed-out
+paths can both be demonstrated.
 
 ### 5. Legibility — one wrapper
 
@@ -126,8 +143,9 @@ in [docs/catalog-format.md](../docs/catalog-format.md).
 **[assets/cart.js](assets/cart.js)** — the cart cannot hold a price. Every line
 is `{handle, sku, qty}` and nothing more, so there is no field for a tampered
 client to put a number in and no number for the server to be tempted to trust.
-Every total shown comes back from the gateway, which reads it from the
-catalogue. That is not caution about our own code; it is the oldest bug in
+Every total shown comes back from the merchant's `/api/checkout`, which reads
+the catalogue and creates the Razorpay test order. Chapman is not in that path.
+That is not caution about our own code; it is the oldest bug in
 e-commerce, and the insecure version is easier to write and looks identical when
 you test it honestly.
 

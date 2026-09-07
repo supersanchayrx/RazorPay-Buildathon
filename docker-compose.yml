@@ -151,6 +151,17 @@ services:
     environment:
       STORE_ADDR: "0.0.0.0:4000"
       STORE_DIR: /store
+      STORE_DATA_DIR: /store-data
+
+      # Monsoon Market is already a Razorpay merchant before Chapman arrives.
+      # Test keys are the only required setup: cart pricing, order creation and
+      # browser confirmation are implemented by the store itself.
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+      RAZORPAY_TEST_API_KEY_ID1: ${RAZORPAY_TEST_API_KEY_ID1:-}
+      RAZORPAY_TEST_API_KEY_SECRET1: ${RAZORPAY_TEST_API_KEY_SECRET1:-}
+      RAZORPAY_WEBHOOK_SECRET1: ${RAZORPAY_WEBHOOK_SECRET1:-}
 
       # Again: browser-facing, then server-facing. AGENT_BASE_URL is substituted
       # into the pages; AGENT_UPSTREAM_URL is what this process dials for the
@@ -183,6 +194,9 @@ services:
       # site secret and optional order history, and must never be able to write
       # into the gateway's data.
       - chapman-data:/data:ro
+      # Merchant-owned test orders and pending checkouts are separate from
+      # Chapman's ledger and survive an ordinary container recreation.
+      - monsoon-data:/store-data
     depends_on:
       gateway:
         condition: service_healthy
@@ -231,3 +245,6 @@ volumes:
   # ledger and every placed order — and the generated signing secret, which
   # signs every shopper out.
   chapman-data:
+  # The merchant's own pending and confirmed test orders. Kept separate so a
+  # Chapman reset never rewrites the storefront's payment history.
+  monsoon-data:

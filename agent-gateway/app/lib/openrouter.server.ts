@@ -176,6 +176,8 @@ function headers(): HeadersInit {
 }
 
 export type CompleteOptions = {
+  /** Public site key for a useful, correctly scoped ledger entry. */
+  shop?: string;
   /** One model id, or a chain tried in order until one answers. */
   model: string | string[];
   messages: Msg[];
@@ -235,7 +237,7 @@ export async function complete(opts: CompleteOptions): Promise<string | null> {
       throw new Error("empty completion");
     } catch (e) {
       record({
-        shop: "-",
+        shop: opts.shop ?? "-",
         kind: "tool_error",
         message: `openrouter ${model} failed`,
         detail: { error: e instanceof Error ? e.message : String(e) },
@@ -273,7 +275,7 @@ export async function* completeStream(opts: CompleteOptions): AsyncGenerator<str
       }
     } catch (e) {
       record({
-        shop: "-",
+        shop: opts.shop ?? "-",
         kind: "tool_error",
         message: `openrouter stream ${model} failed`,
         detail: { error: e instanceof Error ? e.message : String(e) },
@@ -368,7 +370,7 @@ export async function* completeStream(opts: CompleteOptions): AsyncGenerator<str
       throw new Error("stream closed with no content");
     } catch (e) {
       record({
-        shop: "-",
+        shop: opts.shop ?? "-",
         kind: "tool_error",
         message: `openrouter stream ${model} ended badly`,
         detail: { error: e instanceof Error ? e.message : String(e) },
@@ -628,6 +630,7 @@ export function openRouterReasoner(model: string | string[] = MODELS.assistant()
 
     async run(ctx): Promise<ReasonerResult> {
       const text = await complete({
+        shop: ctx.shop,
         model,
         messages: buildMessages(ctx),
         maxTokens: 320,
@@ -652,6 +655,7 @@ export function openRouterReasoner(model: string | string[] = MODELS.assistant()
       const chunks = (async function* () {
         try {
           for await (const piece of completeStream({
+            shop: ctx.shop,
             model,
             messages: buildMessages(ctx),
             maxTokens: 320,
@@ -697,7 +701,7 @@ export function withFallback(primary: Reasoner, fallback: Reasoner): Reasoner {
       const out = await primary.run(ctx).catch(() => null);
       if (out && out.reply.trim()) return out;
       record({
-        shop: "-",
+        shop: ctx.shop ?? "-",
         kind: "tool_error",
         message: `${primary.name} produced nothing; falling back to ${fallback.name}`,
         detail: { route: ctx.route.kind },
@@ -733,7 +737,7 @@ export function withFallback(primary: Reasoner, fallback: Reasoner): Reasoner {
         // instead — the shopper has been watching an empty bubble and is owed
         // an answer, not an explanation.
         record({
-          shop: "-",
+          shop: ctx.shop ?? "-",
           kind: "tool_error",
           message: `${primary.name} streamed nothing; falling back to ${fallback.name}`,
           detail: { route: ctx.route.kind },

@@ -288,6 +288,12 @@ rejects("a missing sites list is rejected", '{"shops": []}');
       r.warnings.some((w) => w.includes(n)),
     ),
   );
+  check(
+    "an absent webhook secret does not falsely say checkout will decline",
+    r.warnings.some(
+      (w) => w.includes("RP_HOOK") && w.includes("Browser-confirmed checkout still works"),
+    ),
+  );
 }
 
 /* ---- every error names the field and offers a fix -------------------- */

@@ -32,6 +32,8 @@ FROM alpine:3.21
 RUN adduser -D -u 10001 store
 WORKDIR /store
 
+RUN mkdir -p /store-data && chown store:store /store-data
+
 COPY --from=build /out/store /usr/local/bin/store
 
 # The fallback copy. Overlaid by the bind mount in the demo profile.
@@ -43,6 +45,7 @@ COPY assets ./assets
 # STORE_DIR is the same thing through compose.
 ENV STORE_DIR=/store
 ENV STORE_ADDR=0.0.0.0:4000
+ENV STORE_DATA_DIR=/store-data
 
 USER store
 EXPOSE 4000

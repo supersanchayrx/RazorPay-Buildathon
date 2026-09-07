@@ -1,6 +1,12 @@
 import { useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData, useNavigation, useSubmit } from "react-router";
+import {
+  Form,
+  useActionData,
+  useLoaderData,
+  useNavigation,
+  useSubmit,
+} from "react-router";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { Card } from "@astryxdesign/core/Card";
@@ -13,7 +19,14 @@ import { TextInput } from "@astryxdesign/core/TextInput";
 import { Token } from "@astryxdesign/core/Token";
 import { VStack } from "@astryxdesign/core/VStack";
 
-import { Block, Eyebrow, Note, Page, PageHead, Setup } from "../components/console";
+import {
+  Block,
+  Eyebrow,
+  Note,
+  Page,
+  PageHead,
+  Setup,
+} from "../components/console";
 import { IntegrationSetup } from "../components/integration-setup";
 import { requireMerchant } from "../lib/auth.server";
 import { sitesForMerchant } from "../lib/sites.server";
@@ -66,10 +79,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const merchant = requireMerchant(request);
   const form = await request.formData();
-  const site = sitesForMerchant(merchant.sites).find((s) => s.key === String(form.get("shop") ?? ""));
+  const site = sitesForMerchant(merchant.sites).find(
+    (s) => s.key === String(form.get("shop") ?? ""),
+  );
   if (!site) return { error: "not your store" };
 
-  const question = String(form.get("question") ?? "").trim().slice(0, 500);
+  const question = String(form.get("question") ?? "")
+    .trim()
+    .slice(0, 500);
   if (!question) return { error: "ask something" };
   if (!isConfigured()) {
     return {
@@ -117,7 +134,9 @@ export default function Analyst() {
   const nav = useNavigation();
   const submit = useSubmit();
   const busy = nav.state !== "idle";
-  const [question, setQuestion] = useState(a && "question" in a ? a.question : "");
+  const [question, setQuestion] = useState(
+    a && "question" in a ? a.question : "",
+  );
 
   if (!d.site) {
     return (
@@ -202,76 +221,94 @@ export default function Analyst() {
         </Card>
       </PageHead>
 
+      {a?.error ? (
+        <Banner
+          status="warning"
+          title="The analyst did not run"
+          description={a.error}
+        />
+      ) : null}
+
+      {a && "reply" in a ? (
+        <Block title="Answer">
+          <Card>
+            <VStack gap={3}>
+              {a.reply ? (
+                <Text style={{ whiteSpace: "pre-wrap" }}>{a.reply}</Text>
+              ) : (
+                <Text color="disabled">
+                  The model did not produce an answer. The transcript below
+                  shows how far it got.
+                </Text>
+              )}
+              {a.stoppedBy ? (
+                <Text type="supporting" color="secondary">
+                  Stopped by the {a.stoppedBy} budget — answered from what it
+                  had rather than continuing.
+                </Text>
+              ) : null}
+            </VStack>
+          </Card>
+        </Block>
+      ) : null}
+
       <Setup title="Connect the analyst model">
         <IntegrationSetup guide={d.modelSetup} />
       </Setup>
 
-      {a?.error ? <Banner status="warning" title="The analyst did not run" description={a.error} /> : null}
-
       {a && "reply" in a ? (
-        <>
-          <Block title="Answer">
-            <Card>
-              <VStack gap={3}>
-                {a.reply ? (
-                  <Text style={{ whiteSpace: "pre-wrap" }}>{a.reply}</Text>
-                ) : (
-                  <Text color="disabled">
-                    The model did not produce an answer. The transcript below shows how far it got.
-                  </Text>
-                )}
-                {a.stoppedBy ? (
-                  <Text type="supporting" color="secondary">
-                    Stopped by the {a.stoppedBy} budget — answered from what it had rather than
-                    continuing.
-                  </Text>
-                ) : null}
-              </VStack>
-            </Card>
-          </Block>
-
-          <Block
-            title="How it got there"
-            hint="Every tool call, and what it returned."
-          >
-            {a.steps.length === 0 ? (
-              <Banner
-                status="warning"
-                container="card"
-                title="It answered without calling anything"
-                description="For a question about your data that is usually a sign the answer is not grounded. Treat it with suspicion."
-              />
-            ) : (
-              <VStack gap={3}>
-                {a.steps.map((s, i) => (
-                  <Card key={i}>
-                    <VStack gap={3}>
-                      <HStack gap={4} hAlign="between" vAlign="center" wrap="wrap">
-                        <HStack gap={3} vAlign="center">
-                          <Text type="code" size="xsm" weight="semibold">
-                            {s.tool}({Object.keys(s.args).length ? JSON.stringify(s.args) : ""})
-                          </Text>
-                          {s.error ? <Token size="sm" color="red" label={s.error} /> : null}
-                        </HStack>
-                        <Text type="code" size="2xs" color="secondary">
-                          {s.ms}ms
+        <Block
+          title="How it got there"
+          hint="Every tool call, and what it returned."
+        >
+          {a.steps.length === 0 ? (
+            <Banner
+              status="warning"
+              container="card"
+              title="It answered without calling anything"
+              description="For a question about your data that is usually a sign the answer is not grounded. Treat it with suspicion."
+            />
+          ) : (
+            <VStack gap={3}>
+              {a.steps.map((s, i) => (
+                <Card key={i}>
+                  <VStack gap={3}>
+                    <HStack
+                      gap={4}
+                      hAlign="between"
+                      vAlign="center"
+                      wrap="wrap"
+                    >
+                      <HStack gap={3} vAlign="center">
+                        <Text type="code" size="xsm" weight="semibold">
+                          {s.tool}(
+                          {Object.keys(s.args).length
+                            ? JSON.stringify(s.args)
+                            : ""}
+                          )
                         </Text>
+                        {s.error ? (
+                          <Token size="sm" color="red" label={s.error} />
+                        ) : null}
                       </HStack>
-                      <CodeBlock
-                        code={s.result}
-                        language="json"
-                        maxHeight={260}
-                        isWrapped
-                        hasCopyButton
-                        size="sm"
-                      />
-                    </VStack>
-                  </Card>
-                ))}
-              </VStack>
-            )}
-          </Block>
-        </>
+                      <Text type="code" size="2xs" color="secondary">
+                        {s.ms}ms
+                      </Text>
+                    </HStack>
+                    <CodeBlock
+                      code={s.result}
+                      language="json"
+                      maxHeight={260}
+                      isWrapped
+                      hasCopyButton
+                      size="sm"
+                    />
+                  </VStack>
+                </Card>
+              ))}
+            </VStack>
+          )}
+        </Block>
       ) : null}
 
       <Block
@@ -306,7 +343,9 @@ export default function Analyst() {
                 key: "description",
                 header: "What it does",
                 width: proportional(1),
-                renderCell: (r) => <Text color="secondary">{String(r.description)}</Text>,
+                renderCell: (r) => (
+                  <Text color="secondary">{String(r.description)}</Text>
+                ),
               },
             ]}
           />
@@ -314,8 +353,8 @@ export default function Analyst() {
       </Block>
 
       <Note>
-        The analyst sees your costs, margins and rejected proposals. No storefront surface can reach
-        any of it.
+        The analyst sees your costs, margins and rejected proposals. No
+        storefront surface can reach any of it.
       </Note>
     </Page>
   );

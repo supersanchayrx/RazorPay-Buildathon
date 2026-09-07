@@ -46,10 +46,12 @@ If using the bundled demo:
    browser origin http://localhost:4000
    catalogue http://store:4000/catalog.json
    product URL /product.html?handle={handle}
-   order feed blank
+   order feed http://store:4000/api/orders for the full signed-in demo, or
+   blank for catalogue-only setup
    Select Configure Razorpay only if I am supplying Razorpay test keys.
 7. After registration, use the Assistant page's generated embed instructions
-   to update the clean storefront. Use the Agent front page's generated
+   in index.html, product.html and account.html, not only the home page. Keep
+   the CHAPMAN_SESSION marker for the full signed-in demo. Use the Agent front page's generated
    discovery instructions; for the demo this may require setting
    DEMO_STORE_CHAPMAN=true and recreating the store service as documented.
 
@@ -66,8 +68,15 @@ manager. Explain and request only the group needed for the feature I choose:
   and PUBLIC_ORIGIN are recommended for reliable settlement.
 - Recovery calls: SARVAM_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
   TWILIO_FROM, and PUBLIC_ORIGIN are all required together.
-Leave unknown values blank. After an env change, recreate only the affected
-service with docker compose up -d gateway.
+Leave unknown values blank. After a Razorpay env change in the bundled demo,
+recreate both consumers with
+`docker compose --profile demo up -d --force-recreate gateway store`.
+
+For bundled Monsoon Market, do not install checkout code. Confirm the two
+Razorpay test values are in `.env`; Docker passes them to the merchant-owned
+checkout automatically. Use the safe `site:enable-razorpay` linker only when
+Chapman's agent checkout was omitted during registration. Do not install the
+Assistant or discovery as a payment side effect.
 
 Verify with evidence, not assumptions:
 - docker compose ps

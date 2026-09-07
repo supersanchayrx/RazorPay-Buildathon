@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
   Form,
@@ -21,6 +21,10 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { Block, Note, Page, PageHead } from "../components/console";
 import { requireMerchant } from "../lib/auth.server";
 import { inspectStorefrontInstall } from "../lib/installstatus.server";
+import {
+  agentPaymentControlState,
+  linkAgentRazorpay,
+} from "../lib/sitepayments.server";
 import { sitesForMerchant } from "../lib/sites.server";
 import {
   ALWAYS_ON,
@@ -66,6 +70,23 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const f = readFlagsFile(site.key);
   const installation = await inspectStorefrontInstall(site);
+  const payment = agentPaymentControlState(site);
+  const paymentSetup = payment.ready
+    ? {
+        label: "Razorpay linked",
+        detail:
+          "Chapman can advertise its Razorpay handler while this switch is on. The storefront's own checkout is separate.",
+      }
+    : payment.credentialsReady
+      ? {
+          label: "Ready to link",
+          detail:
+            "Turn this on and save to link Chapman to the existing server-side Razorpay keys. No credential enters the browser.",
+        }
+      : {
+          label: payment.linked ? "Keys missing" : "Setup needed",
+          detail: `Add ${payment.keyIdEnv} and ${payment.keySecretEnv} to Docker, recreate the gateway, then turn this on.`,
+        };
 
   return {
     site: { key: site.key, name: site.name },
@@ -86,9 +107,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       gates: s.gates,
       inflight: s.inflight ?? [],
       tools: [...s.ucpTools, ...s.shopperTools],
+      setup: s.key === "payments" ? paymentSetup : null,
     })),
     alwaysOn: ALWAYS_ON,
-    flags: f.flags,
+    // A policy default cannot make an unavailable payment integration "On".
+    // The switch becomes effective only when the site is linked and both
+    // server-side credentials resolve.
+    flags: {
+      ...f.flags,
+      payments: f.flags.payments && payment.ready,
+    },
     installation,
     meta: {
       updatedAt: f.updatedAt,
@@ -106,6 +134,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // the way out and trusts the form on the way back in is not scoped.
   if (!merchant.sites.includes(shop))
     return { ok: false as const, error: "not your store" };
+  const site = sitesForMerchant(merchant.sites).find((s) => s.key === shop);
+  if (!site)
+    return { ok: false as const, error: "storefront is not registered" };
 
   const patch: Partial<Record<FeatureKey, boolean>> = {};
   for (const s of SWITCHES) {
@@ -118,14 +149,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     else if (v === "off") patch[s.key] = false;
   }
 
+  const before = readFlagsFile(shop);
+  let linkedPayments = false;
+  if (patch.payments === true) {
+    const payment = agentPaymentControlState(site);
+    if (!payment.credentialsReady) {
+      return {
+        ok: false as const,
+        error: `Razorpay agent checkout needs ${payment.keyIdEnv} and ${payment.keySecretEnv}. Add both values to Docker and recreate the gateway before enabling it.`,
+      };
+    }
+    if (!payment.linked) {
+      try {
+        linkedPayments = linkAgentRazorpay(shop).changed;
+      } catch (error) {
+        return {
+          ok: false as const,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+  }
+
   const saved = writeFlags(shop, patch, merchant.email);
+  const paymentChanged =
+    before.flags.payments !== saved.flags.payments || linkedPayments;
   const off = SWITCHES.filter((s) => !saved.flags[s.key]).length;
   return {
     ok: true as const,
-    message:
-      off === 0
-        ? "Everything is on."
-        : `Saved. ${off} feature${off === 1 ? "" : "s"} switched off.`,
+    message: linkedPayments
+      ? "Razorpay agent checkout is linked and enabled. The storefront's native checkout was not changed."
+      : paymentChanged
+        ? saved.flags.payments
+          ? "Razorpay agent checkout enabled."
+          : "Razorpay agent checkout switched off. Existing payments can still finish, and the storefront's native checkout is unchanged."
+        : off === 0
+          ? "Everything is on."
+          : `Saved. ${off} feature${off === 1 ? "" : "s"} switched off.`,
   };
 };
 
@@ -138,6 +198,9 @@ export default function FeaturesPage() {
   const [on, setOn] = useState<Record<string, boolean>>(() => ({
     ...(d.flags ?? {}),
   }));
+  useEffect(() => {
+    setOn({ ...(d.flags ?? {}) });
+  }, [d.flags]);
 
   if (!d.site) {
     return (
@@ -222,6 +285,12 @@ export default function FeaturesPage() {
                       name={`f_${s.key}`}
                       value={on[s.key] ? "on" : "off"}
                     />
+                    {s.setup ? (
+                      <HStack gap={2} wrap="wrap" vAlign="center">
+                        <Token label={s.setup.label} />
+                        <Text color="secondary">{s.setup.detail}</Text>
+                      </HStack>
+                    ) : null}
                     {s.tools.length ? (
                       <HStack gap={2} wrap="wrap">
                         <Text type="label" color="secondary">

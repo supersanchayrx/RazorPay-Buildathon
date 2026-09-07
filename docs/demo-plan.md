@@ -4,6 +4,11 @@ This runbook demonstrates the current product, not a preconfigured fixture.
 The opening state is a real storefront with a catalogue and no Chapman embed,
 discovery route, order feed, or registered Chapman site.
 
+The storefront already loads Razorpay Checkout. For this demo and initial
+release, the merchant is also responsible for registering Chapman's settlement
+webhook in Razorpay. Chapman links and uses that existing payment integration;
+it does not provision it.
+
 ## 1. Start fresh services
 
 Create the clean storefront from the maintained reference store:
@@ -28,8 +33,9 @@ The gateway log prints the merchant password only when it creates the account.
 If this volume already existed, use the account created on its first boot.
 
 `docker compose down` is safe and keeps that account. Only
-`docker compose down -v` creates an entirely fresh install, and it also deletes
-the ledger, orders, configuration, and generated signing secrets.
+`docker compose --profile "*" down --volumes --remove-orphans` creates an
+entirely fresh install, and it also deletes the ledger, orders, configuration,
+and generated signing secrets.
 
 ## 2. Prove the storefront is unconfigured
 
@@ -55,7 +61,7 @@ Sign in at <http://localhost:3000/login> and choose
 | Browser-facing origin | `http://localhost:4000` |
 | Catalogue feed | `http://store:4000/catalog.json` |
 | Product URL template | `/product.html?handle={handle}` |
-| Signed order feed | blank |
+| Signed order feed | `http://store:4000/api/orders` for the full signed-in demo; blank for catalogue-only setup |
 
 Select **Configure Razorpay for this storefront** only when Razorpay test keys
 will be supplied. Saving creates the site record and signing secret; it still
@@ -67,9 +73,10 @@ verified embed and discovery installations.
 ## 4. Install the assistant
 
 Open **Assistant** in the console and follow its generated embed instructions.
-For this bind-mounted demo, paste the generated script into
-`demo-store-clean/index.html` before `</body>` and save. The server rereads the
-file, so refresh the storefront without rebuilding it.
+For this bind-mounted demo, paste the generated script before `</body>` in
+`demo-store-clean/index.html`, `product.html`, and `account.html`. Put
+`<!--CHAPMAN_SESSION-->` immediately before it when testing signed-in memory,
+orders, or recovery. The server rereads the files, so refresh without rebuilding.
 
 The bubble should now appear. On the Assistant page, enter a shopper question
 and choose **Test chat assistant**. This runs the actual assistant pipeline
@@ -90,7 +97,7 @@ DEMO_STORE_CHAPMAN=true
 Apply it with:
 
 ```bash
-docker compose --profile demo up -d store
+docker compose --profile demo up -d --force-recreate store
 ```
 
 Use **Verify install** on Agent front, and repeat the earlier `curl`. The route
@@ -106,7 +113,7 @@ For the common demo paths:
 # Model-written assistant replies
 OPENROUTER_API_KEY=
 
-# Razorpay test checkout; also select the Razorpay setup checkbox for this site
+# Monsoon storefront test checkout; no Chapman checkbox or command is needed
 RAZORPAY_KEY_ID=
 RAZORPAY_KEY_SECRET=
 
@@ -123,6 +130,16 @@ After editing `.env`:
 ```bash
 docker compose up -d gateway
 ```
+
+If the Razorpay checkbox was skipped during registration:
+
+the bundled storefront still takes Razorpay test payments. The checkbox only
+controls Chapman's later agent-checkout handler. Monsoon Market needs no setup
+command: the two test keys in `.env` are passed directly to its own backend.
+
+For a predictable model-backed demo, set an exact funded model in
+`OPENROUTER_MODEL_ASSISTANT`. If free models report `429`, either use a funded
+model or remove `OPENROUTER_API_KEY` and use the deterministic fallback.
 
 The dedicated Assistant, Agent front, Analyst, Shopper memory, and Recovery
 pages show the exact keys they consume and whether each is configured. Provider

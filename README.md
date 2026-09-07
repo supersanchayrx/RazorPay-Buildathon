@@ -1,7 +1,23 @@
-# Chapman
+<div align="center">
 
-Chapman is a self-hosted gateway for AI-assisted shopping. It adds two
-interfaces to a merchant's store:
+# CHAPMAN
+
+**A self-hosted merchant-side gateway for AI-assisted shopping.**
+
+One core for the storefront assistant, shopping agents, merchant decisions,
+and payments.
+
+[Quickstart](#run-the-docker-demo) · [Fresh setup](docs/fresh-store-setup.md) ·
+[Architecture](#architecture) · [Features](#main-features) ·
+[Install](INSTALL.md) · [What broke @2am](#what-broke-2am)
+
+</div>
+
+---
+
+## What this is
+
+Chapman adds two interfaces to a merchant's store:
 
 - a chat assistant for shoppers;
 - an agent-readable API for catalogue search, carts, checkout, orders, and
@@ -14,21 +30,27 @@ and payments.
 This is a student buildathon project. The custom storefront demo can be run
 locally and tested end to end. The current limitations are listed below.
 
-[Read the engineering retrospective: What broke @2am](#what-broke-2am)
+Chapman is designed to fit into different custom storefront stacks with a
+small embed and optional server routes. For this demo and initial release,
+Razorpay is an explicit prerequisite: the merchant is assumed to already have
+Razorpay Checkout integrated on the website and to have registered the payment
+webhook. Chapman links the server-side key names and uses that existing payment
+setup; it does not create the Razorpay account, complete KYC, enable payment
+methods, or register the webhook for the merchant.
 
 ## Main features
 
 | Feature | Purpose |
 |---|---|
-| Storefront assistant | Answers from the merchant's live catalogue and policies |
-| Agent front | Publishes UCP over MCP for shopping agents |
-| Feature controls | Lets the merchant withdraw specific capabilities |
-| Razorpay checkout | Creates orders and verifies payment settlement |
-| Offers | Requires merchant approval before a promotion can be claimed or applied |
-| Recovery | Reviews incomplete carts and supports configured voice calls |
-| Shopper memory | Stores limited preferences for signed-in shoppers |
-| Shop cortex and Analyst | Provides merchant-side context and read-only analysis |
-| Decision ledger and Test bench | Records decisions and tests live guardrails |
+| [Storefront assistant](docs/architecture.md#storefront-assistant) | Answers from the merchant's live catalogue and policies |
+| [Agent front](docs/architecture.md#agent-front) | Publishes UCP over MCP for shopping agents |
+| [Feature controls](docs/architecture.md#feature-controls) | Lets the merchant withdraw specific capabilities |
+| [Razorpay checkout](docs/architecture.md#razorpay-checkout-and-settlement) | Creates orders and verifies payment settlement |
+| [Offers](docs/architecture.md#offers-and-approvals) | Requires merchant approval before a promotion can be claimed or applied |
+| [Recovery](docs/architecture.md#recovery-and-voice) | Reviews incomplete carts and supports configured voice calls |
+| [Shopper memory](docs/architecture.md#shopper-memory) | Stores limited preferences for signed-in shoppers |
+| [Shop cortex](docs/architecture.md#shop-cortex) and [Analyst](docs/architecture.md#analyst) | Provides merchant-side context and read-only analysis |
+| [Decision ledger and Test bench](docs/architecture.md#decision-ledger-and-test-bench) | Records decisions and tests live guardrails |
 
 The bundled storefront is **Monsoon Market**. It is a small Go application used
 only to demonstrate the integration.
@@ -41,14 +63,15 @@ flowchart LR
     Agent[Shopping agent] --> Discovery[Store discovery route]
     Merchant[Merchant] --> Dashboard[Chapman dashboard]
 
-    Store --> Gateway[Chapman gateway]
+    Store --> Razorpay[Razorpay]
+    Store -. after install .-> Gateway[Chapman gateway]
     Discovery --> Gateway
     Dashboard --> Gateway
 
     Gateway --> Catalog[Merchant catalogue]
     Gateway --> Checks[Policy and claim checks]
     Gateway --> Ledger[Decision ledger]
-    Gateway --> Razorpay[Razorpay]
+    Gateway --> Razorpay
     Gateway --> Voice[Sarvam and Twilio]
     Gateway -. optional .-> OpenRouter[OpenRouter]
 ```
@@ -109,14 +132,21 @@ Sign in and select **Configure your storefront**.
 | Product URL template | `/product.html?handle={handle}` |
 | Order feed | leave blank |
 
-Select **Configure Razorpay for this storefront** only if Razorpay will be used.
-Saving registers the store and creates its signing secret. It does not install
-the assistant or agent discovery route.
+Select **Configure Razorpay for this storefront** only if shopping agents should
+also receive Chapman's hosted checkout. Saving registers the store and creates
+its signing secret. It does not install the assistant or agent discovery route.
+
+Monsoon Market already owns its Razorpay Checkout integration. Put
+`RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` in `.env` before starting Docker;
+its cart, server-priced quote, Razorpay test-order creation and browser payment
+confirmation then work before Chapman is registered or installed. The Assistant
+bubble and agent discovery remain absent until their own setup steps.
 
 ### Install the storefront interfaces
 
-1. Open **Assistant** and paste its generated script tag into
-   `demo-store-clean/index.html` before `</body>`.
+1. Open **Assistant** and paste its generated script tag before `</body>` in
+   `demo-store-clean/index.html`, `product.html`, and `account.html`. A real
+   site should put it in its shared layout.
 2. Refresh the storefront. No rebuild is needed.
 3. Open **Agent front** and review the generated discovery instructions.
 4. For the bundled demo, set `DEMO_STORE_CHAPMAN=true` in `.env` and run:
@@ -148,7 +178,8 @@ docker compose up -d gateway
 | Recovery | Voice needs Sarvam, Twilio SID, Twilio token, Twilio number, and `PUBLIC_ORIGIN` |
 
 Each feature page shows its exact variables and whether they are configured.
-Razorpay also requires the setup checkbox when the store is registered.
+If the setup checkbox was skipped, use the tested terminal linker documented in
+[fresh storefront setup](docs/fresh-store-setup.md#6-razorpay-checkout).
 
 See [docs/configuration.md](docs/configuration.md) for the complete key matrix,
 webhook setup, tunnel setup, and model overrides.
@@ -159,7 +190,9 @@ webhook setup, tunnel setup, and model overrides.
   against the live catalogue and shows tools, routing, products, and blocked
   checks.
 - **Recovery** has **Place test call**. It requires an E.164 number and consent.
-  This is a real Twilio call and can use provider credit.
+  This is a real Twilio call and can use provider credit. An inline console
+  shows validation, Sarvam rendering, Twilio acceptance, or the exact reason
+  the call was stopped.
 
 Run the automated checks with:
 
@@ -245,6 +278,7 @@ Current limitations:
 | [docs/agentic-install.md](docs/agentic-install.md) | Full coding-agent setup prompt |
 | [docs/architecture.md](docs/architecture.md) | System and per-feature diagrams |
 | [docs/catalog-format.md](docs/catalog-format.md) | Catalogue JSON format |
+| [docs/fresh-store-setup.md](docs/fresh-store-setup.md) | Empty-volume setup for every feature |
 | [docs/demo-plan.md](docs/demo-plan.md) | Demo runbook |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Common failures |
 

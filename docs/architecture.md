@@ -637,25 +637,25 @@ variables resolve.
 ### Razorpay checkout and settlement
 
 ```mermaid
-sequenceDiagram
-    participant Client as Widget or agent
-    participant Quote as Chapman quote
-    participant Razorpay
-    participant Settle as Settlement service
-    participant Orders as Order store
+flowchart LR
+    Browser[Ordinary shopper] --> Merchant[Merchant checkout API]
+    Merchant --> MerchantCatalog[Merchant catalogue]
+    Merchant --> Razorpay[Razorpay test checkout]
+    Razorpay --> MerchantWebhook[Merchant webhook]
 
-    Client->>Quote: Product, variant, quantity
-    Quote->>Quote: Read catalogue price and approved offers
-    Quote->>Razorpay: Create order in minor units
-    Razorpay-->>Client: Hosted payment page
-    Razorpay->>Settle: Signed webhook
-    Client->>Settle: Browser confirmation fallback
-    Settle->>Settle: Verify and apply idempotency key
-    Settle->>Orders: Create order once
+    Agent[Shopping agent] --> Chapman[Chapman checkout]
+    Chapman --> ChapmanCatalog[Registered catalogue]
+    Chapman --> Razorpay
+    Razorpay --> ChapmanWebhook[Chapman settlement webhook]
 ```
 
-The client never submits a price. Webhook and browser confirmation use the same
-idempotent settlement path.
+The initial release assumes the merchant's ordinary Razorpay integration already
+exists. Monsoon Market models that boundary: its `/api/checkout` works with only
+the two test keys and does not pass through Chapman. After the merchant registers
+the storefront and explicitly links payments, Chapman exposes a separate hosted
+checkout to shopping agents. In both paths the client submits product identity
+and quantity, never a price, and browser confirmation provides a fallback when
+the configured webhook has not arrived yet.
 
 ### Offers and approvals
 

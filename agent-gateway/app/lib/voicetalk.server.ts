@@ -532,7 +532,7 @@ async function captureReason(s: Session, callSid: string, said: string): Promise
   const c = await classify({
     text: said,
     ask: modelConfigured()
-      ? async (prompt) => (await complete({ model: MODELS.assistant(), messages: [{ role: "user", content: prompt }], maxTokens: 20, temperature: 0, timeoutMs: 6000 })) ?? ""
+      ? async (prompt) => (await complete({ shop: s.shop, model: MODELS.assistant(), messages: [{ role: "user", content: prompt }], maxTokens: 20, temperature: 0, timeoutMs: 6000 })) ?? ""
       : undefined,
   });
 
@@ -708,6 +708,7 @@ export async function takeTurn(opts: {
 
   try {
     for await (const token of completeStream({
+      shop: opts.shop,
       model: MODELS.assistant(),
       messages: s.messages,
       maxTokens: 45,

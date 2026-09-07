@@ -224,7 +224,7 @@ export async function runHarness<C>(opts: HarnessOptions<C>): Promise<HarnessRes
       break;
     }
 
-    const text = await complete({ model, messages, maxTokens: 380, temperature: 0.2 });
+    const text = await complete({ shop: opts.shop, model, messages, maxTokens: 380, temperature: 0.2 });
     if (!text) break;
 
     const emitted = extractEmission(text);
@@ -302,7 +302,7 @@ export async function runHarness<C>(opts: HarnessOptions<C>): Promise<HarnessRes
   // Out of budget, or the model went quiet. Ask once for an answer from what it
   // already has — far better than returning nothing, and it usually has plenty.
   messages.push({ role: "user", content: FINAL_ANSWER_NUDGE });
-  const final = await complete({ model, messages, maxTokens: 380, temperature: 0.2 });
+  const final = await complete({ shop: opts.shop, model, messages, maxTokens: 380, temperature: 0.2 });
 
   // Accept the structured answer. Accept bare prose here too, because this is
   // the last chance and a readable paragraph beats nothing. Only a further tool

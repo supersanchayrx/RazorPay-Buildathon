@@ -38,7 +38,9 @@ async function load(entry, name) {
 
 let failed = 0;
 const check = (label, ok, detail) => {
-  console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  — ${detail}` : ""}`);
+  console.log(
+    `${ok ? "PASS" : "FAIL"}  ${label}${detail ? `  — ${detail}` : ""}`,
+  );
   if (!ok) failed++;
 };
 
@@ -51,8 +53,18 @@ process.env.CHAPMAN_DATA_DIR = SANDBOX;
 const F = await load("app/lib/featureflags.server.ts", "flags-check.mjs");
 const U = await load("app/lib/ucptools.ts", "ucptools-check.mjs");
 const T = await load("app/lib/tools.server.ts", "shoppertools-check.mjs");
-const I = await load("app/lib/integration-setup.server.ts", "integration-setup-check.mjs");
-const VT = await load("app/lib/voice-test.server.ts", "voice-test-call-check.mjs");
+const I = await load(
+  "app/lib/integration-setup.server.ts",
+  "integration-setup-check.mjs",
+);
+const P = await load(
+  "app/lib/sitepayments.server.ts",
+  "sitepayments-check.mjs",
+);
+const VT = await load(
+  "app/lib/voice-test.server.ts",
+  "voice-test-call-check.mjs",
+);
 
 const SITE = "pk_flagcheck";
 
@@ -68,7 +80,8 @@ console.log("\n-- feature pages explain their own provider setup ----------\n");
   const assistant = I.openRouterSetup("assistant");
   check(
     "the assistant guide detects OpenRouter by variable name",
-    assistant.variables[0].name === "OPENROUTER_API_KEY" && assistant.variables[0].configured,
+    assistant.variables[0].name === "OPENROUTER_API_KEY" &&
+      assistant.variables[0].configured,
   );
   check(
     "the assistant guide never serialises the key value",
@@ -85,7 +98,8 @@ console.log("\n-- feature pages explain their own provider setup ----------\n");
   );
   check(
     "analyst without a key says the key is required",
-    analyst.status === "attention" && analyst.variables[0].requirement === "required",
+    analyst.status === "attention" &&
+      analyst.variables[0].requirement === "required",
   );
 }
 
@@ -120,7 +134,76 @@ console.log("\n-- feature pages explain their own provider setup ----------\n");
   );
   check(
     "the generated webhook instruction is site-scoped",
-    payment.steps.some((step) => step.includes("/webhooks/razorpay/pk_setupcheck")),
+    payment.steps.some((step) =>
+      step.includes("/webhooks/razorpay/pk_setupcheck"),
+    ),
+  );
+}
+
+{
+  const registry = path.join(SANDBOX, "toggle-chapman.config.json");
+  const paymentSecret = "must-not-enter-the-registry";
+  const values = {
+    SITE_SECRET_TOGGLE: "site-signing-secret",
+    RAZORPAY_KEY_ID: "rzp_test_toggle",
+    RAZORPAY_KEY_SECRET: paymentSecret,
+  };
+  fs.writeFileSync(
+    registry,
+    JSON.stringify(
+      {
+        sites: [
+          {
+            key: "pk_toggle",
+            name: "Toggle Store",
+            origins: ["https://shop.example"],
+            catalogFeedUrl: "https://shop.example/catalog.json",
+            secretEnv: "SITE_SECRET_TOGGLE",
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+  );
+
+  process.env.RAZORPAY_KEY_ID = values.RAZORPAY_KEY_ID;
+  process.env.RAZORPAY_KEY_SECRET = values.RAZORPAY_KEY_SECRET;
+  const before = P.agentPaymentControlState({
+    key: "pk_toggle",
+    name: "Toggle Store",
+    origins: ["https://shop.example"],
+    catalogFeedUrl: "https://shop.example/catalog.json",
+    greeting: "Hello",
+    accent: "#123456",
+    secret: values.SITE_SECRET_TOGGLE,
+  });
+  check(
+    "available Razorpay keys do not pretend an unlinked handler is enabled",
+    before.credentialsReady && !before.linked && !before.ready,
+  );
+
+  const linked = P.linkAgentRazorpay("pk_toggle", {
+    configFile: registry,
+    resolveSecret: (name) => values[name] ?? null,
+  });
+  const written = fs.readFileSync(registry, "utf8");
+  check(
+    "Feature controls can link the registered storefront atomically",
+    linked.changed && Boolean(linked.backup) && fs.existsSync(linked.backup),
+  );
+  check(
+    "the UI linker stores variable names and never their values",
+    written.includes('"keyIdEnv": "RAZORPAY_KEY_ID"') &&
+      written.includes('"keySecretEnv": "RAZORPAY_KEY_SECRET"') &&
+      !written.includes(paymentSecret),
+  );
+  check(
+    "linking from the toggle is idempotent",
+    !P.linkAgentRazorpay("pk_toggle", {
+      configFile: registry,
+      resolveSecret: (name) => values[name] ?? null,
+    }).changed,
   );
 }
 
@@ -148,7 +231,10 @@ console.log("\n-- feature pages explain their own provider setup ----------\n");
       "PUBLIC_ORIGIN",
     ].every((name) => required.includes(name)),
   );
-  check("an incomplete voice setup is not labelled live", voice.status === "attention");
+  check(
+    "an incomplete voice setup is not labelled live",
+    voice.status === "attention",
+  );
 
   const discovery = I.agentDiscoverySetup(false);
   check(
@@ -215,7 +301,11 @@ console.log("\n-- feature pages explain their own provider setup ----------\n");
   const placed = await VT.placeVoiceTestCall(site, "+91 98765-43210", deps);
   check(
     "a valid test pre-renders audio and then queues one voice draft",
-    placed.ok && rendered === 1 && sent?.channel === "voice",
+    placed.ok &&
+      rendered === 1 &&
+      sent?.channel === "voice" &&
+      placed.logs.some((entry) => entry.message.includes("Sarvam rendered")) &&
+      placed.logs.some((entry) => entry.message.includes("Twilio accepted")),
   );
   check(
     "the entered number chooses only the destination",
@@ -233,9 +323,7 @@ console.log("\n-- feature pages explain their own provider setup ----------\n");
           path.join(REAL, "app/routes/voice.twiml.$site.$token.tsx"),
           "utf8",
         )
-        .includes(
-        'draft.treatment === "integration_test"',
-      ),
+        .includes('draft.treatment === "integration_test"'),
   );
 
   const limited = await VT.placeVoiceTestCall(site, "+919876543210", {
@@ -255,7 +343,9 @@ console.log("\n-- feature pages explain their own provider setup ----------\n");
   });
   check(
     "the dashboard cannot hammer the call provider",
-    !limited.ok && limited.error.includes("30 seconds"),
+    !limited.ok &&
+      limited.error.includes("30 seconds") &&
+      limited.logs.at(-1)?.level === "error",
   );
 }
 
@@ -271,7 +361,10 @@ console.log("\n-- a shop that has never touched this ----------------------\n");
     F.SWITCHES.every((s) => flags[s.key] === true),
     "a switch that arrived already off would change an existing install the moment it updated",
   );
-  check("and there is no file until something is changed", !fs.existsSync(F._file(SITE)));
+  check(
+    "and there is no file until something is changed",
+    !fs.existsSync(F._file(SITE)),
+  );
 }
 
 {
@@ -289,7 +382,10 @@ console.log("\n-- a shop that has never touched this ----------------------\n");
 
 {
   const junk = path.join(SANDBOX, "features-pk_junk.json");
-  fs.writeFileSync(junk, JSON.stringify({ flags: { orders: "no", memory: null, offers: 0 } }));
+  fs.writeFileSync(
+    junk,
+    JSON.stringify({ flags: { orders: "no", memory: null, offers: 0 } }),
+  );
   const flags = F.readFlags("pk_junk");
   check(
     "only a real boolean false switches anything off",
@@ -307,10 +403,15 @@ console.log("\n-- flipping a switch ---------------------------------------\n");
   const saved = F.writeFlags(SITE, { memory: false }, "someone@example.com");
   check("the switch persists", F.readFlags(SITE).memory === false);
   check("and nothing else moved", F.readFlags(SITE).orders === true);
-  check("who did it is recorded", saved.updatedBy === "someone@example.com" && Boolean(saved.updatedAt));
+  check(
+    "who did it is recorded",
+    saved.updatedBy === "someone@example.com" && Boolean(saved.updatedAt),
+  );
   check(
     "and it is in the history",
-    saved.history.length === 1 && saved.history[0].key === "memory" && saved.history[0].to === false,
+    saved.history.length === 1 &&
+      saved.history[0].key === "memory" &&
+      saved.history[0].to === false,
     "so a merchant can answer 'when did this stop working'",
   );
 
@@ -338,19 +439,25 @@ console.log("\n-- the switches name tools that exist ----------------------\n");
   const badUcp = [];
   const badShopper = [];
   for (const s of F.SWITCHES) {
-    for (const t of s.ucpTools) if (!ucpNames.has(t)) badUcp.push(`${s.key}:${t}`);
-    for (const t of s.shopperTools) if (!shopperNames.has(t)) badShopper.push(`${s.key}:${t}`);
+    for (const t of s.ucpTools)
+      if (!ucpNames.has(t)) badUcp.push(`${s.key}:${t}`);
+    for (const t of s.shopperTools)
+      if (!shopperNames.has(t)) badShopper.push(`${s.key}:${t}`);
   }
 
   check(
     "every UCP tool a switch withdraws is a real tool",
     badUcp.length === 0,
-    badUcp.length ? badUcp.join(", ") : `${ucpNames.size} tools on the agent surface`,
+    badUcp.length
+      ? badUcp.join(", ")
+      : `${ucpNames.size} tools on the agent surface`,
   );
   check(
     "every shopper tool a switch withdraws is a real tool",
     badShopper.length === 0,
-    badShopper.length ? badShopper.join(", ") : `${shopperNames.size} tools in the assistant`,
+    badShopper.length
+      ? badShopper.join(", ")
+      : `${shopperNames.size} tools in the assistant`,
   );
   check(
     "no tool is claimed by two switches",
@@ -375,7 +482,10 @@ console.log("\n-- what an agent is actually offered -----------------------\n");
 
 {
   const all = U.TOOLS.length;
-  check("with everything on, the full surface is offered", F.filterUcpTools(SITE, U.TOOLS).length === all);
+  check(
+    "with everything on, the full surface is offered",
+    F.filterUcpTools(SITE, U.TOOLS).length === all,
+  );
 
   F.writeFlags(SITE, { payments: false }, "t");
   const noPay = F.filterUcpTools(SITE, U.TOOLS).map((t) => t.name);
@@ -396,9 +506,14 @@ console.log("\n-- what an agent is actually offered -----------------------\n");
     "orders off withdraws get_order",
     !trimmed.includes("get_order") && trimmed.includes("create_checkout"),
   );
-  check("offers off withdraws get_promotions", !trimmed.includes("get_promotions"));
+  check(
+    "offers off withdraws get_promotions",
+    !trimmed.includes("get_promotions"),
+  );
 
-  const shopper = F.filterShopperTools(SITE, T.SHOPPER_TOOLS).map((t) => t.name);
+  const shopper = F.filterShopperTools(SITE, T.SHOPPER_TOOLS).map(
+    (t) => t.name,
+  );
   check(
     "and the assistant loses its twins of both",
     !shopper.includes("get_my_orders") && !shopper.includes("get_live_offers"),
@@ -417,16 +532,26 @@ console.log("\n-- what an agent is actually offered -----------------------\n");
   );
   check(
     "...but the shopper's assistant is untouched by it",
-    F.filterShopperTools(SITE, T.SHOPPER_TOOLS).length === T.SHOPPER_TOOLS.length,
+    F.filterShopperTools(SITE, T.SHOPPER_TOOLS).length ===
+      T.SHOPPER_TOOLS.length,
     "an agent surface and a chat widget are two different front doors",
   );
   F.writeFlags(SITE, { agent_front: true }, "t");
 }
 
 {
-  check("featureForUcpTool maps a governed tool", F.featureForUcpTool("get_order") === "orders");
-  check("...and returns null for an ungoverned one", F.featureForUcpTool("search_catalog") === null);
-  check("...and null for a tool that does not exist", F.featureForUcpTool("nonsense") === null);
+  check(
+    "featureForUcpTool maps a governed tool",
+    F.featureForUcpTool("get_order") === "orders",
+  );
+  check(
+    "...and returns null for an ungoverned one",
+    F.featureForUcpTool("search_catalog") === null,
+  );
+  check(
+    "...and null for a tool that does not exist",
+    F.featureForUcpTool("nonsense") === null,
+  );
 }
 
 {
@@ -528,7 +653,9 @@ const src = (p) => fs.readFileSync(path.join(REAL, p), "utf8");
   const w = src("app/routes/embed[.]js.tsx");
   check(
     "the widget hides itself until it has confirmed the assistant is on",
-    w.includes('root.style.display = "none"') && w.includes("fetch(probeUrl") && w.includes("root.remove()"),
+    w.includes('root.style.display = "none"') &&
+      w.includes("fetch(probeUrl") &&
+      w.includes("root.remove()"),
     "the script is one cached file for every store, so this cannot be decided on the server",
   );
   check(
@@ -554,7 +681,8 @@ const src = (p) => fs.readFileSync(path.join(REAL, p), "utf8");
   );
   check(
     "and memory is gated on both read and write",
-    /featureOn\(opts\.shop, "memory"\)/.test(s) && s.split('featureOn(opts.shop, "memory")').length === 3,
+    /featureOn\(opts\.shop, "memory"\)/.test(s) &&
+      s.split('featureOn(opts.shop, "memory")').length === 3,
     "recall without learn would withhold memories while still collecting them",
   );
 }
@@ -566,7 +694,10 @@ const src = (p) => fs.readFileSync(path.join(REAL, p), "utf8");
     /featureOn\(d\.shop, "recovery"\)/.test(s),
     "enforced in the console page alone, a script or a cron walks straight past it",
   );
-  check("and the voice channel checks voice", /d\.channel === "voice" && !featureOn\(d\.shop, "voice"\)/.test(s));
+  check(
+    "and the voice channel checks voice",
+    /d\.channel === "voice" && !featureOn\(d\.shop, "voice"\)/.test(s),
+  );
 }
 
 /* ================================================================== *
@@ -577,7 +708,9 @@ console.log("\n-- what the console promises -------------------------------\n");
 {
   check(
     "every switch says what actually stops",
-    F.SWITCHES.every((s) => typeof s.offMeans === "string" && s.offMeans.length > 60),
+    F.SWITCHES.every(
+      (s) => typeof s.offMeans === "string" && s.offMeans.length > 60,
+    ),
     "a toggle with no consequence written next to it is a toggle nobody can safely flip",
   );
   check(
@@ -603,6 +736,20 @@ console.log("\n-- what the console promises -------------------------------\n");
       src("app/routes/dashboard.tsx").includes('label="Feature controls"'),
     "provider setup belongs on dedicated feature pages, not on a policy toggle list",
   );
+  const paymentSwitch = F.SWITCHES.find((entry) => entry.key === "payments");
+  check(
+    "the payment control names the handler it actually governs",
+    paymentSwitch?.name === "Razorpay agent checkout" &&
+      paymentSwitch.offMeans.includes("native checkout is unchanged"),
+    "turning Chapman off must not imply that the merchant's own checkout was disabled",
+  );
+  check(
+    "turning the payment control on can create the missing Chapman-side link",
+    page.includes("linkAgentRazorpay(shop)") &&
+      page.includes("payment.credentialsReady") &&
+      page.includes("payments: f.flags.payments && payment.ready"),
+    "an On switch must not coexist with an unavailable MCP payment handler",
+  );
 
   const setupPages = [
     "app/routes/dashboard.chatbot.tsx",
@@ -617,24 +764,51 @@ console.log("\n-- what the console promises -------------------------------\n");
   check(
     "provider instructions live on the feature pages that consume them",
     withoutGuide.length === 0,
-    withoutGuide.length ? withoutGuide.join(", ") : `${setupPages.length} dedicated pages`,
+    withoutGuide.length
+      ? withoutGuide.join(", ")
+      : `${setupPages.length} dedicated pages`,
   );
 
   const assistantPage = src("app/routes/dashboard.chatbot.tsx");
   check(
     "the Assistant page tests the same pipeline as the storefront",
-    assistantPage.includes('label={testing ? "Generating response…" : "Test chat assistant"}') &&
+    assistantPage.includes(
+      'label={testing ? "Generating response…" : "Test chat assistant"}',
+    ) &&
       assistantPage.includes("await runAssistant({") &&
       assistantPage.includes("jsonFeedCatalog(site.catalogFeedUrl)"),
     "a canned preview would prove only the preview",
   );
+  const analystPage = src("app/routes/dashboard.analyst.tsx");
+  const analystAnswerAt = analystPage.indexOf('<Block title="Answer">');
+  const analystSetupAt = analystPage.indexOf(
+    '<Setup title="Connect the analyst model">',
+  );
+  const analystTranscriptAt = analystPage.indexOf('title="How it got there"');
+  check(
+    "the Analyst puts its answer directly above setup and diagnostics",
+    analystAnswerAt > 0 &&
+      analystAnswerAt < analystSetupAt &&
+      analystSetupAt < analystTranscriptAt,
+    "the merchant's answer should be the first result below the question",
+  );
   const recoveryPage = src("app/routes/dashboard.recovery.tsx");
   check(
     "the Recovery page requires destination and consent before a test call",
-    recoveryPage.includes('label={busy ? "Queueing test call…" : "Place test call"}') &&
+    recoveryPage.includes(
+      'label={busy ? "Queueing test call…" : "Place test call"}',
+    ) &&
       recoveryPage.includes('form.get("confirmExpected") !== "on"') &&
       recoveryPage.includes("placeVoiceTestCall(site"),
     "the number is supplied for this explicit call and never read from customer records",
+  );
+  check(
+    "the Recovery test call reports progress beside its button",
+    recoveryPage.includes("useFetcher<typeof action>()") &&
+      recoveryPage.includes('role="log"') &&
+      recoveryPage.includes("Test call log") &&
+      recoveryPage.includes("VOICE_QUIET_HOURS_TEST_NUMBER"),
+    "a provider or policy refusal must not be hidden at the top of the long page",
   );
 
   const compose = src("../docker-compose.yml");
@@ -657,5 +831,7 @@ console.log("\n-- what the console promises -------------------------------\n");
 }
 
 fs.rmSync(SANDBOX, { recursive: true, force: true });
-console.log(failed === 0 ? "\nall checks passed" : `\n${failed} check(s) failed`);
+console.log(
+  failed === 0 ? "\nall checks passed" : `\n${failed} check(s) failed`,
+);
 process.exit(failed ? 1 : 0);

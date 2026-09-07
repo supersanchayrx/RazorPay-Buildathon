@@ -689,11 +689,51 @@ export default function AgentFront() {
               <Divider />
 
               <VStack gap={3}>
-                <Heading level={3}>Point your domain at us</Heading>
+                <Heading level={3}>Bundled Monsoon Market demo</Heading>
+                <Text color="secondary">
+                  The demo server already contains the proxy implementation, but it starts switched
+                  off so the initial 404 is real. Enable it only after registering this store.
+                </Text>
+                <Card>
+                  <List listStyle="decimal" density="spacious">
+                    <ListItem
+                      label="Set DEMO_STORE_CHAPMAN=true in the repository-root .env"
+                      description="This enables the demo's discovery, signed order-feed, recovery and identity routes. It does not apply to a real merchant website."
+                    />
+                    <ListItem
+                      label="Recreate only the store service"
+                      description="Run the command below from the repository root. The Chapman data volume is kept."
+                    />
+                    <ListItem
+                      label="Choose Verify install below"
+                      description="Serving is not trusted until the live /.well-known/ucp route answers."
+                    />
+                  </List>
+                </Card>
+                <CodeBlock
+                  code="docker compose --profile demo up -d --force-recreate store"
+                  language="bash"
+                  title="Repository root terminal"
+                  hasCopyButton
+                  container="card"
+                  size="sm"
+                />
+                <Note>
+                  For the full demo, register the signed order feed as <Code>http://store:4000/api/orders</Code>.
+                  Leave it blank when demonstrating catalogue-only access.
+                </Note>
+              </VStack>
+
+              <Divider />
+
+              <VStack gap={3}>
+                <Heading level={3}>Real custom website</Heading>
                 <Text color="secondary">
                   Point <Code>/.well-known/ucp</Code> on your own domain at the
-                  document we serve. That is the only place an agent looks, and
-                  deleting the line revokes us.
+                  Chapman profile URL shown in the generated rule below. Put the rule in the host
+                  configuration named by the selected tab, deploy it, then request the well-known
+                  URL on your own domain. That is the only place an agent looks, and deleting the
+                  rule revokes access.
                 </Text>
                 <Note>
                   A redirect is enough — no file to host and nothing to keep up
@@ -784,11 +824,23 @@ export default function AgentFront() {
                     container="card"
                     size="sm"
                   />
+                  <Text color="secondary">
+                    For a safe local test, open PowerShell in the{" "}
+                    <Code>agent-gateway</Code> directory and run:
+                  </Text>
+                  <CodeBlock
+                    code="npm.cmd run shop-as-agent -- --store http://localhost:4000 --query chai --no-checkout"
+                    language="powershell"
+                    hasCopyButton
+                    isWrapped
+                    container="card"
+                    size="sm"
+                  />
                   <Note>
-                    A real profile document, labelled as a test harness, so the
-                    activity above can tell you apart from real agent traffic.{" "}
-                    <Code>node scripts/shop-as-agent.mjs</Code> drives the same
-                    steps from a terminal.
+                    This discovers the MCP endpoint, lists its tools, searches,
+                    and creates a cart without holding stock or opening a
+                    payment. Remove <Code>--no-checkout</Code> only after Agent
+                    front reports a Razorpay payment handler ready.
                   </Note>
                 </VStack>
               </Collapsible>

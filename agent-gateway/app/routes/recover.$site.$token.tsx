@@ -294,6 +294,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     ask: modelConfigured()
       ? async (prompt) =>
           (await complete({
+            shop: site.key,
             model: MODELS.grader(),
             messages: [{ role: "user", content: prompt }],
             maxTokens: 16,

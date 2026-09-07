@@ -1,7 +1,13 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
+import {
+  Form,
+  useActionData,
+  useFetcher,
+  useLoaderData,
+  useNavigation,
+} from "react-router";
 import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { Card } from "@astryxdesign/core/Card";
@@ -23,21 +29,41 @@ import { TextInput } from "@astryxdesign/core/TextInput";
 import { Token } from "@astryxdesign/core/Token";
 import { VStack } from "@astryxdesign/core/VStack";
 
-import { Block, Eyebrow, Figure, Figures, Note, Page, PageHead, Setup } from "../components/console";
+import {
+  Block,
+  Eyebrow,
+  Figure,
+  Figures,
+  Note,
+  Page,
+  PageHead,
+  Setup,
+} from "../components/console";
 import { IntegrationSetup } from "../components/integration-setup";
 import { requireMerchant } from "../lib/auth.server";
 import { sitesForMerchant } from "../lib/sites.server";
-import { runRecovery, toDraft, recoverySummary, type RecoveryTarget } from "../lib/recovery.server";
+import {
+  runRecovery,
+  toDraft,
+  recoverySummary,
+  type RecoveryTarget,
+} from "../lib/recovery.server";
 import { CHANNELS, readDrafts, readSends, send } from "../lib/outreach.server";
 import { callTranscript, calls } from "../lib/voicetalk.server";
 import { readSettings, writeSettings } from "../lib/settings.server";
-import { addTurn, answerRate, conversations, reasonHistogram } from "../lib/conversations.server";
+import {
+  addTurn,
+  answerRate,
+  conversations,
+  reasonHistogram,
+} from "../lib/conversations.server";
 import { REASON_LABEL, REASONS } from "../lib/reasons";
 import { allGrants, monthlySpend } from "../lib/grants.server";
 import { liveCarts } from "../lib/carts.server";
 import { updateFindings } from "../lib/findings.server";
 import { voiceSetup } from "../lib/integration-setup.server";
 import { placeVoiceTestCall } from "../lib/voice-test.server";
+import type { TestCallResult } from "../lib/voice-test.server";
 
 /**
  * The recovery campaign, as a merchant sees it before anything goes out.
@@ -122,8 +148,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return {
     live: {
       total: live.length,
-      recoverable: live.filter((c) => c.customer?.phone || c.customer?.email).length,
-      newestAt: live.map((c) => c.ts).sort().pop() ?? null,
+      recoverable: live.filter((c) => c.customer?.phone || c.customer?.email)
+        .length,
+      newestAt:
+        live
+          .map((c) => c.ts)
+          .sort()
+          .pop() ?? null,
       captureConfigured: Boolean(site.orders?.feedUrl),
     },
     conversations: convs
@@ -139,10 +170,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         // The shopper's own words, merchant-only. Kept so a merchant reading
         // "unknown x7" can see whether the classifier is failing or the answers
         // are genuinely vague.
-        text: (c.turns.find((t) => t.kind === "answered") as { text?: string | null } | undefined)?.text ?? null,
-        by: (c.turns.find((t) => t.kind === "answered") as { by?: string } | undefined)?.by ?? null,
-        remedy: (c.turns.filter((t) => t.kind === "remedied").pop() as { remedy?: string } | undefined)?.remedy ?? null,
-        blocked: (c.turns.filter((t) => t.kind === "remedied").pop() as { blocked?: string[] } | undefined)?.blocked ?? [],
+        text:
+          (
+            c.turns.find((t) => t.kind === "answered") as
+              { text?: string | null } | undefined
+          )?.text ?? null,
+        by:
+          (
+            c.turns.find((t) => t.kind === "answered") as
+              { by?: string } | undefined
+          )?.by ?? null,
+        remedy:
+          (
+            c.turns.filter((t) => t.kind === "remedied").pop() as
+              { remedy?: string } | undefined
+          )?.remedy ?? null,
+        blocked:
+          (
+            c.turns.filter((t) => t.kind === "remedied").pop() as
+              { blocked?: string[] } | undefined
+          )?.blocked ?? [],
         grantId: c.grantId,
         /**
          * Every turn, not just the interesting ones.
@@ -188,7 +235,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       .slice(0, 8)
       .map((c) => ({ ...c, lines: callTranscript(site.key, c.callSid) })),
     sent: readSends(site.key).filter((s) => s.ok).length,
-    channels: CHANNELS.map((c) => ({ id: c.id, label: c.label, available: c.available, unlockedBy: c.unlockedBy, note: c.note })),
+    channels: CHANNELS.map((c) => ({
+      id: c.id,
+      label: c.label,
+      available: c.available,
+      unlockedBy: c.unlockedBy,
+      note: c.note,
+    })),
     voiceSetup: voiceSetup(),
   };
 };
@@ -198,23 +251,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const form = await request.formData();
   const shop = String(form.get("shop") ?? "");
   // Scoped at the write, not only at the read.
-  if (!merchant.sites.includes(shop)) return { ok: false, error: "not your store" };
+  if (!merchant.sites.includes(shop))
+    return { ok: false, error: "not your store" };
 
   const act = String(form.get("act") ?? "");
 
   if (act === "test_call") {
     if (form.get("confirmExpected") !== "on") {
+      const error =
+        "Confirm that the person who owns this number is expecting the test call.";
       return {
         ok: false,
-        error: "Confirm that the person who owns this number is expecting the test call.",
+        error,
+        logs: [{ level: "error" as const, message: error }],
       };
     }
-    const site = sitesForMerchant(merchant.sites).find((entry) => entry.key === shop);
-    if (!site) return { ok: false, error: "not your store" };
-    const result = await placeVoiceTestCall(site, String(form.get("phone") ?? ""));
-    return result.ok
-      ? { ok: true, message: result.message }
-      : { ok: false, error: result.error };
+    const site = sitesForMerchant(merchant.sites).find(
+      (entry) => entry.key === shop,
+    );
+    if (!site) {
+      return {
+        ok: false,
+        error: "not your store",
+        logs: [
+          {
+            level: "error" as const,
+            message: "The selected store is not available.",
+          },
+        ],
+      };
+    }
+    return placeVoiceTestCall(site, String(form.get("phone") ?? ""));
   }
 
   if (act === "settings") {
@@ -244,7 +311,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         recovery: {
           enabled: form.get("rec_enabled") === "on",
           maxDepthPct: Number(form.get("maxDepthPct")),
-          requiresTier: String(form.get("requiresTier")) as "returning" | "regular",
+          requiresTier: String(form.get("requiresTier")) as
+            "returning" | "regular",
           monthlyGrantCap: Number(form.get("monthlyGrantCap")),
           monthlyMarginCap: Number(form.get("monthlyMarginCap")),
           grantTtlHours: Number(form.get("grantTtlHours")),
@@ -270,7 +338,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       {
         outreach: {
           call: {
-            mode: form.get("callMode") === "conversation" ? "conversation" : "notice",
+            mode:
+              form.get("callMode") === "conversation"
+                ? "conversation"
+                : "notice",
             maxTurns: Number(form.get("maxTurns")),
             speaker: String(form.get("speaker") ?? "priya"),
             language: String(form.get("language") ?? "en-IN"),
@@ -309,14 +380,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       channel,
     });
     if (!run.settings.outreach.enabled) {
-      return { ok: false, error: "outreach is switched off — this run drafts and sends nothing" };
+      return {
+        ok: false,
+        error: "outreach is switched off — this run drafts and sends nothing",
+      };
     }
     // Re-run rather than trusting ids posted from the page. A target list is a
     // snapshot of a moment; between rendering and clicking, somebody may have
     // bought the thing.
     const results = [];
     for (const t of run.targets) results.push(await send(toDraft(shop, t)));
-    return { ok: true, sent: results.filter((r) => r.ok).length, failed: results.filter((r) => !r.ok).length };
+    return {
+      ok: true,
+      sent: results.filter((r) => r.ok).length,
+      failed: results.filter((r) => !r.ok).length,
+    };
   }
 
   /**
@@ -347,10 +425,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         shop,
         cartId,
         customerId: String(form.get("customerId") ?? ""),
-        turn: { kind: "closed", ts: new Date().toISOString(), why: "the merchant chose to leave them alone" },
+        turn: {
+          kind: "closed",
+          ts: new Date().toISOString(),
+          why: "the merchant chose to leave them alone",
+        },
       });
       return res.ok
-        ? { ok: true, message: "Left alone. They will not be written to about this basket again." }
+        ? {
+            ok: true,
+            message:
+              "Left alone. They will not be written to about this basket again.",
+          }
         : { ok: false, error: res.error };
     }
 
@@ -369,7 +455,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       channel,
     });
     if (!run.settings.outreach.enabled) {
-      return { ok: false, error: "outreach is switched off — nothing was sent" };
+      return {
+        ok: false,
+        error: "outreach is switched off — nothing was sent",
+      };
     }
     const target = run.targets.find((t) => t.cartId === cartId);
     if (!target) {
@@ -390,7 +479,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return { ok: false, error: "unknown action" };
 };
 
-
 const inr = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
 
 /**
@@ -399,7 +487,10 @@ const inr = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
  * Service is a problem you are fixing, an approved offer is money, and a
  * reminder is neither — they read differently and should look different.
  */
-const TREATMENT: Record<RecoveryTarget["treatment"], { label: string; tone: "yellow" | "green" | "gray" }> = {
+const TREATMENT: Record<
+  RecoveryTarget["treatment"],
+  { label: string; tone: "yellow" | "green" | "gray" }
+> = {
   service: { label: "Service", tone: "yellow" },
   offer: { label: "Approved offer", tone: "green" },
   reminder: { label: "Reminder", tone: "gray" },
@@ -457,7 +548,9 @@ function LimitsForm({
   const [maxPerRun, setMaxPerRun] = useState<number | null>(o.maxPerRun);
   const [minMargin, setMinMargin] = useState<number | null>(o.minMarginAtStake);
   const [ageMin, setAgeMin] = useState<number | null>(o.cartAgeHours.min);
-  const [ageMax, setAgeMax] = useState<number | null>(Math.round(o.cartAgeHours.max / 24));
+  const [ageMax, setAgeMax] = useState<number | null>(
+    Math.round(o.cartAgeHours.max / 24),
+  );
 
   return (
     <Card>
@@ -477,7 +570,10 @@ function LimitsForm({
             />
           </Limit>
           <Divider />
-          <Limit label="Cooldown" hint="Days before the same person hears from you again.">
+          <Limit
+            label="Cooldown"
+            hint="Days before the same person hears from you again."
+          >
             <NumberInput
               label="Days"
               isLabelHidden
@@ -508,7 +604,10 @@ function LimitsForm({
             />
           </Limit>
           <Divider />
-          <Limit label="Margin floor" hint="Below this, a basket is not worth a message.">
+          <Limit
+            label="Margin floor"
+            hint="Below this, a basket is not worth a message."
+          >
             <NumberInput
               label="Rupees"
               isLabelHidden
@@ -570,7 +669,12 @@ function LimitsForm({
           </Limit>
           <Divider />
           <HStack>
-            <Button type="submit" variant="primary" isDisabled={busy} label="Save limits" />
+            <Button
+              type="submit"
+              variant="primary"
+              isDisabled={busy}
+              label="Save limits"
+            />
           </HStack>
         </VStack>
       </Form>
@@ -606,8 +710,12 @@ function PolicyForm({
   const [depth, setDepth] = useState<number | null>(policy.maxDepthPct);
   const [tier, setTier] = useState(policy.requiresTier);
   const [reasons, setReasons] = useState<string[]>(policy.discountFor);
-  const [grantCap, setGrantCap] = useState<number | null>(policy.monthlyGrantCap);
-  const [marginCap, setMarginCap] = useState<number | null>(policy.monthlyMarginCap);
+  const [grantCap, setGrantCap] = useState<number | null>(
+    policy.monthlyGrantCap,
+  );
+  const [marginCap, setMarginCap] = useState<number | null>(
+    policy.monthlyMarginCap,
+  );
   const [ttl, setTtl] = useState<number | null>(policy.grantTtlHours);
 
   return (
@@ -625,7 +733,12 @@ function PolicyForm({
             label="Recovery discounts"
             hint="Off means the agent answers with facts and alternatives only."
           >
-            <Switch label="On" htmlName="rec_enabled" value={enabled} onChange={setEnabled} />
+            <Switch
+              label="On"
+              htmlName="rec_enabled"
+              value={enabled}
+              onChange={setEnabled}
+            />
           </Limit>
           <Divider />
           <Limit
@@ -673,8 +786,8 @@ function PolicyForm({
             <VStack gap={0.5}>
               <Text weight="semibold">Only in answer to</Text>
               <Text type="supporting" color="secondary">
-                Discounting someone who said delivery was too slow does not answer what they told
-                you.
+                Discounting someone who said delivery was too slow does not
+                answer what they told you.
               </Text>
             </VStack>
             <HStack gap={4} wrap="wrap">
@@ -684,7 +797,9 @@ function PolicyForm({
                   label={REASON_LABEL[r]}
                   value={reasons.includes(r)}
                   onChange={(on) =>
-                    setReasons((prev) => (on ? [...prev, r] : prev.filter((x) => x !== r)))
+                    setReasons((prev) =>
+                      on ? [...prev, r] : prev.filter((x) => x !== r),
+                    )
                   }
                 />
               ))}
@@ -723,7 +838,10 @@ function PolicyForm({
             </HStack>
           </Limit>
           <Divider />
-          <Limit label="Each one lasts" hint="It answers a conversation. It is not a coupon.">
+          <Limit
+            label="Each one lasts"
+            hint="It answers a conversation. It is not a coupon."
+          >
             <HStack gap={2} vAlign="center">
               <NumberInput
                 label="Hours"
@@ -743,7 +861,12 @@ function PolicyForm({
           </Limit>
           <Divider />
           <HStack>
-            <Button type="submit" variant="primary" isDisabled={busy} label="Save discount policy" />
+            <Button
+              type="submit"
+              variant="primary"
+              isDisabled={busy}
+              label="Save discount policy"
+            />
           </HStack>
         </VStack>
       </Form>
@@ -761,7 +884,9 @@ function CallForm({
   call: { mode: string; maxTurns: number; speaker: string; language: string };
   busy: boolean;
 }) {
-  const [mode, setMode] = useState(call.mode === "conversation" ? "conversation" : "notice");
+  const [mode, setMode] = useState(
+    call.mode === "conversation" ? "conversation" : "notice",
+  );
   const [maxTurns, setMaxTurns] = useState<number | null>(call.maxTurns);
   const [speaker, setSpeaker] = useState(call.speaker);
   const [language, setLanguage] = useState(call.language);
@@ -772,7 +897,12 @@ function CallForm({
         <input type="hidden" name="shop" value={shop} />
         <input type="hidden" name="act" value="call" />
         <VStack gap={5}>
-          <RadioList label="How the call behaves" htmlName="callMode" value={mode} onChange={setMode}>
+          <RadioList
+            label="How the call behaves"
+            htmlName="callMode"
+            value={mode}
+            onChange={setMode}
+          >
             <RadioListItem
               value="notice"
               label="Read a notice"
@@ -812,11 +942,17 @@ function CallForm({
               value={language}
               onChange={setLanguage}
             />
-            <Button type="submit" variant="primary" isDisabled={busy} label="Save" />
+            <Button
+              type="submit"
+              variant="primary"
+              isDisabled={busy}
+              label="Save"
+            />
           </HStack>
           <Text type="supporting" color="secondary">
-            Callers can press 9 at any point to stop these calls for good. That is recorded against
-            them the moment they press it, and every future run reads it.
+            Callers can press 9 at any point to stop these calls for good. That
+            is recorded against them the moment they press it, and every future
+            run reads it.
           </Text>
         </VStack>
       </Form>
@@ -844,10 +980,13 @@ function TargetCard({
       <VStack gap={4}>
         <HStack gap={3} hAlign="between" vAlign="start" wrap="wrap">
           <VStack gap={1.5}>
-            <Heading level={3}>{t.items.map((i) => i.title).join(", ")}</Heading>
+            <Heading level={3}>
+              {t.items.map((i) => i.title).join(", ")}
+            </Heading>
             <Text type="supporting" color="secondary">
-              {inr(t.marginAtStake)} margin · abandoned {Math.round(t.ageHours / 24)}d ago at the{" "}
-              {t.lastStep} step · {t.to.phone ? "phone" : "email"} on file
+              {inr(t.marginAtStake)} margin · abandoned{" "}
+              {Math.round(t.ageHours / 24)}d ago at the {t.lastStep} step ·{" "}
+              {t.to.phone ? "phone" : "email"} on file
             </Text>
           </VStack>
           <Token size="sm" color={treat.tone} label={treat.label} />
@@ -908,8 +1047,9 @@ function TargetCard({
         </HStack>
 
         <Text type="supporting" color="secondary">
-          Leaving them alone closes this basket for good — the same record a shopper writes by
-          pressing 9, so every future run on every channel reads it.
+          Leaving them alone closes this basket for good — the same record a
+          shopper writes by pressing 9, so every future run on every channel
+          reads it.
         </Text>
       </VStack>
     </Card>
@@ -918,15 +1058,33 @@ function TargetCard({
 
 function TestCallForm({
   shop,
-  busy,
+  busy: pageBusy,
   available,
 }: {
   shop: string;
   busy: boolean;
   available: boolean;
 }) {
+  const fetcher = useFetcher<typeof action>();
   const [phone, setPhone] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  const testBusy = fetcher.state !== "idle";
+  const busy = pageBusy || testBusy;
+  const result =
+    fetcher.data && typeof fetcher.data === "object" && "logs" in fetcher.data
+      ? (fetcher.data as TestCallResult)
+      : null;
+  const consoleLogs = testBusy
+    ? [
+        { level: "working" as const, message: "Request sent to Chapman." },
+        {
+          level: "working" as const,
+          message:
+            "Validating the test, rendering its fixed audio, and contacting Twilio…",
+        },
+      ]
+    : (result?.logs ?? []);
+  const showConsole = testBusy || result !== null;
 
   return (
     <Block
@@ -934,7 +1092,7 @@ function TestCallForm({
       hint="Pre-renders one fixed identification with Sarvam, then asks Twilio to call the number you enter. It does not select a basket or contact a shopper from your records."
     >
       <Card>
-        <Form method="post">
+        <fetcher.Form method="post">
           <input type="hidden" name="shop" value={shop} />
           <input type="hidden" name="act" value="test_call" />
           <VStack gap={4}>
@@ -959,7 +1117,9 @@ function TestCallForm({
                 variant="primary"
                 label={busy ? "Queueing test call…" : "Place test call"}
                 isLoading={busy}
-                isDisabled={busy || !available || !confirmed || phone.trim().length === 0}
+                isDisabled={
+                  busy || !available || !confirmed || phone.trim().length === 0
+                }
               />
               {!available ? (
                 <Text type="supporting" color="secondary">
@@ -968,11 +1128,61 @@ function TestCallForm({
               ) : null}
             </HStack>
             <Text type="supporting" color="secondary">
-              The test says it is a Chapman integration test and then hangs up. One call is allowed
-              every 30 seconds. Ordinary quiet-hour protection still applies.
+              The test says it is a Chapman integration test and then hangs up.
+              One call is allowed every 30 seconds. Ordinary quiet-hour
+              protection still applies.
             </Text>
+            {showConsole ? (
+              <div
+                role="log"
+                aria-live="polite"
+                aria-label="Test call log"
+                style={{
+                  background: "#111814",
+                  border: "1px solid #30433a",
+                  borderRadius: 10,
+                  color: "#d8e5dd",
+                  fontFamily:
+                    'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                  maxWidth: 720,
+                  padding: "14px 16px",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                <div style={{ color: "#8ba99a", marginBottom: 6 }}>
+                  $ chapman voice:test
+                </div>
+                {consoleLogs.map((entry, index) => (
+                  <div
+                    key={`${entry.level}-${index}-${entry.message}`}
+                    style={{
+                      color: entry.level === "error" ? "#ff9b9b" : undefined,
+                    }}
+                  >
+                    [{entry.level}] {entry.message}
+                  </div>
+                ))}
+                {!testBusy && result?.ok ? (
+                  <div style={{ color: "#83d6a2", marginTop: 6 }}>
+                    [done] Call queued.
+                  </div>
+                ) : null}
+                {!testBusy &&
+                result &&
+                !result.ok &&
+                result.error.includes("quiet hours") ? (
+                  <div style={{ color: "#e9ce84", marginTop: 6 }}>
+                    [hint] To test during quiet hours, set
+                    VOICE_QUIET_HOURS_TEST_NUMBER to this exact E.164 number in
+                    .env, then recreate the gateway.
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </VStack>
-        </Form>
+        </fetcher.Form>
       </Card>
     </Block>
   );
@@ -1010,10 +1220,20 @@ export default function Recovery() {
         lede="Baskets that were never completed, and what — if anything — is worth saying about them. Every message below is the exact text that would go out. Nothing is sent by opening this page."
       >
         <Figures>
-          <Figure value={run.totals.cartsConsidered} label="baskets considered" />
-          <Figure value={run.targets.length} label="would be written to" tone="accent" />
+          <Figure
+            value={run.totals.cartsConsidered}
+            label="baskets considered"
+          />
+          <Figure
+            value={run.targets.length}
+            label="would be written to"
+            tone="accent"
+          />
           <Figure value={run.suppressed.length} label="left alone" />
-          <Figure value={inr(run.totals.marginAtStake)} label="margin at stake" />
+          <Figure
+            value={inr(run.totals.marginAtStake)}
+            label="margin at stake"
+          />
           <Figure
             value={inr(run.totals.expectedValue)}
             label={`at an assumed ${(run.totals.assumedRecovery * 100).toFixed(0)}%`}
@@ -1022,7 +1242,11 @@ export default function Recovery() {
       </PageHead>
 
       {a && "error" in a && a.error ? (
-        <Banner status="warning" title="Nothing was sent" description={String(a.error)} />
+        <Banner
+          status="warning"
+          title="Nothing was sent"
+          description={String(a.error)}
+        />
       ) : null}
       {a && "message" in a && a.message ? (
         <Banner status="success" title={String(a.message)} isDismissable />
@@ -1050,7 +1274,13 @@ export default function Recovery() {
         ) : (
           <VStack gap={3}>
             {run.targets.map((t) => (
-              <TargetCard key={t.cartId} t={t} shop={shop} channels={d.channels} busy={busy} />
+              <TargetCard
+                key={t.cartId}
+                t={t}
+                shop={shop}
+                channels={d.channels}
+                busy={busy}
+              />
             ))}
           </VStack>
         )}
@@ -1080,7 +1310,11 @@ export default function Recovery() {
                 type="submit"
                 variant="primary"
                 isDisabled={busy || !o.enabled}
-                label={o.enabled ? `Send ${run.targets.length} messages` : "Outreach is off"}
+                label={
+                  o.enabled
+                    ? `Send ${run.targets.length} messages`
+                    : "Outreach is off"
+                }
               />
             </HStack>
           </Form>
@@ -1096,7 +1330,8 @@ export default function Recovery() {
             data={run.suppressedBy.map((s) => ({
               id: s.reason,
               label: s.label,
-              detail: run.suppressed.find((x) => x.reason === s.reason)?.detail ?? "",
+              detail:
+                run.suppressed.find((x) => x.reason === s.reason)?.detail ?? "",
               count: s.count,
               margin: inr(s.margin),
             }))}
@@ -1117,8 +1352,18 @@ export default function Recovery() {
                   </VStack>
                 ),
               },
-              { key: "count", header: "Baskets", width: pixel(100), align: "end" },
-              { key: "margin", header: "Margin not chased", width: pixel(170), align: "end" },
+              {
+                key: "count",
+                header: "Baskets",
+                width: pixel(100),
+                align: "end",
+              },
+              {
+                key: "margin",
+                header: "Margin not chased",
+                width: pixel(170),
+                align: "end",
+              },
             ]}
           />
         </Card>
@@ -1160,39 +1405,66 @@ export default function Recovery() {
                 columns={
                   d.histogram.enough
                     ? [
-                        { key: "reason", header: "Reason", width: proportional(1) },
-                        { key: "count", header: "Answers", width: pixel(100), align: "end" },
-                        { key: "share", header: "Share", width: pixel(100), align: "end" },
+                        {
+                          key: "reason",
+                          header: "Reason",
+                          width: proportional(1),
+                        },
+                        {
+                          key: "count",
+                          header: "Answers",
+                          width: pixel(100),
+                          align: "end",
+                        },
+                        {
+                          key: "share",
+                          header: "Share",
+                          width: pixel(100),
+                          align: "end",
+                        },
                       ]
                     : [
-                        { key: "reason", header: "Reason", width: proportional(1) },
-                        { key: "count", header: "Answers", width: pixel(100), align: "end" },
+                        {
+                          key: "reason",
+                          header: "Reason",
+                          width: proportional(1),
+                        },
+                        {
+                          key: "count",
+                          header: "Answers",
+                          width: pixel(100),
+                          align: "end",
+                        },
                       ]
                 }
               />
             </Card>
             <Text type="supporting" color="secondary">
               {d.answered.answered} of {d.answered.asked} asked replied
-              {d.answered.asked ? ` (${Math.round(d.answered.rate * 100)}%)` : ""}.
+              {d.answered.asked
+                ? ` (${Math.round(d.answered.rate * 100)}%)`
+                : ""}
+              .
             </Text>
           </VStack>
         )}
       </Block>
 
       {d.conversations.length > 0 ? (
-        <Block
-          title="In their own words"
-          hint="Only you see this."
-        >
+        <Block title="In their own words" hint="Only you see this.">
           <VStack gap={3}>
             {d.conversations.map((c) => (
               <Card key={c.cartId}>
                 <VStack gap={3}>
                   <HStack gap={3} hAlign="between" vAlign="center" wrap="wrap">
-                    <Text weight="semibold">{c.reasonLabel ?? "no answer yet"}</Text>
+                    <Text weight="semibold">
+                      {c.reasonLabel ?? "no answer yet"}
+                    </Text>
                     <HStack gap={2}>
                       <Token size="sm" color="gray" label={c.state} />
-                      {c.by ? <Token size="sm" color="gray" label={c.by} /> : null}
+                      {c.by ? (
+                        <Token size="sm" color="gray" label={c.by} />
+                      ) : null}
                     </HStack>
                   </HStack>
                   {c.text ? <Text>&ldquo;{c.text}&rdquo;</Text> : null}
@@ -1257,18 +1529,20 @@ export default function Recovery() {
           <VStack gap={3}>
             {d.live.total === 0 ? (
               <Text color="secondary">
-                Everything below came from <Code>npm run seed</Code>. Real baskets appear here as
-                soon as somebody puts something in a cart on your shop — the widget script already
-                posts them; there is nothing else to install.
+                Everything below came from <Code>npm run seed</Code>. Real
+                baskets appear here as soon as somebody puts something in a cart
+                on your shop — the widget script already posts them; there is
+                nothing else to install.
               </Text>
             ) : (
               <Text color="secondary">
                 <Text as="span" weight="semibold">
                   {d.live.recoverable}
                 </Text>{" "}
-                of them can actually be recovered. The rest were built by somebody who was not
-                signed in, so there is no way to reach them and no message will be sent — you will
-                find them below under &ldquo;no way to reach them&rdquo;. That is the honest number,
+                of them can actually be recovered. The rest were built by
+                somebody who was not signed in, so there is no way to reach them
+                and no message will be sent — you will find them below under
+                &ldquo;no way to reach them&rdquo;. That is the honest number,
                 and it is the one most abandoned-cart tools do not show you.
                 {d.live.newestAt
                   ? ` Most recent: ${new Date(d.live.newestAt).toLocaleString("en-IN")}.`
@@ -1277,10 +1551,11 @@ export default function Recovery() {
             )}
             {!d.live.captureConfigured ? (
               <Text type="supporting" color="secondary">
-                This shop has not connected an order source, so even a signed-in shopper has no
-                contact details on file. Contact is looked up from your own records, server to
-                server — it is never taken from the page, because a page that could name a phone
-                number could name anybody&rsquo;s.
+                This shop has not connected an order source, so even a signed-in
+                shopper has no contact details on file. Contact is looked up
+                from your own records, server to server — it is never taken from
+                the page, because a page that could name a phone number could
+                name anybody&rsquo;s.
               </Text>
             ) : null}
           </VStack>
@@ -1293,134 +1568,169 @@ export default function Recovery() {
       </Note>
 
       <Setup title="Limits, discounts and channels">
-      <IntegrationSetup guide={d.voiceSetup} />
-
-      <TestCallForm
-        shop={shop}
-        busy={busy}
-        available={d.voiceSetup.status === "ready"}
-      />
-
-      <Divider />
-
-      <Block
-        title="Your limits"
-        hint="Every one of these can only reduce what goes out."
-      >
-        <LimitsForm shop={shop} o={o} busy={busy} />
-      </Block>
-
-      <Block
-        title="Recovery discounts"
-        hint="The one place an agent can give money away without a per-case approval. Read it as an approval with a cap. It never chooses a depth — it reads the number below, or offers nothing."
-      >
-        <VStack gap={4}>
-          <Figures>
-            <Figure value={d.spend.count} label={`of ${d.policy.monthlyGrantCap} this month`} />
-            <Figure
-              value={inr(d.spend.margin)}
-              label={`of ${inr(d.policy.monthlyMarginCap)} margin given`}
-            />
-            <Figure
-              value={d.grants.filter((g) => g.state === "redeemed").length}
-              label="actually used"
-              tone="accent"
-            />
-          </Figures>
-
-          <PolicyForm shop={shop} policy={d.policy} busy={busy} />
-
-          {d.grants.length > 0 ? (
-            <Card padding={0}>
-              <Table
-                data={d.grants.map((g) => ({
-                  id: g.id,
-                  state: g.state,
-                  grant: `${Math.round(g.depth * 100)}% off ${g.title}, up to ${g.qtyCap}`,
-                  detail: `${g.tier} shopper, said “${g.reason}”, expires ${g.expiresAt.slice(0, 16).replace("T", " ")}`,
-                  cost: inr(g.marginCost),
-                }))}
-                idKey="id"
-                density="balanced"
-                dividers="rows"
-                columns={[
-                  {
-                    key: "state",
-                    header: "State",
-                    width: pixel(110),
-                    renderCell: (g) => (
-                      <Token
-                        size="sm"
-                        color={g.state === "redeemed" ? "green" : "gray"}
-                        label={String(g.state)}
-                      />
-                    ),
-                  },
-                  {
-                    key: "grant",
-                    header: "Grant",
-                    width: proportional(1),
-                    renderCell: (g) => (
-                      <VStack gap={1}>
-                        <Text>{String(g.grant)}</Text>
-                        <Text type="supporting" color="secondary">
-                          {String(g.detail)}
-                        </Text>
-                      </VStack>
-                    ),
-                  },
-                  { key: "cost", header: "Costs you", width: pixel(120), align: "end" },
-                ]}
+        <VStack gap={3}>
+          <Heading level={3}>Capture a recoverable basket first</Heading>
+          <Card>
+            <List listStyle="decimal" density="spacious">
+              <ListItem
+                label="Enable Recovery in Feature controls"
+                description="This grants permission; it does not create a cart or contact record."
               />
-            </Card>
-          ) : null}
+              <ListItem
+                label="Install the embed on every cart and product page"
+                description="The bundled cart.js posts line items only when it can find the Chapman tag on that page."
+              />
+              <ListItem
+                label="Connect a signed order/contact source"
+                description="For the demo, register http://store:4000/api/orders as the signed order feed and enable DEMO_STORE_CHAPMAN. The browser is never allowed to submit an arbitrary phone number as customer identity."
+              />
+              <ListItem
+                label="Sign in, add an item, and leave without checkout"
+                description="Reload Recovery and confirm the live-cart section reports a recoverable basket before configuring a send channel."
+              />
+            </List>
+          </Card>
         </VStack>
-      </Block>
 
-      <Block title="Channels">
-        <Card padding={0}>
-          <Table
-            data={d.channels.map((c) => ({
-              id: c.id,
-              label: c.label,
-              available: c.available,
-              note: [c.unlockedBy, c.note].filter(Boolean).join(" "),
-            }))}
-            idKey="id"
-            density="balanced"
-            dividers="rows"
-            columns={[
-              { key: "label", header: "Channel", width: pixel(190) },
-              {
-                key: "available",
-                header: "Status",
-                width: pixel(110),
-                renderCell: (c) => (
-                  <Token
-                    size="sm"
-                    color={c.available ? "green" : "gray"}
-                    label={c.available ? "Live" : "Locked"}
-                  />
-                ),
-              },
-              {
-                key: "note",
-                header: "",
-                width: proportional(1),
-                renderCell: (c) => <Text color="secondary">{String(c.note)}</Text>,
-              },
-            ]}
-          />
-        </Card>
-      </Block>
+        <Divider />
 
-      <Block
-        title="On the telephone"
-        hint="A call leaves nothing behind to re-read, so it starts as a one-way notice and becomes a conversation only if you say so."
-      >
-        <CallForm shop={shop} call={o.call} busy={busy} />
-      </Block>
+        <IntegrationSetup guide={d.voiceSetup} />
 
+        <TestCallForm
+          shop={shop}
+          busy={busy}
+          available={d.voiceSetup.status === "ready"}
+        />
+
+        <Divider />
+
+        <Block
+          title="Your limits"
+          hint="Every one of these can only reduce what goes out."
+        >
+          <LimitsForm shop={shop} o={o} busy={busy} />
+        </Block>
+
+        <Block
+          title="Recovery discounts"
+          hint="The one place an agent can give money away without a per-case approval. Read it as an approval with a cap. It never chooses a depth — it reads the number below, or offers nothing."
+        >
+          <VStack gap={4}>
+            <Figures>
+              <Figure
+                value={d.spend.count}
+                label={`of ${d.policy.monthlyGrantCap} this month`}
+              />
+              <Figure
+                value={inr(d.spend.margin)}
+                label={`of ${inr(d.policy.monthlyMarginCap)} margin given`}
+              />
+              <Figure
+                value={d.grants.filter((g) => g.state === "redeemed").length}
+                label="actually used"
+                tone="accent"
+              />
+            </Figures>
+
+            <PolicyForm shop={shop} policy={d.policy} busy={busy} />
+
+            {d.grants.length > 0 ? (
+              <Card padding={0}>
+                <Table
+                  data={d.grants.map((g) => ({
+                    id: g.id,
+                    state: g.state,
+                    grant: `${Math.round(g.depth * 100)}% off ${g.title}, up to ${g.qtyCap}`,
+                    detail: `${g.tier} shopper, said “${g.reason}”, expires ${g.expiresAt.slice(0, 16).replace("T", " ")}`,
+                    cost: inr(g.marginCost),
+                  }))}
+                  idKey="id"
+                  density="balanced"
+                  dividers="rows"
+                  columns={[
+                    {
+                      key: "state",
+                      header: "State",
+                      width: pixel(110),
+                      renderCell: (g) => (
+                        <Token
+                          size="sm"
+                          color={g.state === "redeemed" ? "green" : "gray"}
+                          label={String(g.state)}
+                        />
+                      ),
+                    },
+                    {
+                      key: "grant",
+                      header: "Grant",
+                      width: proportional(1),
+                      renderCell: (g) => (
+                        <VStack gap={1}>
+                          <Text>{String(g.grant)}</Text>
+                          <Text type="supporting" color="secondary">
+                            {String(g.detail)}
+                          </Text>
+                        </VStack>
+                      ),
+                    },
+                    {
+                      key: "cost",
+                      header: "Costs you",
+                      width: pixel(120),
+                      align: "end",
+                    },
+                  ]}
+                />
+              </Card>
+            ) : null}
+          </VStack>
+        </Block>
+
+        <Block title="Channels">
+          <Card padding={0}>
+            <Table
+              data={d.channels.map((c) => ({
+                id: c.id,
+                label: c.label,
+                available: c.available,
+                note: [c.unlockedBy, c.note].filter(Boolean).join(" "),
+              }))}
+              idKey="id"
+              density="balanced"
+              dividers="rows"
+              columns={[
+                { key: "label", header: "Channel", width: pixel(190) },
+                {
+                  key: "available",
+                  header: "Status",
+                  width: pixel(110),
+                  renderCell: (c) => (
+                    <Token
+                      size="sm"
+                      color={c.available ? "green" : "gray"}
+                      label={c.available ? "Live" : "Locked"}
+                    />
+                  ),
+                },
+                {
+                  key: "note",
+                  header: "",
+                  width: proportional(1),
+                  renderCell: (c) => (
+                    <Text color="secondary">{String(c.note)}</Text>
+                  ),
+                },
+              ]}
+            />
+          </Card>
+        </Block>
+
+        <Block
+          title="On the telephone"
+          hint="A call leaves nothing behind to re-read, so it starts as a one-way notice and becomes a conversation only if you say so."
+        >
+          <CallForm shop={shop} call={o.call} busy={busy} />
+        </Block>
       </Setup>
 
       {d.calls.length > 0 ? (
@@ -1449,7 +1759,9 @@ export default function Recovery() {
                         </Text>
                         <VStack gap={1}>
                           <Text>{l.text}</Text>
-                          {l.source && l.source !== "template" && l.source !== "model" ? (
+                          {l.source &&
+                          l.source !== "template" &&
+                          l.source !== "model" ? (
                             <HStack>
                               <Token
                                 size="sm"
@@ -1503,13 +1815,17 @@ export default function Recovery() {
                   key: "treatment",
                   header: "Kind",
                   width: pixel(130),
-                  renderCell: (x) => <Token size="sm" color="gray" label={String(x.treatment)} />,
+                  renderCell: (x) => (
+                    <Token size="sm" color="gray" label={String(x.treatment)} />
+                  ),
                 },
                 {
                   key: "text",
                   header: "Text",
                   width: proportional(1),
-                  renderCell: (x) => <Text color="secondary">{String(x.text)}</Text>,
+                  renderCell: (x) => (
+                    <Text color="secondary">{String(x.text)}</Text>
+                  ),
                 },
               ]}
             />
@@ -1535,7 +1851,11 @@ export default function Recovery() {
                 header: "Who",
                 width: pixel(84),
                 renderCell: (g) => (
-                  <Token size="sm" color={g.who === "you" ? "yellow" : "gray"} label={String(g.who)} />
+                  <Token
+                    size="sm"
+                    color={g.who === "you" ? "yellow" : "gray"}
+                    label={String(g.who)}
+                  />
                 ),
               },
               { key: "what", header: "What", width: proportional(1) },
@@ -1543,7 +1863,9 @@ export default function Recovery() {
                 key: "unlocks",
                 header: "Unlocks",
                 width: proportional(1.3),
-                renderCell: (g) => <Text color="secondary">{String(g.unlocks)}</Text>,
+                renderCell: (g) => (
+                  <Text color="secondary">{String(g.unlocks)}</Text>
+                ),
               },
             ]}
           />

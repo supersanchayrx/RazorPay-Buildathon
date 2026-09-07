@@ -95,15 +95,20 @@ export const SWITCHES: FeatureSwitch[] = [
     name: "Agent-readable storefront",
     offMeans:
       "The whole machine surface disappears: discovery, the tool endpoint, the agent view and llms.txt all return 404. A shopper's AI agent reaching your store falls back to reading your HTML, as it would have before you installed CHAPMAN.",
-    gates: ["ucp.$site.mcp", "ucp.$site.profile", "ucp.$site.agentview", "ucp.$site.llms.txt"],
+    gates: [
+      "ucp.$site.mcp",
+      "ucp.$site.profile",
+      "ucp.$site.agentview",
+      "ucp.$site.llms.txt",
+    ],
     ucpTools: [],
     shopperTools: [],
   },
   {
     key: "payments",
-    name: "Payments & binding quotes",
+    name: "Razorpay agent checkout",
     offMeans:
-      "No new checkout can be created, by an agent or in the widget. Baskets still price — quoting is not paying. A payment already under way still completes, and a Razorpay webhook is still accepted, because refusing it would lose an order somebody has already paid for.",
+      "No new Chapman-hosted Razorpay checkout can be created by an agent or the assistant. The storefront's native checkout is unchanged. Baskets still price — quoting is not paying. A payment already under way still completes, and a Razorpay webhook is still accepted, because refusing it would lose an order somebody has already paid for.",
     gates: ["embed.checkout", "create_checkout"],
     inflight: ["pay.$site.$orderId", "webhooks.razorpay.$site"],
     ucpTools: [
@@ -205,7 +210,8 @@ export type FlagsFile = {
 const ALL_ON = (): FeatureFlags =>
   Object.fromEntries(KEYS.map((k) => [k, true])) as FeatureFlags;
 
-const file = (site: string) => dataPath(`features-${site.replace(/[^a-z0-9_]/gi, "_")}.json`);
+const file = (site: string) =>
+  dataPath(`features-${site.replace(/[^a-z0-9_]/gi, "_")}.json`);
 
 /**
  * Read, defaulting every unknown key to ON.
@@ -320,19 +326,27 @@ export function featureForUcpTool(name: string): FeatureKey | null {
  * gone, not reduced. The route 404s before this is reached, but a caller that
  * gets here another way must not be handed a menu.
  */
-export function filterUcpTools<T extends { name: string }>(site: string, tools: T[]): T[] {
+export function filterUcpTools<T extends { name: string }>(
+  site: string,
+  tools: T[],
+): T[] {
   const flags = readFlags(site);
   if (!flags.agent_front) return [];
   const off = new Set<string>();
-  for (const s of SWITCHES) if (!flags[s.key]) for (const t of s.ucpTools) off.add(t);
+  for (const s of SWITCHES)
+    if (!flags[s.key]) for (const t of s.ucpTools) off.add(t);
   return tools.filter((t) => !off.has(t.name));
 }
 
 /** The same, for the tools the shopper's assistant is given. */
-export function filterShopperTools<T extends { name: string }>(site: string, tools: T[]): T[] {
+export function filterShopperTools<T extends { name: string }>(
+  site: string,
+  tools: T[],
+): T[] {
   const flags = readFlags(site);
   const off = new Set<string>();
-  for (const s of SWITCHES) if (!flags[s.key]) for (const t of s.shopperTools) off.add(t);
+  for (const s of SWITCHES)
+    if (!flags[s.key]) for (const t of s.shopperTools) off.add(t);
   return tools.filter((t) => !off.has(t.name));
 }
 

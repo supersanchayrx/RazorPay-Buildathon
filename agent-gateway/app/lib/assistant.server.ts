@@ -135,6 +135,7 @@ async function prepare(opts: AssistantOptions) {
     decided,
     shop,
     ctx: {
+      shop: opts.shop,
       message: opts.message,
       memories,
       history,

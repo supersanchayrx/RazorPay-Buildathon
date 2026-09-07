@@ -23,6 +23,20 @@ import path from "node:path";
 let loaded = false;
 
 /**
+ * Names used by the first Monsoon Market demo, before the public setup guide
+ * settled on the shorter canonical names. Docker's entrypoint already maps
+ * these for the gateway server, but a process started later with
+ * `docker compose exec` does not inherit exports made inside that entrypoint.
+ * Resolving the aliases here keeps the server, dashboard and `npm run doctor`
+ * consistent while existing tester `.env` files continue to work.
+ */
+const LEGACY_ALIASES: Readonly<Record<string, string>> = {
+  RAZORPAY_KEY_ID: "RAZORPAY_TEST_API_KEY_ID1",
+  RAZORPAY_KEY_SECRET: "RAZORPAY_TEST_API_KEY_SECRET1",
+  RAZORPAY_WEBHOOK_SECRET: "RAZORPAY_WEBHOOK_SECRET1",
+};
+
+/**
  * Merge the repo-root `.env` into `process.env` without overwriting anything
  * already set. Existing values win because a real deployment sets them in the
  * environment, and a stale file must not quietly override production.
@@ -64,8 +78,12 @@ export function loadRootEnv(root = path.join(process.cwd(), "..")): void {
 /** Read a secret by variable name. Returns null rather than throwing. */
 export function secret(name: string): string | null {
   loadRootEnv();
-  const v = process.env[name];
-  return v && v.length > 0 ? v : null;
+  const exact = process.env[name];
+  if (exact && exact.length > 0) return exact;
+
+  const alias = LEGACY_ALIASES[name];
+  const legacy = alias ? process.env[alias] : undefined;
+  return legacy && legacy.length > 0 ? legacy : null;
 }
 
 /**
@@ -75,7 +93,10 @@ export function secret(name: string): string | null {
  * useful; one that renders four characters of a live key is a slow leak into
  * screenshots and screen shares.
  */
-export function describe(names: string[]): { configured: boolean; missing: string[] } {
+export function describe(names: string[]): {
+  configured: boolean;
+  missing: string[];
+} {
   const missing = names.filter((n) => !secret(n));
   return { configured: missing.length === 0, missing };
 }

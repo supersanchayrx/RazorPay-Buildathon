@@ -106,9 +106,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const base = `${url.protocol}//${url.host}`;
   const registered = sitesForMerchant(requireMerchant(request).sites)[0] ?? null;
   const ledger = readLedger(2000);
+  const siteLedger = registered
+    ? ledger.filter((entry) => entry.shop === registered.key)
+    : [];
 
   const gates: Record<string, number> = {};
-  for (const e of ledger) if (e.kind === "refusal" && e.gate) gates[e.gate] = (gates[e.gate] ?? 0) + 1;
+  for (const e of siteLedger) if (e.kind === "refusal" && e.gate) gates[e.gate] = (gates[e.gate] ?? 0) + 1;
 
   return {
     base,
@@ -125,12 +128,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       : null,
     modelSetup: openRouterSetup("assistant"),
     counts: {
-      replies: ledger.filter((e) => e.kind === "reply").length,
-      refusals: ledger.filter((e) => e.kind === "refusal").length,
-      errors: ledger.filter((e) => e.kind === "tool_error").length,
+      replies: siteLedger.filter((e) => e.kind === "reply").length,
+      refusals: siteLedger.filter((e) => e.kind === "refusal").length,
+      errors: siteLedger.filter((e) => e.kind === "tool_error").length,
     },
     gates,
-    recent: ledger.slice(-8).reverse(),
+    recent: siteLedger.slice(-8).reverse(),
   };
 };
 
@@ -147,6 +150,28 @@ const KIND: Record<string, { label: string; color: "green" | "yellow" | "red" }>
   reply: { label: "reply", color: "green" },
   refusal: { label: "blocked", color: "yellow" },
   tool_error: { label: "error", color: "red" },
+};
+
+/** Turn safe provider status bodies into something a merchant can act on. */
+const activityMessage = (entry: { message: string; detail?: unknown }): string => {
+  const detail =
+    entry.detail && typeof entry.detail === "object" && "error" in entry.detail
+      ? String((entry.detail as { error?: unknown }).error ?? "")
+      : "";
+  if (!entry.message.startsWith("openrouter ")) return entry.message;
+  if (detail.includes("429") && detail.includes("free-models-per-day")) {
+    return `${entry.message} — free daily quota reached (429)`;
+  }
+  if (detail.includes("429")) {
+    return `${entry.message} — provider rate limit reached (429)`;
+  }
+  if (detail.includes("404") && detail.toLowerCase().includes("unavailable for free")) {
+    return `${entry.message} — model is no longer available for free (404)`;
+  }
+  if (detail.includes("401") || detail.includes("403")) {
+    return `${entry.message} — API key or model access was rejected`;
+  }
+  return entry.message;
 };
 
 export default function Chatbot() {
@@ -174,12 +199,15 @@ export default function Chatbot() {
     .sort((a, b) => b[1] - a[1])
     .map(([g, n]) => ({ id: g, count: n, what: GATE_LABEL[g] ?? g, gate: g }));
 
-  const recentRows: Array<Record<string, unknown>> = recent.map((e, i) => ({
-    id: `${e.ts}-${i}`,
-    when: e.ts.slice(5, 16).replace("T", " "),
-    kind: e.kind,
-    message: e.message.length > 120 ? e.message.slice(0, 120) + "…" : e.message,
-  }));
+  const recentRows: Array<Record<string, unknown>> = recent.map((e, i) => {
+    const message = activityMessage(e);
+    return {
+      id: `${e.ts}-${i}`,
+      when: e.ts.slice(5, 16).replace("T", " "),
+      kind: e.kind,
+      message: message.length > 160 ? message.slice(0, 160) + "…" : message,
+    };
+  });
 
   return (
     <Page>
@@ -397,7 +425,7 @@ export default function Chatbot() {
               <List listStyle="decimal" density="spacious">
                 <ListItem
                   label="Paste one tag before the closing body tag"
-                  description="On every page you want the assistant on. No build step."
+                  description="Put it in the shared layout on a real site. For the static Docker demo, paste the same tag into index.html, product.html and account.html; adding it only to index.html leaves product-page cart and checkout offline."
                 />
                 <ListItem
                   label="Publish a catalogue feed at a URL we can read"
@@ -422,6 +450,14 @@ export default function Chatbot() {
             <Note>
               The site key is an identifier, not a secret. What gates the widget is the origin list
               above, which a page script cannot forge.
+            </Note>
+
+            <Note>
+              Bundled demo only: place <Code>&lt;!--CHAPMAN_SESSION--&gt;</Code> immediately before
+              the tag on each page if you want signed-in order lookup, shopper memory, or recoverable
+              carts. The demo server replaces that marker with a short-lived signed identity. A real
+              merchant site should mint the equivalent token from its own login session; it should
+              never expose the site signing secret to browser JavaScript.
             </Note>
           </VStack>
         ) : (

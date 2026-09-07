@@ -282,6 +282,7 @@ console.log("\n-- the demo ------------------------------------------------\n");
 
 {
   const mainGo = read(path.join(ROOT, "demo-store", "main.go"));
+  const checkoutGo = read(path.join(ROOT, "demo-store", "checkout.go"));
   const cartJs = read(path.join(ROOT, "demo-store", "assets", "cart.js"));
   const cleanSrc = read("scripts/demo-clean-store.mjs");
 
@@ -308,9 +309,17 @@ console.log("\n-- the demo ------------------------------------------------\n");
   );
 
   check(
-    "the cart degrades when no tag is on the page",
-    /var LIVE = /.test(cartJs) && /buildInert/.test(cartJs),
-    'with no tag BASE is "" and every fetch 404s against the shop\'s own origin, silently',
+    "the cart uses the merchant's checkout without installing chat",
+    /fetch\("\/api\/checkout"/.test(cartJs) &&
+      /CHAPMAN_BASE/.test(cartJs),
+    "Razorpay works first; the optional Chapman URL is only for recovery beacons",
+  );
+  check(
+    "the merchant creates and verifies Razorpay orders server-side",
+    /func \(c \*checkout\) start/.test(checkoutGo) &&
+      /func \(c \*checkout\) confirm/.test(checkoutGo) &&
+      /SetBasicAuth/.test(checkoutGo),
+    "neither the price nor the key secret may come from the browser",
   );
 
   for (const page of ["index.html", "product.html", "account.html"]) {
@@ -387,6 +396,11 @@ console.log("\n-- compose -------------------------------------------------\n");
     "the storefront is bind-mounted, not baked",
     /\.\/demo-store-clean:\/store/.test(compose),
     "pasting the tag on the host has to be live on the next refresh, with no rebuild",
+  );
+  check(
+    "the store receives Razorpay keys directly from .env",
+    /store:[\s\S]*?RAZORPAY_KEY_ID: \$\{RAZORPAY_KEY_ID:-\}[\s\S]*?RAZORPAY_KEY_SECRET: \$\{RAZORPAY_KEY_SECRET:-\}/.test(compose),
+    "pasting the two test values before docker compose up is the entire storefront setup",
   );
   // Every variable whose NAME says it carries a credential must have a value
   // that is an interpolation, empty, or a path. A literal is a secret in version

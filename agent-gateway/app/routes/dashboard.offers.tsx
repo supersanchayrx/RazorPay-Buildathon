@@ -10,13 +10,15 @@ import { Divider } from "@astryxdesign/core/Divider";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { HStack } from "@astryxdesign/core/HStack";
 import { Heading } from "@astryxdesign/core/Heading";
+import { CodeBlock } from "@astryxdesign/core/CodeBlock";
+import { List, ListItem } from "@astryxdesign/core/List";
 import { NumberInput } from "@astryxdesign/core/NumberInput";
 import { Table, pixel, proportional } from "@astryxdesign/core/Table";
 import { Text } from "@astryxdesign/core/Text";
 import { Token } from "@astryxdesign/core/Token";
 import { VStack } from "@astryxdesign/core/VStack";
 
-import { Block, Eyebrow, Figure, Figures, Note, Page, PageHead } from "../components/console";
+import { Block, Eyebrow, Figure, Figures, Note, Page, PageHead, Setup } from "../components/console";
 import { requireMerchant } from "../lib/auth.server";
 import { sitesForMerchant } from "../lib/sites.server";
 import { jsonFeedCatalog } from "../lib/catalog.server";
@@ -321,6 +323,42 @@ export default function Offers() {
       {run.emptyReason ? (
         <Banner status="info" title="Nothing to propose this run" description={run.emptyReason} />
       ) : null}
+
+      <Setup title="Give proposals enough evidence">
+        <Card>
+          <List listStyle="decimal" density="spacious">
+            <ListItem
+              label="Enable Offers in Feature controls"
+              description="This permits proposals and approved promotions; it does not manufacture evidence."
+            />
+            <ListItem
+              label="Provide unit cost for each SKU and merchant floors"
+              description="The current Docker build reads these from /data/merchant-inputs.json. Without cost and margin limits, it refuses to propose a discount."
+            />
+            <ListItem
+              label="Accumulate at least 30 settled orders"
+              description="Chapman checkout orders enter this history automatically. A new real store should correctly show too little evidence until enough orders exist."
+            />
+            <ListItem
+              label="Open this page again and review every stopped idea"
+              description="Nothing becomes a live offer until you approve a price experiment here."
+            />
+          </List>
+        </Card>
+        <Text color="secondary">
+          For a presentation only, the bundled deterministic fixture supplies synthetic orders,
+          carts, costs and floors. Set the following value in the root .env, then recreate the
+          gateway. Keep it off for real merchant evaluation.
+        </Text>
+        <CodeBlock
+          code={"CHAPMAN_SEED=true\n\ndocker compose up -d --force-recreate gateway"}
+          language="bash"
+          title="Synthetic demo history only"
+          hasCopyButton
+          container="card"
+          size="sm"
+        />
+      </Setup>
 
       {d.offers.length > 0 ? (
         <Block

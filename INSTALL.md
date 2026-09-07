@@ -16,6 +16,13 @@ A real storefront also needs a public origin and a JSON catalogue feed. HTTPS
 is required in production. The feed format is documented in
 [docs/catalog-format.md](docs/catalog-format.md).
 
+Chapman is deliberately adaptable to different custom storefront stacks, but
+the demo and initial release assume Razorpay is already integrated by the
+merchant: Razorpay Checkout is loaded on the website and the Chapman settlement
+webhook has been registered in Razorpay. The setup below links credentials to
+that existing integration; it does not provision a Razorpay account, KYC,
+payment-method access, Checkout, or the webhook.
+
 OpenRouter, Razorpay, Sarvam, Twilio, Shopify, and a database are not required
 for the basic custom-storefront assistant. The Analyst requires OpenRouter.
 
@@ -110,6 +117,9 @@ an integration is installed.
 
 ## Install the storefront interfaces
 
+For the bundled demo and a page-by-page verification of every capability, see
+[Fresh storefront setup](docs/fresh-store-setup.md).
+
 ### Assistant embed
 
 Open **Assistant** and copy the generated script tag. Its basic form is:
@@ -194,15 +204,29 @@ The browser receives names and status booleans, never secret values.
 
 ### Razorpay
 
-For test checkout:
+For Monsoon Market's ordinary test checkout, paste only:
 
 ```dotenv
 RAZORPAY_KEY_ID=
 RAZORPAY_KEY_SECRET=
 ```
 
-The store must also be linked through the Razorpay checkbox during registration.
-Chapman advertises checkout only when both linked values are non-empty.
+Then start the demo normally. No Chapman registration, checkbox, embed, or
+payment setup command is required for the storefront cart.
+
+The Razorpay checkbox during Chapman registration is a separate choice: enable
+it only when shopping agents should also receive Chapman's hosted checkout. If
+that checkbox was skipped, the Chapman-side link can be added afterward with:
+
+```bash
+docker compose run --rm gateway npm run site:enable-razorpay -- --site pk_yourstore
+docker compose up -d --force-recreate gateway
+```
+
+The linker stores variable names, never credential values. It is not needed for
+Monsoon Market's own checkout. The bundled store reads the two test credentials
+directly from Docker and already implements server-side quote, Razorpay order
+creation, and payment confirmation.
 
 For reliable settlement, configure:
 
@@ -286,6 +310,21 @@ call, and select **Place test call**.
 This is a real provider call and can consume credit. It uses a fixed notice,
 does not read customer data, allows one call every 30 seconds, and follows quiet
 hours.
+
+A small console appears below the button after submission:
+
+- `[working]` means Chapman is validating and contacting the configured
+  providers.
+- `[ok]` records a stage that actually completed, including Sarvam audio
+  rendering and Twilio acceptance.
+- `[error]` is the exact stage or policy that stopped the call.
+- `[done] Call queued` means Twilio accepted the outbound request. Confirm the
+  final answered/completed result on the test handset or in Twilio's call log.
+
+The result stays beside the form. During quiet hours, an error also points to
+`VOICE_QUIET_HOURS_TEST_NUMBER`; its value must exactly match the E.164 number
+entered in the form. After changing `.env`, recreate the gateway before trying
+again.
 
 ### Automated checks
 
@@ -397,9 +436,11 @@ npm run check
 |---|---|
 | `docker compose down` | Stops services and keeps data |
 | `docker compose up -d --build gateway` | Rebuilds the gateway and keeps data |
-| `docker compose down -v` | Deletes the merchant account, configuration, secrets, ledger, and orders |
+| `docker compose --profile "*" down --volumes --remove-orphans` | Stops every profile and deletes the merchant account, configuration, secrets, ledger, and demo-store orders |
 
-Use `down -v` only for an intentional complete reset.
+Use the all-profile `down --volumes` command only for an intentional complete
+reset. If Docker still reports a resource in use, use the project-scoped force
+cleanup in [Fresh storefront setup](docs/fresh-store-setup.md#1-reset-the-demo).
 
 Native state defaults to `agent-gateway/data/`. Set `CHAPMAN_DATA_DIR` to a
 backed-up location in production.
