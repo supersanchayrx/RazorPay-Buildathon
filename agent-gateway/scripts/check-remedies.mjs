@@ -168,6 +168,11 @@ check(
   RSN.classifyByPhrases("honestly it was just too expensive for me").reason === "price_too_high",
 );
 check(
+  "an explicit discount request is a deterministic price objection",
+  RSN.classifyByPhrases("can you give me a discount")?.reason === "price_too_high",
+  "a clear request must not fall through to an unreliable model classification",
+);
+check(
   "“delivery would take two weeks” is about speed",
   RSN.classifyByPhrases("delivery would take two weeks and I needed it sooner").reason === "shipping_speed",
 );

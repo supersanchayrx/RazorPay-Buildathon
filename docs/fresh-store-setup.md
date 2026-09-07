@@ -4,7 +4,28 @@ This guide starts with a real, unconfigured Monsoon Market and adds one Chapman
 capability at a time. Do not treat a feature switch, an installed route, and a
 configured provider as the same state. Verify each separately.
 
-## 1. Reset the demo
+## 1. Start Docker and reset the demo
+
+Run the following from the repository root. On Windows, start Docker Desktop
+first if its engine is not already running:
+
+```powershell
+$dockerDesktop = Join-Path $Env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
+if (-not (docker info 2>$null)) {
+  if (-not (Test-Path -LiteralPath $dockerDesktop)) {
+    throw "Docker Desktop was not found at $dockerDesktop"
+  }
+  Start-Process -FilePath $dockerDesktop
+  do {
+    Start-Sleep -Seconds 2
+    docker info *> $null
+  } until ($LASTEXITCODE -eq 0)
+}
+docker version
+```
+
+Docker Desktop may take a minute to make the engine available. The loop waits
+for that engine; it does not create or change any Chapman containers.
 
 The first command deletes the current Docker data volumes: merchant accounts,
 store registration, generated signing secrets, orders, memories, settings and
@@ -18,6 +39,12 @@ Set-Location ..
 docker compose --profile demo up -d --build
 docker compose ps
 docker compose logs gateway
+```
+
+For an ordinary restart that preserves existing data, use:
+
+```powershell
+docker compose --profile demo up -d
 ```
 
 The `"*"` matters: it activates the `demo` and `tunnel` profiles for cleanup.
@@ -55,6 +82,54 @@ must return `404`:
 ```powershell
 curl.exe -i http://localhost:4000/.well-known/ucp
 ```
+
+### Optional: start the bundled ngrok tunnel
+
+The tunnel exposes the **Chapman gateway**, not the Monsoon Market storefront.
+It is required for inbound Razorpay webhooks and Twilio voice callbacks. A
+local-only assistant and UCP recording does not need it.
+
+Put your ngrok token in the repository-root `.env` before starting the tunnel:
+
+```dotenv
+NGROK_AUTHTOKEN=your-ngrok-authtoken
+```
+
+Start the demo and tunnel profiles, then read the assigned HTTPS URL from
+ngrok's local inspector:
+
+```powershell
+docker compose --profile demo --profile tunnel up -d --build
+
+$tunnels = (Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels").tunnels
+$publicOrigin = $tunnels |
+  Where-Object { $_.proto -eq "https" } |
+  Select-Object -First 1 -ExpandProperty public_url
+if (-not $publicOrigin) { throw "ngrok has not published an HTTPS tunnel." }
+$publicOrigin = $publicOrigin.TrimEnd("/")
+$publicOrigin
+```
+
+Copy the printed value into both entries in `.env`:
+
+```dotenv
+PUBLIC_ORIGIN=https://your-current-ngrok-host.ngrok-free.app
+GATEWAY_ORIGIN=https://your-current-ngrok-host.ngrok-free.app
+```
+
+Recreate the gateway and store so generated embed tags, payment links, TwiML
+callbacks and storefront substitutions all use the same public origin:
+
+```powershell
+docker compose --profile demo --profile tunnel up -d --force-recreate gateway store
+docker compose ps
+curl.exe -I $publicOrigin/embed.js
+```
+
+With a free ephemeral ngrok domain, repeat the URL lookup and `.env` update
+whenever the tunnel hostname changes. Keep `http://localhost:4000` as the
+storefront browser origin during the Docker demo; the ngrok URL above belongs
+to Chapman, not to the store.
 
 ## 2. Register the storefront
 
@@ -322,6 +397,23 @@ CHAPMAN_SEED=true
 docker compose up -d --force-recreate gateway
 ```
 
+The seed includes four deliberately loyal recovery shoppers. Each has at least
+six completed orders and a fresh abandoned basket that remains profitable at
+8% off. On the Recovery page these baskets are labelled
+**regular · discount eligible**; ordinary new shoppers remain labelled
+**new · no recovery discount**.
+
+To apply the presentation-safe recovery policy after registering Monsoon
+Market, run:
+
+```powershell
+docker compose exec -T gateway node scripts/configure-demo-recovery.mjs --shop pk_monsoon_market
+```
+
+This enables conversational voice recovery, permits an 8% grant for price and
+delivery-cost objections from returning or regular shoppers, and keeps the
+full payment-link handoff off. It does not place a call.
+
 Open **Offers**, inspect stopped candidates, and approve one experiment. The
 assistant and agent profile may advertise only that approved offer. Keep
 `CHAPMAN_SEED=false` for a real merchant evaluation.
@@ -341,7 +433,7 @@ Use a funded accessible model for a predictable demo, recreate the gateway,
 then open **Analyst** and choose a suggested question. Verify that the answer
 shows at least one tool call. It cannot change a price or approve an offer.
 
-## 12. Basket recovery, test calls, and payment-link SMS
+## 12. Basket recovery, test calls, and post-call SMS
 
 Recovery needs a captured cart before it needs a phone provider.
 
@@ -401,29 +493,44 @@ TWILIO_MESSAGING_FROM=
 TWILIO_MESSAGING_SERVICE_SID=
 ```
 
-To test the complete recovery flow:
+To test the complete recovery flow on either account type:
 
-1. Link Razorpay for this Chapman storefront and confirm the Agent front page
-   says checkout is configured.
-2. In Recovery, enable the discount policy. Keep `price_too_high` selected,
-   choose `returning` or `regular`, and set the depth and monthly exposure caps.
-3. Under **On the telephone**, choose **Hold a conversation** and enable
-   **Send an approved discounted-payment link by SMS**.
+1. Enable Recovery and Voice in **Feature controls**.
+2. Use the demo configuration command above, or configure the same policy in
+   Recovery: 8%, `price_too_high` and `shipping_cost`, returning shoppers or
+   better, plus explicit monthly grant and margin caps.
+3. Under **On the telephone**, choose **Hold a conversation**.
+4. Refresh Recovery and choose a card labelled
+   **regular · discount eligible**. The Chai + Assam and Coffee + Chai fixtures
+   are clean recovery examples. Send only to your configured test handset.
+5. On the call say `Can you give me a discount?` or
+   `Delivery charges bahut jyada thi.` Chapman classifies that first durable
+   answer, checks tier, cost, margin floor, quantity, expiry and monthly caps,
+   and issues exactly the configured 8% grant when every gate passes.
+6. The fixed spoken response confirms that 8% was approved. If the post-call
+   Trial template is available, it also says a discount-confirmation SMS will
+   arrive after the call. If no grant is issued, the call makes no SMS promise.
 
-Step 3 requires a Full Twilio account. Trial templates cannot include the unique
-Razorpay payment URL, so Chapman stops before creating an undeliverable order. 4. Save, then place a recovery call for an eligible captured cart. A manual
-integration test call never creates a discount or order. 5. When the shopper says price was the blocker, Chapman records the reason,
-checks tier, cost, floor, quantity, expiry and monthly budgets, then creates
-a discounted Razorpay order. Only after that succeeds does it send the
-payment link to the number on the call. 6. Pay through the link with Razorpay test mode. Browser confirmation or the
-configured webhook records the order, closes the abandoned cart, adds a
-non-sensitive shopper outcome memory, and updates shop-wide aggregate
-recovery results.
+For a **Twilio Trial account**, leave **Send an approved discounted-payment
+link by SMS** off. After Twilio reports the call completed, Chapman sends the
+permitted predefined template once to `TWILIO_TEST_TO`. Trial templates cannot
+carry a unique Razorpay URL or custom promotional body, so the call does not
+claim that a payment link was sent.
+
+For a **Full Twilio account**, first link Razorpay for this Chapman storefront
+and confirm the Agent front page says checkout is configured. Then enable
+**Send an approved discounted-payment link by SMS**. After the grant and
+Razorpay checkout both succeed, Chapman sends the unique discounted payment
+link and the fixed voice line says it was sent.
+Paying it in Razorpay test mode records the order, closes the abandoned cart,
+adds a non-sensitive shopper outcome memory, and updates aggregate recovery
+results.
 
 The model can hold the Hinglish conversation but cannot choose a percentage.
 Exact offer terms come only from the grant written by server policy. The SMS
-handoff is attempted once per grant and is separate from the generic SMS
-campaign channel, which remains unavailable in this release.
+handoff is attempted once per grant. A manual integration test call never
+creates a discount, message, or order; use a labelled recovery basket for this
+demo.
 
 ## 13. Ledger and test bench
 

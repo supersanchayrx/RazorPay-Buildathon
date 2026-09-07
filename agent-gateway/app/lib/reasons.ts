@@ -21,7 +21,7 @@
  * remedy, which means a model deciding what a shopper deserves — which is the
  * thing this codebase exists not to do. The model's entire job here is to pick
  * one of eleven labels. It cannot invent a twelfth, and it never sees the
- * policy table, the shopper's standing, or the words "discount" and "offer".
+ * policy table, the shopper's standing, or which labels unlock a remedy.
  *
  * DETERMINISTIC FIRST, MODEL SECOND, UNKNOWN BY DEFAULT.
  *
@@ -138,7 +138,7 @@ const PATTERNS: Array<{ reason: Reason; re: RegExp }> = [
   },
   {
     reason: "price_too_high",
-    re: /\b(?:too (?:expensive|costly|pricey|much)|price(?:y|d)? (?:too )?high|can'?t afford|out of (?:my )?budget|over (?:my )?budget|bit steep|beyond my budget)\b|\bcheaper\b/i,
+    re: /\b(?:too (?:expensive|costly|pricey|much)|price(?:y|d)? (?:too )?high|can'?t afford|out of (?:my )?budget|over (?:my )?budget|bit steep|beyond my budget)\b|\bcheaper\b|\b(?:(?:any|give|offer|apply|provide|want|need|get|have|do)\b[^.!?]{0,30})?(?:discount|coupon|promo|deal)\b/i,
   },
   {
     reason: "comparing",

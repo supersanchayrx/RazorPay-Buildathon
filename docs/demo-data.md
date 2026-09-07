@@ -22,13 +22,16 @@ When testing during the configured quiet hours, set
 `VOICE_QUIET_HOURS_TEST_NUMBER` to the same E.164 number. This exception admits
 only that one handset; it does not disable quiet hours for a campaign.
 
-On a new data volume, the gateway creates the fixture on its first start:
+After the storefront has been registered, recreate the gateway. On a new data
+volume with `CHAPMAN_SEED=true`, it creates the fixture once; it deliberately
+does not seed before a Chapman storefront configuration exists:
 
 ```powershell
 docker compose up -d --force-recreate gateway
 ```
 
-To deliberately refresh an existing demo volume, run:
+If the gateway is already running, or to deliberately refresh an existing demo
+volume, run the seed explicitly:
 
 ```powershell
 docker compose exec -T gateway npm run seed
@@ -119,9 +122,14 @@ orders qualify as `regular`, every safety gate passes, and Priya announces the
 merchant-approved 8% grant. The same complaint from a new shopper still gets
 the published delivery policy rather than money.
 
+Three additional loyal shoppers provide clean repeatable baskets. Recovery
+labels them **regular · discount eligible** and shows their completed-order
+count. Use the Chai + Assam or Coffee + Chai card for the clearest recovery
+recording; the Nilgiri card may also demonstrate a separately approved promo.
+
 Seeded phone numbers and emails are presentation placeholders. Do not place a
 real call to one. Use **Place test call** only with a number you control or with
-an expecting recipient, as described in [Fresh storefront setup](fresh-store-setup.md#12-basket-recovery-test-calls-and-payment-link-sms).
+an expecting recipient, as described in [Fresh storefront setup](fresh-store-setup.md#12-basket-recovery-test-calls-and-post-call-sms).
 
 ### Shopper order history
 

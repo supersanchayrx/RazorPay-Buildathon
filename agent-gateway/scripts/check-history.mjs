@@ -166,6 +166,27 @@ check(
     demoMarginAfterDiscount >= inputs.floors.minMarginPct,
   `subtotal INR ${demoCart?.subtotal ?? 0}; ${demoMarginAfterDiscount.toFixed(1)}% minimum line margin after discount`,
 );
+const extraLoyalDemoIds = [
+  ["cus_demo_loyal_chai", "crt_demo_loyal_chai"],
+  ["cus_demo_loyal_green", "crt_demo_loyal_green"],
+  ["cus_demo_loyal_coffee", "crt_demo_loyal_coffee"],
+];
+const safeExtraLoyalDemos = extraLoyalDemoIds.filter(([customerId, cartId]) => {
+  const placed = orders.filter(
+    (order) => order.status === "placed" && order.customer?.id === customerId,
+  );
+  const cart = carts.find((row) => row.id === cartId);
+  if (placed.length < 4 || !cart || cart.subtotal >= 1200) return false;
+  return cart.lines.every((line) => {
+    const price = line.unitPrice * 0.92;
+    return ((price - inputs.unitCost[line.sku]) / price) * 100 >= inputs.floors.minMarginPct;
+  });
+});
+check(
+  "S7  three extra loyal recovery shoppers safely clear the demo discount policy",
+  safeExtraLoyalDemos.length === extraLoyalDemoIds.length,
+  `${safeExtraLoyalDemos.length}/${extraLoyalDemoIds.length} ready`,
+);
 
 // The counterfactual for a festive discount is NOT the quiet-season baseline.
 // Absent any discount, the festival demand still arrives — that is what a

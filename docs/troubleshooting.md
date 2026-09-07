@@ -24,7 +24,7 @@ docker compose logs gateway
 `docker compose down` does not clear the volume. If the existing data is wanted,
 keep it. If this is intentionally a disposable demo and a complete reset is
 required, back up anything important before using the all-profile reset in
-[Fresh storefront setup](fresh-store-setup.md#1-reset-the-demo).
+[Fresh storefront setup](fresh-store-setup.md#1-start-docker-and-reset-the-demo).
 
 Also confirm these values have not opted into a fixture:
 
@@ -48,7 +48,7 @@ docker compose --profile "*" down --volumes --remove-orphans
 
 This is a complete reset and deletes Chapman and demo-store Docker data. If an
 interrupted run still leaves resources behind, use the project-labeled force
-cleanup in [Fresh storefront setup](fresh-store-setup.md#1-reset-the-demo).
+cleanup in [Fresh storefront setup](fresh-store-setup.md#1-start-docker-and-reset-the-demo).
 
 ---
 
@@ -182,8 +182,10 @@ changing `.env`, recreate the gateway.
 If you see `Invalid template. Trial accounts can only use pre-defined
 templates`, rebuild the current gateway and try once more. Chapman recognizes
 that exact provider error and retries the test once with the predefined
-template. It does not retry a discounted payment-link message: that unique link
-requires a Full Twilio account.
+template. It does not retry a unique discounted payment-link message: that link
+requires a Full Twilio account. A completed Trial recovery call that actually
+announced a grant uses the predefined template instead and records the attempt
+under **Recent SMS handoffs**.
 
 If a real recovery handoff fails, inspect **Recent SMS handoffs**. Chapman does
 not automatically retry a grant after a provider attempt because a lost Twilio

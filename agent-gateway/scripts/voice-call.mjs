@@ -18,7 +18,7 @@
  * that bypasses the safety rails is a test of code that will not run in
  * production.
  *
- * Run:  node --env-file=../.env scripts/voice-call.mjs [--dry] [--index N]
+ * Run:  node --env-file=../.env scripts/voice-call.mjs [--local-preview] [--dry] [--index N] [--cart CART_ID]
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -46,7 +46,10 @@ const SIT = await load("app/lib/sites.server.ts", "sit-voice.mjs");
 
 const args = process.argv.slice(2);
 const dry = args.includes("--dry");
+const localPreview = args.includes("--local-preview");
 const index = Number(args[args.indexOf("--index") + 1]) || 0;
+const cartAt = args.indexOf("--cart");
+const cartId = cartAt >= 0 ? String(args[cartAt + 1] ?? "").trim() : "";
 
 /**
  * `--replay` speaks a draft that already exists, instead of planning a run.
@@ -87,11 +90,15 @@ if (!to) {
 }
 
 const c = VOI.config();
+const maskedPhone = (phone) =>
+  phone && phone.length > 5
+    ? `${phone.slice(0, 3)}${"*".repeat(Math.max(3, phone.length - 5))}${phone.slice(-2)}`
+    : "configured";
 console.log(`shop      ${shop}`);
 console.log(`origin    ${c.origin}`);
 console.log(`voice     ${c.voice} / ${c.language}`);
-console.log(`from      ${c.twilioFrom}`);
-console.log(`to        ${to}   (overridden for the test)`);
+console.log(`from      ${maskedPhone(c.twilioFrom)}`);
+console.log(`to        ${maskedPhone(to)}   (configured test handset)`);
 console.log("");
 
 /* ---- 2. a real target from a real run --------------------------- */
@@ -138,7 +145,18 @@ if (run && !run.targets.length) {
 
 if (run) {
   console.log(`${run.targets.length} targets, ${run.suppressed.length} suppressed`);
-  draft = RCV.toDraft(shop, run.targets[Math.min(index, run.targets.length - 1)]);
+  const picked = cartId
+    ? run.targets.find((target) => target.cartId === cartId)
+    : run.targets[Math.min(index, run.targets.length - 1)];
+  if (!picked) {
+    console.error(
+      cartId
+        ? `cart ${cartId} is not an eligible recovery target`
+        : `target index ${index} is out of range`,
+    );
+    process.exit(1);
+  }
+  draft = RCV.toDraft(shop, picked);
 }
 
 /**
@@ -156,9 +174,14 @@ console.log(`margin      Rs ${draft.marginAtStake}`);
 console.log(`facts       ${draft.facts.map((f) => `${f.label}=${f.value}`).join(", ") || "(none)"}`);
 console.log("");
 console.log("--- what will be spoken, verbatim ---");
-console.log(draft.text);
+console.log(draft.link ? draft.text.replaceAll(draft.link, "[signed recovery link]") : draft.text);
 console.log("------------------------------------");
 console.log("");
+
+if (localPreview) {
+  console.log("--local-preview: nothing sent to speech or call providers.");
+  process.exit(0);
+}
 
 /* ---- 3. render first, so a TTS failure is not a wasted call ------ */
 

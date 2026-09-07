@@ -327,7 +327,7 @@ The result stays beside the form. During quiet hours, an error also points to
 entered in the form. After changing `.env`, recreate the gateway before trying
 again.
 
-### SMS test and discounted payment handoff
+### SMS test and recovery follow-up
 
 Open **Recovery**, enter a verified E.164 test number, confirm it expects the
 message, and select **Send test message**. A Full Twilio account receives
@@ -347,18 +347,16 @@ To enable the real recovery flow:
 3. In **Recovery**, choose **Hold a conversation**.
 4. Enable **Recovery discounts**, set the eligible reason, customer tier,
    percentage, lifetime, grant count, and margin budget.
-5. Enable **Send an approved discounted-payment link by SMS** and save.
-
-This last option requires a Full Twilio account. Trial accounts accept only
-predefined SMS templates and therefore cannot include Chapman's unique Razorpay
-payment URL. Chapman checks the account type before creating the payment order.
+5. For a Full account, enable **Send an approved discounted-payment link by
+   SMS**. Leave it off for a Trial account.
 
 The call defaults to Roman-script Hinglish. If the first recorded reason passes
-the policy, Chapman issues one cart-bound grant, creates the server-priced
-Razorpay order, and sends its payment page to the same number that is on the
-call. A paid browser confirmation or Razorpay webhook records the order and
-updates the recovery outcome counts. Production messaging in India still
-requires the applicable DLT registration and approved templates.
+the policy, Chapman issues one cart-bound grant and announces its exact depth.
+On a Trial account, a completed call queues Twilio's predefined template once
+to `TWILIO_TEST_TO`; it does not claim to send a unique payment URL. On a Full
+account, Chapman creates the server-priced Razorpay order and sends its payment
+page to the number on the call. Production messaging in India still requires
+the applicable DLT registration and approved templates.
 
 ### Automated checks
 
@@ -474,7 +472,7 @@ npm run check
 
 Use the all-profile `down --volumes` command only for an intentional complete
 reset. If Docker still reports a resource in use, use the project-scoped force
-cleanup in [Fresh storefront setup](docs/fresh-store-setup.md#1-reset-the-demo).
+cleanup in [Fresh storefront setup](docs/fresh-store-setup.md#1-start-docker-and-reset-the-demo).
 
 Native state defaults to `agent-gateway/data/`. Set `CHAPMAN_DATA_DIR` to a
 backed-up location in production.

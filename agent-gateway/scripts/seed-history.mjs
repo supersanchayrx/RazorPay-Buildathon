@@ -43,14 +43,18 @@ if (TEST_PHONE && !/^\+[1-9]\d{7,14}$/.test(TEST_PHONE)) {
 }
 
 const OUT = DATA_DIR;
-const LOYAL_DEMO_CUSTOMER = "cus_demo_regular_delivery";
-const LOYAL_DEMO_CART = "crt_demo_regular_delivery";
+const LOYAL_DEMOS = [
+  { customerId: "cus_demo_regular_delivery", cartId: "crt_demo_regular_delivery" },
+  { customerId: "cus_demo_loyal_chai", cartId: "crt_demo_loyal_chai" },
+  { customerId: "cus_demo_loyal_green", cartId: "crt_demo_loyal_green" },
+  { customerId: "cus_demo_loyal_coffee", cartId: "crt_demo_loyal_coffee" },
+];
 
 /**
  * Re-seeding is the demo reset button for the planted recovery story.
  *
  * Orders and carts are deterministic, but outreach state intentionally lives
- * in separate append-only files. Without clearing only this planted identity,
+ * in separate append-only files. Without clearing only these planted identities,
  * the first rehearsal puts it inside the normal 30-day cooldown and every
  * subsequent rehearsal has no callback target. Never match the shared test
  * phone here: every synthetic shopper uses it, so doing that would erase the
@@ -72,9 +76,11 @@ function resetLoyalDemoRuntime() {
     if (!fs.existsSync(file)) continue;
     const lines = fs.readFileSync(file, "utf8").split("\n").filter(Boolean);
     const kept = lines.filter((line) => {
-      const belongsToDemo =
-        line.includes(`\"customerId\":\"${LOYAL_DEMO_CUSTOMER}\"`) ||
-        line.includes(`\"cartId\":\"${LOYAL_DEMO_CART}\"`);
+      const belongsToDemo = LOYAL_DEMOS.some(
+        ({ customerId, cartId }) =>
+          line.includes(`\"customerId\":\"${customerId}\"`) ||
+          line.includes(`\"cartId\":\"${cartId}\"`),
+      );
       if (belongsToDemo) removed += 1;
       return !belongsToDemo;
     });
@@ -109,9 +115,10 @@ function resetLoyalDemoRuntime() {
  *   S6  gifting demand rises in the two weeks before Raksha Bandhan (14–29 Aug
  *       2026). Real seasonality, so the detectors have something to be right
  *       about — and something that must not be mistaken for a trend change.
- *   S7  one named demo shopper has twelve recent orders and a ₹1,140 abandoned
- *       basket. It sits below free delivery and safely clears the 8% margin
- *       floor, making the recovery-call story repeatable rather than lucky.
+ *   S7  four named demo shoppers have recent completed orders and abandoned
+ *       baskets below free delivery. Every one safely clears the 8% margin
+ *       floor, making several recovery-call rehearsals repeatable rather than
+ *       lucky.
  *
  * Traps — things a naive proposer will find that are NOT there:
  *
@@ -643,7 +650,7 @@ for (let k = 0; k < kettleDays.length; k++) {
 
 /* S7 — the golden-path recovery call used in the presentation. */
 const demoCustomer = {
-  id: LOYAL_DEMO_CUSTOMER,
+  id: LOYAL_DEMOS[0].customerId,
   phone: TEST_PHONE || "+919900000777",
   email: "demo.regular@example.invalid",
 };
@@ -695,7 +702,7 @@ for (const [i, daysAgo] of [170, 154, 138, 122, 106, 90, 74, 58, 42, 28, 18, 8].
 
 const demoCartLines = [demoLine("MCB-250"), demoLine("SEA-250")];
 carts.push({
-  id: LOYAL_DEMO_CART,
+  id: LOYAL_DEMOS[0].cartId,
   synthetic: true,
   seed: SEED,
   shop: SHOP,
@@ -707,6 +714,78 @@ carts.push({
   lastStep: "address",
   recovered: false,
 });
+
+const extraLoyalDemos = [
+  {
+    customerId: "cus_demo_loyal_chai",
+    cartId: "crt_demo_loyal_chai",
+    email: "demo.loyal.chai@example.invalid",
+    skus: ["MCB-250", "SEA-250"],
+  },
+  {
+    customerId: "cus_demo_loyal_green",
+    cartId: "crt_demo_loyal_green",
+    email: "demo.loyal.green@example.invalid",
+    skus: ["NFG-250"],
+  },
+  {
+    customerId: "cus_demo_loyal_coffee",
+    cartId: "crt_demo_loyal_coffee",
+    email: "demo.loyal.coffee@example.invalid",
+    skus: ["AVF-250", "MCB-100"],
+  },
+];
+
+for (const [demoIndex, fixture] of extraLoyalDemos.entries()) {
+  const customer = {
+    id: fixture.customerId,
+    phone: TEST_PHONE || `+91990000078${demoIndex}`,
+    email: fixture.email,
+  };
+  for (let i = 0; i < 6; i++) {
+    const basketLines = [demoLine(i % 2 === 0 ? "MCB-100" : "SEA-250")];
+    const subtotal = basketLines[0].lineTotal;
+    orders.push({
+      id: `ord_demo_loyal_${demoIndex + 1}_${String(i + 1).padStart(2, "0")}`,
+      synthetic: true,
+      seed: SEED,
+      shop: SHOP,
+      ts: demoAt(100 - i * 14 - demoIndex, 13),
+      customer,
+      lines: basketLines,
+      subtotal,
+      shipping: 60,
+      total: subtotal + 60,
+      currency: "INR",
+      channel: "web",
+      payment: {
+        method: "upi",
+        bank: null,
+        status: "captured",
+        amount: subtotal + 60,
+        currency: "INR",
+        attempts: [{ status: "captured", bank: null }],
+        settled: true,
+      },
+      status: "placed",
+    });
+  }
+
+  const basketLines = fixture.skus.map((sku) => demoLine(sku));
+  carts.push({
+    id: fixture.cartId,
+    synthetic: true,
+    seed: SEED,
+    shop: SHOP,
+    ts: demoAt(0, 15 - demoIndex),
+    customer,
+    lines: basketLines,
+    subtotal: basketLines.reduce((sum, line) => sum + line.lineTotal, 0),
+    currency: "INR",
+    lastStep: demoIndex === 1 ? "cart" : "address",
+    recovered: false,
+  });
+}
 
 orders.sort((a, b) => a.ts.localeCompare(b.ts));
 carts.sort((a, b) => a.ts.localeCompare(b.ts));

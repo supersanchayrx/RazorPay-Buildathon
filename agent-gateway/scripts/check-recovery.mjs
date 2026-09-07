@@ -460,6 +460,14 @@ check(
 const first = r.targets[0];
 const sendResult = await OUT.send(RCV.toDraft(SHOP, first));
 check("a draft delivers through the draft channel", sendResult.ok, `ref ${sendResult.ref ?? "-"}`);
+const savedFirst = OUT.readSends(SHOP).filter(
+  (entry) => entry.draftId === RCV.toDraft(SHOP, first).id,
+);
+check(
+  "a successful delivery persists its provider reference without double-counting the reservation",
+  savedFirst.length === 1 && savedFirst[0].ref === sendResult.ref,
+  `rows ${savedFirst.length}; ref ${savedFirst[0]?.ref ?? "-"}`,
+);
 
 const blocked = await OUT.send({ ...RCV.toDraft(SHOP, r.targets[1]), channel: "whatsapp" });
 check(

@@ -1043,10 +1043,26 @@ function TargetCard({
               {t.to.phone ? "phone" : "email"} on file
             </Text>
           </VStack>
-          <Token size="sm" color={treat.tone} label={treat.label} />
+          <HStack gap={2} wrap="wrap">
+            <Token size="sm" color={treat.tone} label={treat.label} />
+            <Token
+              size="sm"
+              color={t.recoveryStanding.discountEligible ? "green" : "gray"}
+              label={
+                t.recoveryStanding.discountEligible
+                  ? `${t.recoveryStanding.tier} · discount eligible`
+                  : `${t.recoveryStanding.tier} · no recovery discount`
+              }
+            />
+          </HStack>
         </HStack>
 
         <Text color="secondary">{t.because}</Text>
+        <Text type="supporting" color="secondary">
+          {t.recoveryStanding.completedOrders} completed order
+          {t.recoveryStanding.completedOrders === 1 ? "" : "s"}. A discount is
+          considered only if they say price or delivery cost stopped them.
+        </Text>
 
         {/* The exact sentence, not a template. If a merchant would not send it
             themselves they should find that out here. */}

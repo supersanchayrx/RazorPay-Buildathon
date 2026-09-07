@@ -199,16 +199,17 @@ webhook setup, tunnel setup, and model overrides.
   predefined `sms_customer_support` template. The console shows Twilio
   acceptance, and neither path creates a cart, discount, or payment order.
 
-For automated recovery, choose conversational calls, configure the recovery
-discount policy, then enable **Send an approved discounted-payment link by
-SMS**. Chapman classifies the caller's first durable answer, evaluates the same
-returning-customer, margin, quantity, expiry, and monthly-budget gates used by
-web recovery, creates the discounted Razorpay order, and messages its payment
-link to the same number. The model cannot choose or negotiate the percentage.
+For automated recovery, choose conversational calls and configure the recovery
+discount policy. Chapman classifies the caller's first durable answer and
+evaluates the returning-customer, margin, quantity, expiry, and monthly-budget
+gates used by web recovery. The model cannot choose or negotiate the
+percentage.
 
-The automatic payment-link handoff requires a Full Twilio account. Trial SMS
-accepts only predefined bodies, so it cannot carry a unique Razorpay order URL;
-Chapman detects this and stops before creating an undeliverable payment order.
+On a Trial account, a completed call that announced a real grant sends Twilio's
+predefined template once to `TWILIO_TEST_TO`; it never claims that template is
+a unique payment link. A Full account can additionally enable **Send an
+approved discounted-payment link by SMS**, which creates the discounted
+Razorpay order and sends its payment page to the number on the call.
 
 Run the automated checks with:
 

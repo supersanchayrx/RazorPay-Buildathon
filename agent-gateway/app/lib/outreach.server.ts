@@ -350,12 +350,27 @@ export type SendRecord = {
 
 export function readSends(shop?: string): SendRecord[] {
   try {
-    return fs
+    const rows = fs
       .readFileSync(SEND_FILE, "utf8")
       .split("\n")
       .filter(Boolean)
-      .map((l) => JSON.parse(l) as SendRecord)
-      .filter((r) => !shop || r.shop === shop);
+      .map((l) => JSON.parse(l) as SendRecord);
+
+    /**
+     * A successful delivery appends a receipt carrying the provider reference
+     * after the pre-send reservation. Fold those two append-only rows into one
+     * logical send so cooldowns and dashboard counts still see one contact.
+     */
+    const byDraft = new Map<string, SendRecord>();
+    for (const row of rows) {
+      const key = `${row.shop}|${row.draftId}`;
+      const prior = byDraft.get(key);
+      byDraft.set(
+        key,
+        prior ? { ...prior, ...row, ts: prior.ts } : row,
+      );
+    }
+    return [...byDraft.values()].filter((r) => !shop || r.shop === shop);
   } catch {
     return [];
   }
@@ -505,6 +520,21 @@ export async function send(d: Draft): Promise<SendRecord> {
   const out: { ok: boolean; ref?: string; error?: string } = await ch
     .deliver(d)
     .catch((e: Error) => ({ ok: false, error: e.message }));
+
+  /**
+   * The reservation has to precede delivery, but a provider reference cannot
+   * exist until delivery accepts the request. Append it as a receipt and let
+   * readSends fold both rows. Without this row a terminal Twilio callback
+   * cannot prove it belongs to the call Chapman placed.
+   */
+  if (out.ok && out.ref && !appendSend({ ...base, ok: true, ref: out.ref })) {
+    record({
+      shop: d.shop,
+      kind: "tool_error",
+      message: "outreach provider receipt could not be persisted",
+      detail: { cartId: d.cartId, channel: d.channel },
+    });
+  }
 
   record({
     shop: d.shop,

@@ -219,6 +219,44 @@ check(
   }) === false,
 );
 
+const savedFetch = globalThis.fetch;
+let callForm;
+try {
+  globalThis.fetch = async (_url, init) => {
+    callForm = new URLSearchParams(String(init?.body ?? ""));
+    return new Response(
+      JSON.stringify({ sid: "CA_check_voice", status: "queued" }),
+      { status: 201, headers: { "content-type": "application/json" } },
+    );
+  };
+  const placed = await VOI.placeCall({
+    to: "+919999999999",
+    twimlUrl: "https://example.ngrok-free.app/voice/twiml/pk_x/a1.abc",
+    statusCallbackUrl:
+      "https://example.ngrok-free.app/voice/status/pk_x/a1.abc",
+    c: {
+      sarvamKey: "unused",
+      twilioSid: "AC00000000000000000000000000000000",
+      twilioToken: "test-token",
+      twilioFrom: "+10000000000",
+      origin: "https://example.ngrok-free.app",
+      voice: "priya",
+      language: "en-IN",
+      pace: 1.15,
+    },
+  });
+  check(
+    "a trial-compatible call sends only the callback URL",
+    placed.ok === true &&
+      callForm?.get("StatusCallback")?.includes("/voice/status/") &&
+      !callForm?.has("StatusCallbackMethod") &&
+      !callForm?.has("StatusCallbackEvent"),
+    "POST and completed are Twilio defaults; explicitly sending them is rejected by trial accounts",
+  );
+} finally {
+  globalThis.fetch = savedFetch;
+}
+
 /* ================= 3. the channel is a purchase, not a preference ================= */
 console.log("\n--- the channel cannot be switched on by editing a file ---");
 
@@ -313,7 +351,7 @@ check(
     voiceDelivery.includes("/voice/status/") &&
     fs
       .readFileSync("app/lib/voice.server.ts", "utf8")
-      .includes('form.set("StatusCallbackEvent", "completed")'),
+      .includes('form.set("StatusCallback", opts.statusCallbackUrl)'),
   "the SMS trigger belongs after the call, not inside a live speech turn",
 );
 
@@ -367,12 +405,64 @@ const approvedOnly = VRC.voiceRemedyLine({
     },
   },
   handoff: { ok: false, error: "trial template restriction" },
+  followup: null,
 });
 check(
   "the caller hears the approval without SMS provider commentary",
   approvedOnly?.includes("8% off approve") &&
     !/sms|link|send nahi|could not|cannot/i.test(approvedOnly),
   approvedOnly ?? "no fixed approval line",
+);
+const approvedWithTemplate = VRC.voiceRemedyLine({
+  ok: true,
+  decision: {
+    remedy: {
+      kind: "discount",
+      grant: { depth: 0.08, tier: "regular" },
+    },
+  },
+  handoff: { ok: false, error: "trial template restriction" },
+  followup: "template_after_call",
+});
+check(
+  "a demo discount promises only the post-call template that can actually be sent",
+  approvedWithTemplate?.includes("8% off approve") &&
+    /call.*baad.*sms/i.test(approvedWithTemplate) &&
+    !/payment link|upi/i.test(approvedWithTemplate),
+  approvedWithTemplate ?? "no fixed approval line",
+);
+check(
+  "the complete fixed discount sentence passes the spoken bounds gate",
+  BND.checkReply(approvedWithTemplate ?? "", {
+    groundedStockClaims: [],
+    approvedOffers: [
+      {
+        handle: "masala-chai-blend",
+        title: "Masala Chai Blend",
+        percent: 8,
+        endsAt: "2099-01-01",
+      },
+    ],
+  }).length === 0,
+  approvedWithTemplate ?? "no fixed approval line",
+);
+const deliveryAnswer = VRC.voiceRemedyLine({
+  ok: true,
+  decision: {
+    remedy: {
+      kind: "answer",
+      say: "Delivery is Rs 60 on this basket, and it is free over Rs 1,200.",
+    },
+    blocked: ["delivery policy applies"],
+  },
+  handoff: null,
+  followup: null,
+});
+check(
+  "a deterministic non-discount remedy is spoken instead of falling through to the model",
+  deliveryAnswer ===
+    "Delivery is Rs 60 on this basket, and it is free over Rs 1,200.",
+  deliveryAnswer ?? "no fixed delivery answer",
 );
 
 /* ================= 5. the prompt holds no number to give away ================= */

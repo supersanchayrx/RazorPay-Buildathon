@@ -313,6 +313,12 @@ export type PlacedCall = { ok: true; sid: string; status: string } | { ok: false
  * assumed: the same request with `Url=` returns 201 and with `Twiml=` returns
  * 400. Fetching from a URL is also the only shape that can serve audio, so
  * there is nothing to regret here.
+ *
+ * Trial accounts also accept `StatusCallback`, but reject the otherwise valid
+ * `StatusCallbackMethod` and `StatusCallbackEvent` options as limited parameter
+ * access. Their defaults are already POST and completed, so sending only the
+ * callback URL preserves the same behaviour on full accounts and keeps the
+ * request compatible with the trial used by the demo.
  */
 export async function placeCall(opts: {
   to: string;
@@ -323,8 +329,6 @@ export async function placeCall(opts: {
   const form = new URLSearchParams({ To: opts.to, From: opts.c.twilioFrom, Url: opts.twimlUrl });
   if (opts.statusCallbackUrl) {
     form.set("StatusCallback", opts.statusCallbackUrl);
-    form.set("StatusCallbackMethod", "POST");
-    form.set("StatusCallbackEvent", "completed");
   }
   const auth = Buffer.from(`${opts.c.twilioSid}:${opts.c.twilioToken}`).toString("base64");
 

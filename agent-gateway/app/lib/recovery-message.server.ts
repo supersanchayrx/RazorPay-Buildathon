@@ -407,6 +407,62 @@ export const DISCOUNT_FOLLOWUP_TEXT =
   "Chapman: Your approved cart discount is ready. Please use the payment message provided by the store.";
 
 /**
+ * Whether a discount call may promise the demo-only post-call template.
+ *
+ * This is intentionally synchronous and performs no provider call. The
+ * terminal callback re-runs the same gates before sending; this check exists
+ * only so the voice may mention an SMS when the configured destination and
+ * durable grant make that promise truthful.
+ */
+export function canSendDiscountFollowupTemplate(
+  site: Site,
+  draft: Draft,
+  grant: RecoveryGrant,
+  overrides: Partial<Dependencies> = {},
+): { ok: true } | { ok: false; error: string } {
+  const deps = { ...defaults, ...overrides };
+  if (!deps.feature(site.key, "recovery") || !deps.feature(site.key, "voice")) {
+    return { ok: false, error: "Recovery and Voice must both be enabled." };
+  }
+
+  const testPhone = deps.testTo() ? messagePhone(deps.testTo()!) : null;
+  const calledPhone = draft.to.phone ? messagePhone(draft.to.phone) : null;
+  if (!testPhone || calledPhone !== testPhone) {
+    return {
+      ok: false,
+      error:
+        "The post-call template is demo-only and the call destination must match TWILIO_TEST_TO.",
+    };
+  }
+  if (
+    grant.shop !== site.key ||
+    grant.cartId !== draft.cartId ||
+    grant.customerId !== draft.customerId ||
+    Date.parse(grant.expiresAt) <= deps.now().getTime()
+  ) {
+    return { ok: false, error: "The recovery grant does not match this call." };
+  }
+  if (!deps.config()) {
+    return {
+      ok: false,
+      error: `SMS is not configured: ${messageMissing().join(", ")} unset.`,
+    };
+  }
+  if (
+    deps.read().some(
+      (row) =>
+        row.shop === site.key &&
+        (row.kind === "recovery_discount" ||
+          row.kind === "recovery_discount_template") &&
+        row.grantId === grant.id,
+    )
+  ) {
+    return { ok: false, error: "A message has already been attempted for this grant." };
+  }
+  return { ok: true };
+}
+
+/**
  * Send one fixed, demo-safe acknowledgement after an offered discount call.
  *
  * This deliberately carries no percentage, coupon or payment URL. On a Trial

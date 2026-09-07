@@ -12,6 +12,7 @@ import {
 } from "./recovery-context.server";
 import { createRecoveryCheckout } from "./recovery-checkout.server";
 import {
+  canSendDiscountFollowupTemplate,
   canSendDiscountHandoff,
   sendDiscountHandoff,
   type DiscountHandoffResult,
@@ -26,6 +27,7 @@ export type VoiceRecoveryResult =
       ok: true;
       decision: RemedyDecision;
       handoff: DiscountHandoffResult | null;
+      followup: "template_after_call" | "discount_link_sent" | null;
     }
   | { ok: false; error: string };
 
@@ -102,7 +104,13 @@ export async function resolveVoiceRecovery(
   }
 
   let handoff: DiscountHandoffResult | null = null;
+  let followup: "template_after_call" | "discount_link_sent" | null = null;
   if (decision.remedy.kind === "discount") {
+    const templateReady = canSendDiscountFollowupTemplate(
+      site,
+      draft,
+      decision.remedy.grant,
+    );
     const ready = await canSendDiscountHandoff(
       site,
       draft,
@@ -145,6 +153,7 @@ export async function resolveVoiceRecovery(
     // percentage, payment id or raw transcript. Those belong to grants,
     // pending checkouts and conversations respectively.
     if (handoff.ok) {
+      followup = "discount_link_sent";
       remember({
         shop: site.key,
         sub: draft.customerId,
@@ -152,9 +161,11 @@ export async function resolveVoiceRecovery(
         text: "A price-related recovery remedy was sent after they said cost was the blocker.",
         source: "recovery",
       });
+    } else if (templateReady.ok) {
+      followup = "template_after_call";
     }
   }
-  return { ok: true, decision, handoff };
+  return { ok: true, decision, handoff, followup };
 }
 
 /** Fixed words for sharp outcomes; a model never authors the offer. */
@@ -167,13 +178,26 @@ export function voiceRemedyLine(result: VoiceRecoveryResult): string | null {
       remedy.grant.tier === "regular" || remedy.grant.tier === "lapsed"
         ? `Aap hamare regular shopper hain, isliye is basket par ${percent}% off approve hua hai.`
         : `Batane ke liye thank you. Is basket par ${percent}% off approve hua hai.`;
-    // The terminal Twilio status callback owns the follow-up message. Do not
-    // promise it during the call and do not narrate provider limitations to a
-    // shopper; this turn confirms only the policy decision we actually made.
-    return approved;
+    const followup =
+      result.followup === "discount_link_sent"
+        ? " Aapka discounted UPI payment link SMS par bhej diya gaya hai."
+        : result.followup === "template_after_call"
+          ? " Call khatam hone ke baad aapko discount confirmation SMS aayega."
+          : "";
+    return approved + followup;
   }
   if (remedy.kind === "closed") {
     return "Bilkul theek, batane ke liye thank you. Hum is basket ke baare mein aapko dobara contact nahi karenge.";
   }
-  return null;
+  if (remedy.kind === "cross_sell") {
+    const names = remedy.products.map((product) => product.title).join(", ");
+    return names ? `${remedy.say} ${names}.` : remedy.say;
+  }
+
+  // The policy already wrote the grounded answer. Speak that exact answer
+  // instead of asking the conversational model to rediscover it from a prompt
+  // that deliberately contains neither the policy nor the remedy. Falling
+  // through here used to turn a perfectly good delivery explanation into the
+  // generic "can't help" line whenever the model timed out or refused.
+  return remedy.say;
 }

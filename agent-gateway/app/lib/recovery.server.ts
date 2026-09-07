@@ -66,6 +66,7 @@ import { contactHistory, type ChannelId, type Draft } from "./outreach.server";
 import { askedCarts, silenced } from "./conversations.server";
 import { mintRecoveryToken } from "./identity.server";
 import { liveCarts } from "./carts.server";
+import { meetsTier, standing, type Tier } from "./loyalty.server";
 
 /**
  * The recovery rate we assume, because we have never run this outreach here and
@@ -148,6 +149,11 @@ export type RecoveryTarget = {
   subtotal: number;
   marginAtStake: number;
   expectedValue: number;
+  recoveryStanding: {
+    tier: Tier;
+    completedOrders: number;
+    discountEligible: boolean;
+  };
   treatment: Treatment;
   /** Why this treatment and not another, in the merchant's language. */
   because: string;
@@ -647,6 +653,12 @@ export function runRecovery(opts: {
 
     const ageHours = (asOf.getTime() - Date.parse(c.ts)) / 3_600_000;
     const items = c.lines.map((l) => ({ handle: l.handle, title: l.title, qty: l.qty || 1 }));
+    const shopperStanding = standing({
+      customerId: c.customer?.id ?? "unknown",
+      asOf,
+      orders,
+      inputs,
+    });
 
     // A basket that died on the payment step, after a payment incident began.
     // Correlation, and the copy is written to the strength of it.
@@ -717,6 +729,13 @@ export function runRecovery(opts: {
       subtotal: c.subtotal ?? c.lines.reduce((s, l) => s + l.lineTotal, 0),
       marginAtStake: margin,
       expectedValue: margin * ASSUMED_RECOVERY,
+      recoveryStanding: {
+        tier: shopperStanding.tier,
+        completedOrders: shopperStanding.orders,
+        discountEligible:
+          settings.recovery.enabled &&
+          meetsTier(shopperStanding.tier, settings.recovery.requiresTier),
+      },
       treatment,
       because,
       incident,

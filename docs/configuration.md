@@ -70,7 +70,7 @@ the embed tag.
 | **Recovery**       | Notice-only voice calls                 | `SARVAM_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`, `PUBLIC_ORIGIN` | All five required together                                                                        |
 | **Recovery**       | Conversational calls and answer grading | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL_ASSISTANT`, `OPENROUTER_MODEL_GRADER`               | Optional                                                                                          |
 | **Recovery**       | Manual tests during quiet hours         | `VOICE_QUIET_HOURS_TEST_NUMBER`                                                             | Optional; must exactly match the E.164 test destination                                           |
-| **Recovery**       | Discounted payment-link SMS             | `TWILIO_MESSAGING_FROM`, `TWILIO_MESSAGING_SERVICE_SID`                                     | Optional; `TWILIO_FROM` is the default sender, and `PUBLIC_ORIGIN` is required for the link       |
+| **Recovery**       | Post-call SMS / payment-link SMS         | `TWILIO_MESSAGING_FROM`, `TWILIO_MESSAGING_SERVICE_SID`                                     | Trial uses its predefined template only; a Full account is required for the unique payment link   |
 
 Each dedicated page shows the variables it actually consumes, whether each is
 present, a blank copyable `.env` block, setup steps, and links to the provider's
@@ -164,13 +164,16 @@ every 30 seconds. The message body and destination are not retained in the
 dashboard handoff log.
 
 Trial accounts cannot send the custom discounted-payment message because it
-contains a unique Razorpay URL. Automatic recovery handoff therefore requires a
-Full Twilio account.
+contains a unique Razorpay URL. When a completed recovery call actually
+announced a policy-issued grant, Chapman can instead send Twilio's predefined
+template once to the configured `TWILIO_TEST_TO`. The call says only that a
+discount-confirmation SMS is coming; it does not claim the template contains a
+payment link.
 
-The real recovery SMS is not a general channel. It becomes reachable only when
-the merchant enables its dedicated call toggle and a conversational call has
-produced a policy-issued grant and a discounted Razorpay order. It always uses
-the number already attached to that call and it is attempted once per grant.
+The unique payment-link handoff requires a Full Twilio account and the dedicated
+call toggle. It becomes reachable only after a conversational call has produced
+a policy-issued grant and a discounted Razorpay order. Both follow-up paths are
+attempted once per grant and use only the number already attached to the call.
 
 ## Docker environment lifecycle
 

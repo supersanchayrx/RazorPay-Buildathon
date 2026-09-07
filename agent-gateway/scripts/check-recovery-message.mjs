@@ -297,6 +297,16 @@ console.log("\n--- post-call trial template ---");
 const templateRows = [];
 let templateFetches = 0;
 let templateRequest = null;
+const templateReady = MSG.canSendDiscountFollowupTemplate(site, draft, grant, {
+  ...deps,
+  read: () => templateRows,
+  testTo: () => draft.to.phone,
+  accountType: async () => "Trial",
+});
+check(
+  "the voice may promise a template only for the configured test handset and matching grant",
+  templateReady.ok,
+);
 const template = await MSG.sendDiscountFollowupTemplate(site, draft, grant, {
   ...deps,
   read: () => templateRows,

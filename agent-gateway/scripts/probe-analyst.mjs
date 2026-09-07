@@ -12,18 +12,36 @@ const M = await load("app/lib/merchanttools.server.ts", "pa-m.mjs");
 const C = await load("app/lib/catalog.server.ts", "pa-c.mjs");
 const OR = await load("app/lib/openrouter.server.ts", "pa-or.mjs");
 
-const q = process.argv[2] ?? "Which two products are most worth cross-selling, and how much is it worth a month?";
+const args = process.argv.slice(2);
+const valueAfter = (flag, fallback) => {
+  const at = args.indexOf(flag);
+  return at >= 0 ? String(args[at + 1] ?? "").trim() || fallback : fallback;
+};
+const positional = args.filter(
+  (value, index) =>
+    !value.startsWith("--") &&
+    args[index - 1] !== "--shop" &&
+    args[index - 1] !== "--name" &&
+    args[index - 1] !== "--catalog",
+);
+const shop = valueAfter("--shop", "pk_nilgiripost_dev");
+const shopName = valueAfter("--name", "Nilgiri Post");
+const catalogUrl = valueAfter(
+  "--catalog",
+  "http://127.0.0.1:4000/catalog.json",
+);
+const q = positional.join(" ") || "Which two products are most worth cross-selling, and how much is it worth a month?";
 const t0 = Date.now();
 const out = await H.runHarness({
-  shop: "pk_nilgiripost_dev",
+  shop,
   tools: M.MERCHANT_TOOLS,
   toolContext: {
-    shop: "pk_nilgiripost_dev",
-    shopName: "Nilgiri Post",
-    catalog: C.jsonFeedCatalog("http://127.0.0.1:4000/catalog.json"),
+    shop,
+    shopName,
+    catalog: C.jsonFeedCatalog(catalogUrl),
     cache: {},
   },
-  system: "You are an analyst for Nilgiri Post. Answer using the tools only. Never compute a statistic yourself.",
+  system: `You are an analyst for ${shopName}. Answer using the tools only. Never compute a statistic yourself.`,
   message: q,
   model: OR.MODELS.analyst(),
   maxSteps: 6,
