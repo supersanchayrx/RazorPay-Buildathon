@@ -103,6 +103,7 @@ const NAV: Array<{
   {
     group: "What it knows",
     links: [
+      { to: "/dashboard/catalog", label: "Catalogue" },
       { to: "/dashboard/cortex", label: "Shop cortex" },
       { to: "/dashboard/memory", label: "Shopper memory" },
       { to: "/dashboard/analyst", label: "Analyst" },
@@ -172,6 +173,12 @@ export default function DashboardLayout() {
                 <>
                   {/* Outside the groups on purpose: this configures an existing
                     install rather than registering a new storefront. */}
+                  <SideNavItem
+                    as={RouterLink}
+                    href="/dashboard/setup"
+                    label="Store configuration"
+                    isSelected={pathname === "/dashboard/setup"}
+                  />
                   <SideNavItem
                     as={RouterLink}
                     href="/dashboard/features"

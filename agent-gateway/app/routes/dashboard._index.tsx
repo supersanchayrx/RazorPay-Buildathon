@@ -1,6 +1,7 @@
 import { Link as RRLink, useLoaderData } from "react-router";
 import type { LoaderFunctionArgs } from "react-router";
 import { Card } from "@astryxdesign/core/Card";
+import { Banner } from "@astryxdesign/core/Banner";
 import { Button } from "@astryxdesign/core/Button";
 import { EmptyState } from "@astryxdesign/core/EmptyState";
 import { HStack } from "@astryxdesign/core/HStack";
@@ -24,6 +25,7 @@ import { readFlags, type FeatureKey } from "../lib/featureflags.server";
 import { readLedger } from "../lib/ledger.server";
 import { sitesForMerchant } from "../lib/sites.server";
 import { requireMerchant } from "../lib/auth.server";
+import { inspectCatalog } from "../lib/catalog-health.server";
 import { inspectStorefrontInstall } from "../lib/installstatus.server";
 import { isConfigured as paymentsConfigured } from "../lib/razorpay.server";
 import { missing as missingVoice } from "../lib/voice.server";
@@ -40,7 +42,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // feature as live while its tool has been withdrawn from every agent — the
   // console asserting something about the shop that is no longer true.
   const flags = site ? readFlags(site.key) : null;
-  const installation = site ? await inspectStorefrontInstall(site) : null;
+  const [installation, catalogHealth] = site
+    ? await Promise.all([
+        inspectStorefrontInstall(site),
+        inspectCatalog(site.catalogFeedUrl),
+      ])
+    : [null, null];
   const hasStorefrontSurface = Boolean(
     installation?.assistant.installed || installation?.agentFront.installed,
   );
@@ -119,6 +126,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       origins: s.origins,
     })),
     installation,
+    catalogHealth,
     counts: {
       replies: ledger.filter((e) => e.kind === "reply").length,
       refusals: ledger.filter((e) => e.kind === "refusal").length,
@@ -200,7 +208,7 @@ function PendingRow({ f }: { f: Feature }) {
 }
 
 export default function Overview() {
-  const { features, sites, counts, installation } =
+  const { features, sites, counts, installation, catalogHealth } =
     useLoaderData<typeof loader>();
 
   if (sites.length === 0) {
@@ -314,6 +322,22 @@ export default function Overview() {
           />
         </Figures>
       </PageHead>
+
+      {catalogHealth && !catalogHealth.ok ? (
+        <VStack gap={3} align="start">
+          <Banner
+            status="warning"
+            title="Your catalogue needs setup"
+            description={catalogHealth.detail}
+          />
+          <Button
+            href="/dashboard/catalog"
+            variant="secondary"
+            size="sm"
+            label="Create catalogue"
+          />
+        </VStack>
+      ) : null}
 
       {installation ? (
         <Block

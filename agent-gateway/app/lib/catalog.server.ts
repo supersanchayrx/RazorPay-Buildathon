@@ -96,11 +96,19 @@ function haystack(p: CatalogProduct): string {
     .toLowerCase();
 }
 
+function hasAvailableVariant(product: CatalogProduct): boolean {
+  return product.variants.some(
+    (variant) =>
+      variant.availableForSale &&
+      (variant.inventoryQuantity === null || variant.inventoryQuantity > 0),
+  );
+}
+
 export function applySearch(all: CatalogProduct[], args: SearchArgs): CatalogProduct[] {
   const limit = Math.min(Math.max(args.limit ?? 8, 1), 20);
   let out = all;
 
-  if (args.inStockOnly) out = out.filter((p) => (p.totalInventory ?? 0) > 0);
+  if (args.inStockOnly) out = out.filter(hasAvailableVariant);
 
   if (args.productType) {
     const t = args.productType.toLowerCase();
@@ -174,7 +182,7 @@ export function applyComplements(
   if (!seed) return [];
   const seedTags = new Set(seed.tags.map((t) => t.toLowerCase()));
   return all
-    .filter((p) => p.handle !== handle && (p.totalInventory ?? 0) > 0)
+    .filter((p) => p.handle !== handle && hasAvailableVariant(p))
     .map((p) => {
       const shared = p.tags.filter((t) => seedTags.has(t.toLowerCase())).length;
       const differentType = p.productType !== seed.productType ? 1 : 0;
@@ -286,6 +294,9 @@ function fromFeed(p: any, currency: string, base: string): CatalogProduct {
   }));
   const prices = variants.map((v) => Number(v.price)).filter((n) => !Number.isNaN(n));
   const abs = (u: string | null) => (u && u.startsWith("/") ? new URL(u, base).toString() : u);
+  const inventoryIsKnown = variants.every(
+    (variant) => variant.inventoryQuantity !== null,
+  );
   return {
     handle: p.handle,
     title: p.title,
@@ -298,7 +309,9 @@ function fromFeed(p: any, currency: string, base: string): CatalogProduct {
     minPrice: String(prices.length ? Math.min(...prices) : 0),
     maxPrice: String(prices.length ? Math.max(...prices) : 0),
     currency,
-    totalInventory: variants.reduce((a, v) => a + (v.inventoryQuantity ?? 0), 0),
+    totalInventory: inventoryIsKnown
+      ? variants.reduce((a, v) => a + (v.inventoryQuantity ?? 0), 0)
+      : null,
     variants,
   };
 }

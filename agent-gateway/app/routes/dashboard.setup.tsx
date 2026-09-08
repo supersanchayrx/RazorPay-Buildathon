@@ -17,20 +17,31 @@ import { Text } from "@astryxdesign/core/Text";
 import { VStack } from "@astryxdesign/core/VStack";
 
 import { Block, Cards, Note, Page, PageHead } from "../components/console";
+import { CatalogCrawler } from "../components/catalog-crawler";
+import { CatalogCsvImport } from "../components/catalog-csv-import";
 import { requireMerchant } from "../lib/auth.server";
 import {
   createFirstStore,
   firstStoreDefaults,
+  updateCatalogFeed,
   type FirstStoreInput,
 } from "../lib/onboarding.server";
 import { sitesForMerchant } from "../lib/sites.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const merchant = requireMerchant(request);
-  if (sitesForMerchant(merchant.sites).length > 0) throw redirect("/dashboard");
+  const site = sitesForMerchant(merchant.sites)[0] ?? null;
   const defaults = firstStoreDefaults();
   return {
     defaults,
+    site: site
+      ? {
+          key: site.key,
+          name: site.name,
+          origin: site.origins[0] ?? "",
+          catalogFeedUrl: site.catalogFeedUrl,
+        }
+      : null,
     dockerDemo: defaults.catalogFeedUrl.startsWith("http://store:"),
   };
 };
@@ -38,6 +49,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const merchant = requireMerchant(request);
   const form = await request.formData();
+  const existing = sitesForMerchant(merchant.sites)[0] ?? null;
+  if (existing) {
+    const catalogFeedUrl = String(form.get("catalogFeedUrl") ?? "");
+    const result = updateCatalogFeed(merchant, existing.key, catalogFeedUrl);
+    if (result.ok) {
+      return {
+        mode: "catalog" as const,
+        saved: true,
+        catalogFeedUrl,
+        fields: {},
+      };
+    }
+    return {
+      mode: "catalog" as const,
+      saved: false,
+      error: result.error,
+      fields: result.fields ?? {},
+      catalogFeedUrl,
+    };
+  }
+
   const values: FirstStoreInput = {
     name: String(form.get("name") ?? ""),
     key: String(form.get("key") ?? ""),
@@ -50,22 +82,104 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   };
   const result = createFirstStore(merchant, values);
   if (result.ok) throw redirect("/dashboard?setup=complete");
-  return { error: result.error, fields: result.fields ?? {}, values };
+  return {
+    mode: "setup" as const,
+    error: result.error,
+    fields: result.fields ?? {},
+    values,
+  };
 };
 
 export default function FirstStoreSetup() {
   const data = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
-  const initial = actionData?.values ?? data.defaults;
+  const initial =
+    actionData?.mode === "setup" ? actionData.values : data.defaults;
   const [values, setValues] = useState(initial);
+  const [catalogFeedUrl, setCatalogFeedUrl] = useState(
+    actionData?.mode === "catalog"
+      ? actionData.catalogFeedUrl
+      : (data.site?.catalogFeedUrl ?? ""),
+  );
   const busy = navigation.state !== "idle";
   const set = (key: keyof FirstStoreInput, value: string | boolean) =>
     setValues((current) => ({ ...current, [key]: value }));
+  const fieldErrors: Record<string, string> = actionData?.fields ?? {};
   const status = (key: string) =>
-    actionData?.fields[key]
-      ? { type: "error" as const, message: actionData.fields[key] }
+    fieldErrors[key]
+      ? { type: "error" as const, message: fieldErrors[key] }
       : undefined;
+
+  if (data.site) {
+    return (
+      <Page>
+        <PageHead
+          title="Store configuration"
+          lede={`Manage the catalogue source Chapman reads for ${data.site.name}.`}
+        />
+
+        {actionData?.mode === "catalog" && actionData.saved ? (
+          <Banner
+            status="success"
+            title="Catalogue source saved"
+            description="Chapman will use this URL for new product reads. Its in-memory feed cache expires within 60 seconds."
+          />
+        ) : null}
+        {actionData?.mode === "catalog" && actionData.error ? (
+          <Banner
+            status="error"
+            title="The catalogue source was not saved"
+            description={actionData.error}
+          />
+        ) : null}
+
+        <Block
+          title="Current catalogue source"
+          hint="This must be an absolute public HTTP or HTTPS URL reachable from the Chapman server."
+        >
+          <Card>
+            <Form method="post">
+              <VStack gap={5}>
+                <TextInput
+                  label="Catalogue feed URL"
+                  description="Host the generated catalog.json first, then paste its public URL here."
+                  htmlName="catalogFeedUrl"
+                  value={catalogFeedUrl}
+                  onChange={setCatalogFeedUrl}
+                  status={status("catalogFeedUrl")}
+                  isRequired
+                />
+                <Button
+                  type="submit"
+                  variant="primary"
+                  label={
+                    busy ? "Saving catalogue source…" : "Save catalogue source"
+                  }
+                  isLoading={busy}
+                  isDisabled={busy}
+                />
+              </VStack>
+            </Form>
+          </Card>
+        </Block>
+
+        <Block
+          title="Create a catalogue from your storefront"
+          hint="Quick import for stores that publish Schema.org Product and Offer data in their pages."
+        >
+          <CatalogCrawler defaultUrl={data.site.origin} />
+        </Block>
+
+        <Block
+          title="Create a catalogue from CSV"
+          hint="Download the template, import one row per product variant, and Chapman will validate and generate the JSON feed."
+        >
+          <CatalogCsvImport />
+        </Block>
+      </Page>
+    );
+  }
 
   return (
     <Page>
@@ -110,9 +224,9 @@ export default function FirstStoreSetup() {
             <VStack gap={2}>
               <Text weight="semibold">2. Provide a catalogue feed</Text>
               <Text color="secondary">
-                Give Chapman an absolute URL returning the store&apos;s product
-                JSON. In Docker it must be reachable from inside the gateway
-                container, which is why the host is named store.
+                Use the CSV importer below to generate one, or give Chapman an
+                absolute URL returning the store&apos;s product JSON. The final
+                URL must be reachable from the gateway.
               </Text>
             </VStack>
           </Card>
@@ -127,6 +241,20 @@ export default function FirstStoreSetup() {
             </VStack>
           </Card>
         </Cards>
+      </Block>
+
+      <Block
+        title="Create a catalogue from your storefront"
+        hint="Enter the public store URL and Chapman will inspect its sitemap and structured product data."
+      >
+        <CatalogCrawler defaultUrl={values.origin} />
+      </Block>
+
+      <Block
+        title="Create a catalogue from CSV"
+        hint="If your storefront has no catalog.json, download the template, import one row per variant, and host the generated file before saving your store."
+      >
+        <CatalogCsvImport />
       </Block>
 
       <Block

@@ -31,6 +31,9 @@ export type FirstStoreResult =
   | { ok: true; key: string }
   | { ok: false; error: string; fields?: Record<string, string> };
 
+export type CatalogFeedUpdateResult =
+  { ok: true } | { ok: false; error: string; fields?: Record<string, string> };
+
 const configFile = () =>
   process.env.CHAPMAN_CONFIG?.trim()
     ? path.resolve(process.env.CHAPMAN_CONFIG.trim())
@@ -205,6 +208,79 @@ export function createFirstStore(
     return {
       ok: false,
       error: `The storefront could not be saved: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/**
+ * Change only the public catalogue URL for a storefront the merchant owns.
+ *
+ * The raw registry is edited rather than serialising loadSites(): the loaded
+ * representation contains resolved secrets, while the file must contain only
+ * environment-variable names.
+ */
+export function updateCatalogFeed(
+  merchant: Merchant,
+  siteKey: string,
+  catalogFeedUrl: string,
+): CatalogFeedUpdateResult {
+  if (!merchant.sites.includes(siteKey)) {
+    return { ok: false, error: "You do not have access to this storefront." };
+  }
+
+  const file = configFile();
+  const targetEnv = envFile();
+  let envText = "";
+  try {
+    envText = fs.readFileSync(targetEnv, "utf8");
+  } catch {
+    // Environment-only deployments do not need a persisted env file.
+  }
+
+  try {
+    const rawText = fs.readFileSync(file, "utf8");
+    const raw = JSON.parse(stripJsonComments(rawText)) as {
+      sites?: Array<Record<string, unknown>>;
+      [key: string]: unknown;
+    };
+    if (!Array.isArray(raw.sites)) {
+      return { ok: false, error: "The storefront registry has no sites list." };
+    }
+    const index = raw.sites.findIndex((site) => site.key === siteKey);
+    if (index < 0) {
+      return { ok: false, error: "The storefront is no longer registered." };
+    }
+
+    const sites = raw.sites.map((site, siteIndex) =>
+      siteIndex === index
+        ? { ...site, catalogFeedUrl: catalogFeedUrl.trim() }
+        : site,
+    );
+    const nextText = `${JSON.stringify({ ...raw, sites }, null, 2)}\n`;
+    const report = parseSitesConfig(nextText, file, {
+      resolveSecret: (name) => process.env[name] || envValue(envText, name),
+      production: true,
+    });
+    if (report.errors.length > 0) {
+      const catalogError = report.errors.find((error) =>
+        error.includes(".catalogFeedUrl:"),
+      );
+      return {
+        ok: false,
+        error: catalogError ?? report.errors.join(" "),
+        fields: catalogError ? { catalogFeedUrl: catalogError } : undefined,
+      };
+    }
+
+    const temporary = `${file}.${crypto.randomBytes(6).toString("hex")}.tmp`;
+    fs.writeFileSync(temporary, nextText, "utf8");
+    fs.renameSync(temporary, file);
+    resetConfigCache();
+    return { ok: true };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `The catalogue URL could not be saved: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
 }

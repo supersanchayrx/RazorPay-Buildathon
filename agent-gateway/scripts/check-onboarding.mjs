@@ -133,6 +133,55 @@ try {
       .length === 1,
   );
 
+  const invalidCatalogUpdate = Onboarding.updateCatalogFeed(
+    merchant,
+    input().key,
+    "/catalog.json",
+  );
+  check("a relative catalogue URL cannot be saved", !invalidCatalogUpdate.ok);
+  check(
+    "an invalid update leaves the old catalogue URL intact",
+    JSON.parse(fs.readFileSync(process.env.CHAPMAN_CONFIG, "utf8")).sites[0]
+      .catalogFeedUrl === input().catalogFeedUrl,
+  );
+
+  const outsider = Auth.createMerchant({
+    email: "outsider@example.com",
+    name: "Outsider",
+    password: "another correct horse battery staple",
+    sites: [],
+  });
+  const unauthorised = Onboarding.updateCatalogFeed(
+    outsider,
+    input().key,
+    "https://attacker.example/catalog.json",
+  );
+  check("another merchant cannot change the catalogue URL", !unauthorised.ok);
+
+  const updatedCatalogUrl = "https://shop.example/catalog.json";
+  const owner = Auth.findMerchantByEmail("merchant@example.com");
+  const updated = Onboarding.updateCatalogFeed(
+    owner,
+    input().key,
+    updatedCatalogUrl,
+  );
+  const updatedConfigText = fs.readFileSync(process.env.CHAPMAN_CONFIG, "utf8");
+  const updatedConfig = JSON.parse(updatedConfigText);
+  check(
+    "the owning merchant can change the catalogue URL",
+    updated.ok,
+    updated.error,
+  );
+  check(
+    "the new catalogue URL is persisted",
+    updatedConfig.sites[0].catalogFeedUrl === updatedCatalogUrl,
+  );
+  check(
+    "editing the catalogue keeps the secret as an environment reference",
+    updatedConfig.sites[0].secretEnv === "SITE_SECRET_MONSOON_MARKET" &&
+      !updatedConfigText.includes(secret),
+  );
+
   const cleanFetch = async (url) =>
     url.endsWith("/.well-known/ucp")
       ? new Response("not found", { status: 404 })
@@ -144,7 +193,7 @@ try {
     key: input().key,
     name: input().name,
     origins: [input().origin],
-    catalogFeedUrl: input().catalogFeedUrl,
+    catalogFeedUrl: updatedCatalogUrl,
   };
   const clean = await Install.inspectStorefrontInstall(site, cleanFetch);
   check(

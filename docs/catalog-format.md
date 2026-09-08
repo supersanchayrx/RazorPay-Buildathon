@@ -10,6 +10,48 @@ Point `catalogFeedUrl` at it in `chapman.config.json`, then run
 A working example ships in the repository:
 [demo-store/catalog.json](../demo-store/catalog.json).
 
+Merchants who do not already publish this format can open **Store
+Configuration** in the Chapman console, download the CSV template, import their
+products, and download a generated `catalog.json`.
+
+The merchant dashboard also has a dedicated **Catalogue** page. It checks the
+configured feed, reports empty or unreachable sources on the overview, and
+offers storefront crawling and CSV import as two reviewable generation paths.
+
+## Importing from a storefront
+
+The quick storefront crawler accepts a public homepage URL, checks its
+`/sitemap.xml`, and scans up to 30 same-host pages. It reads Schema.org
+`Product` and `Offer` JSON-LD, including `hasVariant` products, then presents a
+preview and a generated `catalog.json` for merchant review.
+
+The crawler does not execute storefront JavaScript or infer missing commerce
+facts. A product without a structured price, three-letter currency, and stock
+availability is omitted. Private network destinations and cross-host redirects
+are refused. If the storefront does not expose usable structured data, use the
+CSV importer.
+
+## Importing CSV
+
+The CSV importer uses one row per variant. Repeat the same `handle`, `title`,
+and product-level fields on each row when a product has several variants.
+
+```csv
+handle,title,description,type,vendor,tags,image,url,variant_title,price,sku,in_stock,inventory,currency
+nilgiri-green-tea,Nilgiri Green Tea,Bright whole-leaf tea,Green Tea,Monsoon Market,tea|green,/images/green-tea.jpg,/products/nilgiri-green-tea,100 g,480,NFG-100,true,42,INR
+nilgiri-green-tea,Nilgiri Green Tea,Bright whole-leaf tea,Green Tea,Monsoon Market,tea|green,/images/green-tea.jpg,/products/nilgiri-green-tea,250 g,1080,NFG-250,true,18,INR
+```
+
+`handle`, `title`, and `price` are required. Tags are separated with `|`.
+Currency defaults to `INR`, `in_stock` defaults to `true`, and a blank
+`inventory` means the merchant does not publish an exact count. All rows must
+use the same currency, and every non-empty SKU must be unique.
+
+Conversion happens in the merchant's browser; Chapman does not retain the CSV.
+After downloading `catalog.json`, publish it on the storefront, confirm its URL
+works without authentication, and save that absolute URL under **Catalogue feed
+URL**.
+
 ---
 
 ## The shape
