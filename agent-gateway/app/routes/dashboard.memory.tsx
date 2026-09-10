@@ -145,6 +145,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               maxTokens: 300,
               temperature: 0,
               timeoutMs: 20_000,
+              keyRole: "summariser",
             })) ?? ""
         : undefined,
     });

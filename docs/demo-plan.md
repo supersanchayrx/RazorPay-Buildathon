@@ -165,6 +165,23 @@ In the storefront assistant, try:
 Approve and revoke an offer from **Offers** to show that the permission changes
 while the assistant code does not. Blocks appear in **Decision ledger**.
 
+In **Analyst**, use the complete recording prompt:
+
+> How many customers did we have in the past month compared with previous
+> months? Revenue this month looks stale—what are the three highest-impact
+> actions I should take now, and what evidence supports each one?
+
+The free Ultra recording path can take roughly 60–90 seconds. The rotating
+**Reading store signals**, **Comparing periods**, **Calculating
+opportunities**, **Forming recommendations**, and **Creating your brief**
+labels describe the layered workflow; they are progress copy, not a claim that
+the browser knows the provider's exact live phase. Let the response finish,
+show the detailed **Answer**, then expand **How it got there**. The reveal is
+that code produced every number, Ultra ranked the strategy from verified
+results, and a smaller model formed the coherent report. The transcript should
+show `growth_snapshot` and `list_proposals`; a completed answer must end cleanly
+rather than mid-sentence.
+
 For voice, use **Place test call** on **Recovery** only with a number you control
 or an expecting recipient. It is a real Twilio call and may consume credit.
 

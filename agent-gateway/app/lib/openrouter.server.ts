@@ -67,7 +67,17 @@ export const MODELS = {
   assistant: () =>
     chain("OPENROUTER_MODEL_ASSISTANT", [
       "google/gemma-4-26b-a4b-it:free",
-      "minimax/minimax-m3:free",
+      "google/gemma-4-31b-it:free",
+      "nvidia/nemotron-3-super-120b-a12b:free",
+      "openrouter/free",
+    ]),
+  // Tool selection is a constrained classification job. Keep the large model
+  // out of this loop: it receives verified results only after these reads run.
+  orchestrator: () =>
+    chain("OPENROUTER_MODEL_ORCHESTRATOR", [
+      "nvidia/nemotron-3.5-lightning:free",
+      "inclusionai/ling-3.0-flash:free",
+      "liquid/lfm-2.5-2.6b:free",
       "google/gemma-4-31b-it:free",
       "openrouter/free",
     ]),
@@ -82,10 +92,16 @@ export const MODELS = {
       // deliberation and never called anything. Requiring structured output
       // demotes that from ugly to invalid, but an instruct model gets to the
       // answer first and for a fraction of the tokens.
-      "google/gemma-4-26b-a4b-it:free",
-      "minimax/minimax-m3:free",
-      "z-ai/glm-5.2:free",
+      "inclusionai/ling-3.0-flash-fin:free",
       "nvidia/nemotron-3-super-120b-a12b:free",
+      "openrouter/free",
+    ]),
+  // The editor must support enforced JSON. It never chooses tools or performs
+  // arithmetic; its only job is to make the verified analysis easy to read.
+  presenter: () =>
+    chain("OPENROUTER_MODEL_PRESENTER", [
+      "nvidia/nemotron-3-super-120b-a12b:free",
+      "google/gemma-4-31b-it:free",
       "openrouter/free",
     ]),
   /**
@@ -105,8 +121,7 @@ export const MODELS = {
       // Nothing here needs world knowledge or reasoning — it needs to merge
       // overlapping sentences and stop.
       "liquid/lfm-2.5-2.6b:free",
-      "minimax/minimax-m3:free",
-      "google/gemma-4-26b-a4b-it:free",
+      "google/gemma-4-31b-it:free",
       "openrouter/free",
       // DELIBERATELY ABSENT: both nemotron models, which are otherwise the
       // fastest things answering. They leak their chain of thought into
@@ -119,9 +134,9 @@ export const MODELS = {
   // Binary classification. Smallest thing that can answer.
   grader: () =>
     chain("OPENROUTER_MODEL_GRADER", [
-      "google/gemma-4-26b-a4b-it:free",
       "liquid/lfm-2.5-2.6b:free",
       "nvidia/nemotron-3.5-lightning:free",
+      "google/gemma-4-31b-it:free",
     ]),
 };
 
@@ -159,12 +174,80 @@ export function stripReasoning(text: string): string {
   return out.trim();
 }
 
-export const isConfigured = (): boolean => Boolean(secret("OPENROUTER_API_KEY"));
+export type OpenRouterKeyRole =
+  | "assistant"
+  | "analyst"
+  | "orchestrator"
+  | "presenter"
+  | "summariser"
+  | "grader";
+
+const KEY_NAMES = [
+  "OPENROUTER_API_KEY",
+  "OPENROUTER_API_KEY2",
+  "OPENROUTER_API_KEY3",
+] as const;
+
+const ROLE_START: Record<OpenRouterKeyRole, number> = {
+  analyst: 0,
+  orchestrator: 1,
+  assistant: 1,
+  presenter: 2,
+  summariser: 2,
+  grader: 2,
+};
+
+/** In-process circuit breaker. A durable job worker can persist this later. */
+const keyCooldownUntil = new Map<string, number>();
+const modelCooldownUntil = new Map<string, number>();
+const DAILY_FREE_QUOTA_COOLDOWN_MS = 24 * 60 * 60 * 1_000;
+
+type KeySlot = { name: (typeof KEY_NAMES)[number]; value: string };
+
+function configuredKeySlots(): KeySlot[] {
+  const seen = new Set<string>();
+  const slots: KeySlot[] = [];
+  for (const name of KEY_NAMES) {
+    const value = secret(name);
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    slots.push({ name, value });
+  }
+  return slots;
+}
+
+function keysFor(role: OpenRouterKeyRole = "assistant"): KeySlot[] {
+  const slots = configuredKeySlots();
+  if (slots.length < 2) return slots;
+  const start = ROLE_START[role] % slots.length;
+  return [...slots.slice(start), ...slots.slice(0, start)];
+}
+
+function retryAt(headers: Headers): number {
+  const now = Date.now();
+  const raw = headers.get("retry-after")?.trim();
+  if (raw) {
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return now + Math.min(seconds * 1_000, 86_400_000);
+    }
+    const date = Date.parse(raw);
+    if (Number.isFinite(date) && date > now) {
+      return Math.min(date, now + 86_400_000);
+    }
+  }
+  return now + 60_000;
+}
+
+export const isConfigured = (): boolean => configuredKeySlots().length > 0;
+
+/** Safe for diagnostics: counts slots without returning any credential. */
+export const configuredOpenRouterKeyCount = (): number =>
+  configuredKeySlots().length;
 
 type Msg = { role: "system" | "user" | "assistant"; content: string };
 
-function headers(): HeadersInit {
-  const key = secret("OPENROUTER_API_KEY");
+function headers(key: string): HeadersInit {
   return {
     authorization: `Bearer ${key}`,
     "content-type": "application/json",
@@ -185,6 +268,10 @@ export type CompleteOptions = {
   temperature?: number;
   /** Ask the model for a JSON object. Not every free model honours it. */
   json?: boolean;
+  /** Bound native thinking so it leaves room for the merchant-facing answer. */
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
+  /** Preferred account lane. Every lane may fail over to every configured key. */
+  keyRole?: OpenRouterKeyRole;
   timeoutMs?: number;
 };
 
@@ -199,10 +286,92 @@ function requestBody(model: string, opts: CompleteOptions, stream: boolean) {
     temperature: opts.temperature ?? 0.3,
     // Keep the model's working out of `content`. Honoured by most, ignored by
     // some — `stripReasoning` is the second line for those.
-    reasoning: { exclude: true },
+    reasoning: {
+      exclude: true,
+      ...(opts.reasoningEffort ? { effort: opts.reasoningEffort } : {}),
+    },
     ...(stream ? { stream: true } : {}),
     ...(opts.json ? { response_format: { type: "json_object" } } : {}),
   };
+}
+
+/** Open one request through the preferred account, then consented fallbacks. */
+async function requestWithKeys(
+  model: string,
+  opts: CompleteOptions,
+  stream: boolean,
+): Promise<Response | null> {
+  const now = Date.now();
+  if ((modelCooldownUntil.get(model) ?? 0) > now) return null;
+  const slots = keysFor(opts.keyRole).filter(
+    (slot) => (keyCooldownUntil.get(slot.name) ?? 0) <= now,
+  );
+  if (slots.length === 0) return null;
+
+  for (const slot of slots) {
+    let res: Response;
+    try {
+      res = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: headers(slot.value),
+        signal: AbortSignal.timeout(
+          opts.timeoutMs ?? (stream ? 45_000 : 25_000),
+        ),
+        body: JSON.stringify(requestBody(model, opts, stream)),
+      });
+    } catch (error) {
+      record({
+        shop: opts.shop ?? "-",
+        kind: "tool_error",
+        message: `openrouter ${model} transport failed`,
+        detail: {
+          keySlot: slot.name,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+      continue;
+    }
+
+    if (res.ok) return res;
+
+    const detail = await res.text().catch(() => "");
+    record({
+      shop: opts.shop ?? "-",
+      kind: "tool_error",
+      message: `openrouter ${model} failed`,
+      detail: {
+        keySlot: slot.name,
+        status: res.status,
+        error: detail.slice(0, 160),
+      },
+    });
+
+    if (res.status === 429) {
+      const until = retryAt(res.headers);
+      if (/free-models-per-day|daily (?:free )?quota/i.test(detail)) {
+        keyCooldownUntil.set(
+          slot.name,
+          Date.now() + DAILY_FREE_QUOTA_COOLDOWN_MS,
+        );
+        continue;
+      }
+      // Account quota can fail over to a different consented account. A model
+      // provider outage cannot, so avoid wasting the same request on all keys.
+      if (/temporarily rate-limited upstream|provider returned error/i.test(detail)) {
+        modelCooldownUntil.set(model, until);
+        return null;
+      }
+      keyCooldownUntil.set(slot.name, until);
+      continue;
+    }
+    if (res.status === 401 || res.status === 403) {
+      keyCooldownUntil.set(slot.name, Date.now() + 300_000);
+      continue;
+    }
+    return null;
+  }
+
+  return null;
 }
 
 /**
@@ -218,12 +387,8 @@ export async function complete(opts: CompleteOptions): Promise<string | null> {
 
   for (const model of asChain(opts.model)) {
     try {
-      const res = await fetch(ENDPOINT, {
-        method: "POST",
-        headers: headers(),
-        signal: AbortSignal.timeout(opts.timeoutMs ?? 25_000),
-        body: JSON.stringify(requestBody(model, opts, false)),
-      });
+      const res = await requestWithKeys(model, opts, false);
+      if (!res) continue;
       if (!res.ok) {
         // The body carries the reason — a 429 names which limit, a 404 says the
         // model id is wrong. Both belong in the ledger, because "the assistant
@@ -231,8 +396,19 @@ export async function complete(opts: CompleteOptions): Promise<string | null> {
         const detail = await res.text().catch(() => "");
         throw new Error(`${res.status} ${detail.slice(0, 160)}`);
       }
-      const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-      const text = stripReasoning(body.choices?.[0]?.message?.content ?? "");
+      const body = (await res.json()) as {
+        choices?: Array<{
+          finish_reason?: string | null;
+          native_finish_reason?: string | null;
+          message?: { content?: string };
+        }>;
+      };
+      const choice = body.choices?.[0];
+      const finishReason = choice?.finish_reason ?? choice?.native_finish_reason;
+      if (finishReason === "length" || finishReason === "max_tokens") {
+        throw new Error(`completion truncated (${finishReason})`);
+      }
+      const text = stripReasoning(choice?.message?.content ?? "");
       if (text) return text;
       throw new Error("empty completion");
     } catch (e) {
@@ -263,12 +439,9 @@ export async function* completeStream(opts: CompleteOptions): AsyncGenerator<str
   for (const model of asChain(opts.model)) {
     let res: Response;
     try {
-      res = await fetch(ENDPOINT, {
-        method: "POST",
-        headers: headers(),
-        signal: AbortSignal.timeout(opts.timeoutMs ?? 45_000),
-        body: JSON.stringify(requestBody(model, opts, true)),
-      });
+      const opened = await requestWithKeys(model, opts, true);
+      if (!opened) continue;
+      res = opened;
       if (!res.ok || !res.body) {
         const detail = res.ok ? "no body" : await res.text().catch(() => "");
         throw new Error(`${res.status} ${detail.slice(0, 160)}`);
@@ -420,8 +593,19 @@ export async function completeJson<T>(
     try {
       const parsed = JSON.parse(cleaned.slice(first, last + 1)) as unknown;
       if (validate(parsed)) return parsed;
+      record({
+        shop: opts.shop ?? "-",
+        kind: "tool_error",
+        message: `openrouter ${model} returned invalid structured output`,
+        detail: { keyRole: opts.keyRole ?? "assistant", chars: text.length },
+      });
     } catch {
-      // Next model.
+      record({
+        shop: opts.shop ?? "-",
+        kind: "tool_error",
+        message: `openrouter ${model} returned malformed structured output`,
+        detail: { keyRole: opts.keyRole ?? "assistant", chars: text.length },
+      });
     }
   }
   return null;
@@ -635,6 +819,7 @@ export function openRouterReasoner(model: string | string[] = MODELS.assistant()
         messages: buildMessages(ctx),
         maxTokens: 320,
         timeoutMs: SHOPPER_MODEL_ATTEMPT_MS,
+        keyRole: "assistant",
       });
       if (text === null) {
         // The caller decides what to do about it. Returning an empty reply
@@ -660,6 +845,7 @@ export function openRouterReasoner(model: string | string[] = MODELS.assistant()
             messages: buildMessages(ctx),
             maxTokens: 320,
             timeoutMs: SHOPPER_MODEL_ATTEMPT_MS,
+            keyRole: "assistant",
           })) {
             full += piece;
             yield piece;

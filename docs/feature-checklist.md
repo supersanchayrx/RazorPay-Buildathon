@@ -1,6 +1,6 @@
 # Chapman feature checklist
 
-Last reviewed: 10 September 2026
+Last reviewed: 11 September 2026
 
 This is the working checklist for the project. It separates decisions we have
 already made from code that is actually implemented.
@@ -29,6 +29,12 @@ already made from code that is actually implemented.
 - [x] The current gateway image rebuilds and restarts against the persistent
   Docker volume, and `/health/ready` reports healthy. A destructive clean-volume
   rehearsal remains separate from the live demo volume.
+- [x] The seeded compound growth question completes with verified customer and
+  revenue comparisons, exactly three evidence-backed actions, caveats, and a
+  clean ending after the truncation guard rejects incomplete generations.
+- [x] Three optional OpenRouter account lanes, role-specific model chains, and
+  in-process key/model cooldowns have been exercised without logging secret
+  values; every lane retains bounded failover.
 
 ## Decisions
 
@@ -36,7 +42,11 @@ already made from code that is actually implemented.
 
 - [x] Chapman does not host or replace the merchant's storefront.
 - [x] The storefront may be hosted independently on Vercel or any other host
-  that can publish a script tag and a rewrite, redirect, or proxy route.
+  that can publish a script tag and either an extensionless static
+  `/.well-known/ucp` JSON file, rewrite, redirect, or proxy route.
+- [x] Agent front generates an authenticated, extensionless `ucp` download
+  from the same discovery document as the live route, with Vercel placement,
+  content-type, staleness, and verification guidance.
 - [x] A fresh storefront remains unaware of Chapman until the merchant installs
   the assistant embed and/or agent-discovery route.
 - [x] Registration, assistant installation, agent-front installation, payment
@@ -98,13 +108,21 @@ already made from code that is actually implemented.
 
 ### Models
 
-- [x] Text embeddings: `nvidia/nemotron-3-embed-1b:free`.
-- [x] Agent and native tool calling: `google/gemma-4-26b-a4b-it:free`, with
-  `minimax/minimax-m3:free` as the first fallback.
-- [x] Deeper analysis and reasoning: `minimax/minimax-m3:free`, with Gemma 4 as
-  fallback.
-- [x] Low-latency voice response text: `liquid/lfm-2.5-2.6b:free`, with Gemma 4
-  as fallback.
+- [ ] Text embeddings: `nvidia/nemotron-3-embed-1b:free` is selected, but the
+  embeddings client and similarity retrieval are still Milestone 2 work.
+- [x] Small analyst tool orchestration: deterministic routing first, then
+  `nvidia/nemotron-3.5-lightning:free` (3B active), Ling 3.0 Flash, and bounded
+  fallbacks.
+- [x] Deeper merchant analysis in the current demo:
+  `nvidia/nemotron-3-ultra-550b-a55b:free` sees only verified tool results and
+  performs no tool orchestration, with bounded reasoning, visible progress
+  states, and a verified direct-result fallback.
+- [x] Small-model report presentation: Nemotron 3 Super turns the reasoning
+  draft into structured merchant-facing prose using a detailed spec and may
+  not introduce numbers absent from the verified tool transcript.
+- [x] Conversational recovery currently shares the assistant chain; its
+  separate low-latency model role remains planned below. Sarvam owns speech
+  synthesis, not text reasoning.
 - [x] `openrouter/free` is only a last-resort chat fallback.
 - [x] Assistant, agent/tool, analyst, embedding, and voice jobs have distinct
   model roles even when some roles temporarily share a model.
@@ -112,8 +130,8 @@ already made from code that is actually implemented.
   degradation; privacy is not the current concern.
 - [x] Embeddings do not fall through into a different vector space. Failed
   items remain pending or lexical until the selected embedding model returns.
-- [x] Chapman will use OpenRouter's native `tools`/`tool_calls` protocol rather
-  than asking a model to imitate tool calls in plain JSON.
+- [ ] Replace the remaining prompt-shaped JSON tool loop with OpenRouter's
+  native `tools`/`tool_calls` protocol after the demo.
 
 ## Implementation snapshot
 
@@ -176,6 +194,25 @@ already made from code that is actually implemented.
 - [x] Basket recovery policy, suppression reasons, and bounded remedies.
 - [x] Sarvam/Twilio recovery calls and controlled SMS handoff.
 - [x] Shop cortex and read-only analyst.
+- [x] Give the analyst a deterministic growth snapshot: trailing 30-day and
+  calendar-month customer counts, equal-days month-to-date comparisons,
+  first-seen/returning customers, revenue, AOV, order frequency, and product
+  revenue movements. The tool anchors to the newest completed order, labels
+  partial months, excludes failed payments, and does not infer causality.
+- [x] Route stale-revenue questions through the growth snapshot and then the
+  existing proposal pipeline, so measured performance remains separate from
+  quantified margin-safe actions, incidents, and price experiments.
+- [x] Add a bounded marketing/PR campaign brief using only declared customer
+  age bands and acquisition sources. It proposes a 14-day measured prospecting
+  test, a margin-derived CAC ceiling, and refuses unsupported budget/ROAS
+  claims when spend and impression data are absent.
+- [x] Add first-observed 30/60/90-day retention cohorts with confidence bounds,
+  maturity labels, and a 31–90-day reactivation audience.
+- [x] Add customer/product revenue-concentration analysis (top-decile share,
+  HHI, and repeat-customer revenue share) without presenting concentration as
+  churn evidence.
+- [x] Add a current, labelled Monsoon Market slowdown fixture and focused
+  analyst-growth regression checks for the recording scenario.
 - [x] Decision ledger and test bench.
 - [x] Deterministic Fieldnote demo history: six months of labelled commerce,
   distinct fictional shoppers and contacts, shopper preferences, and one
@@ -189,11 +226,23 @@ already made from code that is actually implemented.
 
 - [x] OpenRouter chat-completions client with per-role fallback chains.
 - [x] Deterministic assistant behavior when OpenRouter is missing or fails.
+- [x] Split merchant analysis into four bounded stages: deterministic/small
+  orchestration selects read-only tools, code computes verified results, Ultra
+  reasons only over those results, and a smaller structured-output model writes
+  the final brief from the reasoning draft plus the verified transcript.
+- [x] Deterministically route the showcased growth, campaign, retention,
+  concentration, payment, and cross-sell questions when the free model pool
+  returns no tool call; direct verified results remain usable if the presenter
+  is rate-limited too.
+- [x] Reject OpenRouter completions whose finish reason reports a length limit,
+  and reject analyst drafts or presentation JSON that contains private planning
+  or ends mid-sentence. The presenter supports a detailed bounded report and
+  preserves a verified direct-result fallback.
 - [x] Bounded shopper-memory write rules and store/shopper isolation.
 - [x] Lexical shopper-memory retrieval.
 - [ ] Add explicit `agent`, `voice`, and `embedding` model configuration roles.
-- [ ] Apply the agreed primary and fallback model order to Docker configuration
-  and documentation.
+- [x] Apply the agreed primary/fallback order and optional three-account key
+  lanes to Docker configuration and documentation.
 - [ ] Replace the current prompt-shaped JSON tool loop with native OpenRouter
   `tools`, `tool_choice`, assistant `tool_calls`, and tool-result messages.
 - [ ] Add an OpenRouter embeddings client with batching, timeouts, retry
@@ -204,6 +253,15 @@ already made from code that is actually implemented.
 - [ ] Queue and retry memories whose embedding is pending.
 - [ ] Add a Chapman-specific benchmark for tool-call correctness, grounded
   answers, time-to-first-token, and short voice responses.
+- [ ] Persist analyst jobs in SQLite so a request returns immediately, runs in
+  the background, survives restart, and can be revisited from the dashboard.
+- [ ] Add a bounded one-to-four milestone planner for compound analyst
+  questions: validate tools per milestone, store compact verified findings,
+  run one strategic reasoning pass, then form one final report.
+- [ ] **Partial — cooldowns:** in-process account and upstream-model cooldowns
+  honour `Retry-After` (or 60 seconds) and avoid retrying one provider outage
+  across every key. Persist cooldowns in SQLite, add capped backoff/jitter, and
+  expose next-retry time after the demo.
 
 ## Milestone 1 — dependable Docker self-hosted gateway
 

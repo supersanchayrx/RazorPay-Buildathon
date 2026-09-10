@@ -56,9 +56,13 @@ If using the bundled demo:
    DEMO_STORE_CHAPMAN=true and recreating the store service as documented.
 
 If using my existing storefront, first inspect its framework and identify the
-smallest correct changes for the generated embed tag and /.well-known/ucp
-redirect or proxy. Ask me for the public origin and catalogue URL only if they
-cannot be determined safely. Do not add order access unless I explicitly ask
+smallest correct changes for the generated embed tag and `/.well-known/ucp`.
+The merchant may download the extensionless JSON document and deploy it at
+`public/.well-known/ucp`, or use a redirect/proxy for an always-current copy.
+Serve a hosted file as `application/json`; on Vercel merge the generated header
+property into the existing top-level `vercel.json` object. Ask me for the
+public origin and catalogue URL only if they cannot be determined safely. Do
+not add order access unless I explicitly ask
 for it and a signed server-side feed exists.
 
 Credentials belong only in the repository-root .env or the deployment secret

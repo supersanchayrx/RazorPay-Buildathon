@@ -109,6 +109,12 @@ check(
   H.extractEmission('{"answer": "   "}') === null,
 );
 check(
+  'a placeholder-only answer is not accepted as merchant-facing prose',
+  H.extractEmission('{"answer": "..."}') === null &&
+    H.extractEmission('{"answer": "…"}') === null,
+  'free models sometimes satisfy the JSON shape with punctuation and nothing else',
+);
+check(
   'a call still wins over an answer key when both are present',
   H.extractEmission('{"tool":"store_scale","args":{},"answer":"guessing"}').kind === 'call',
   'a model hedging with both must not have its guess shown',

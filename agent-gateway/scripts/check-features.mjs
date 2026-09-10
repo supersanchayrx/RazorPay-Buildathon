@@ -812,6 +812,8 @@ console.log("\n-- what the console promises -------------------------------\n");
     [
       "OPENROUTER_MODEL_ASSISTANT",
       "OPENROUTER_MODEL_ANALYST",
+      "OPENROUTER_MODEL_ORCHESTRATOR",
+      "OPENROUTER_MODEL_PRESENTER",
       "OPENROUTER_MODEL_SUMMARISER",
       "OPENROUTER_MODEL_GRADER",
     ].every((name) => compose.includes(`${name}:`)),

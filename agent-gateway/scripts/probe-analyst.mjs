@@ -11,6 +11,9 @@ const H = await load("app/lib/harness.server.ts", "pa-h.mjs");
 const M = await load("app/lib/merchanttools.server.ts", "pa-m.mjs");
 const C = await load("app/lib/catalog.server.ts", "pa-c.mjs");
 const OR = await load("app/lib/openrouter.server.ts", "pa-or.mjs");
+const P = await load("app/lib/analyst-presenter.server.ts", "pa-p.mjs");
+const R = await load("app/lib/analyst-router.server.ts", "pa-r.mjs");
+const A = await load("app/lib/analyst-reasoner.server.ts", "pa-a.mjs");
 
 const args = process.argv.slice(2);
 const valueAfter = (flag, fallback) => {
@@ -32,21 +35,37 @@ const catalogUrl = valueAfter(
 );
 const q = positional.join(" ") || "Which two products are most worth cross-selling, and how much is it worth a month?";
 const t0 = Date.now();
-const out = await H.runHarness({
+const toolContext = {
+  shop,
+  shopName,
+  catalog: C.jsonFeedCatalog(catalogUrl),
+  cache: {},
+};
+let steps = await R.deterministicAnalystSteps(q, toolContext);
+const out = steps.length ? {
+  reply: "",
+  steps,
+  model: "deterministic-router",
+} : await H.runHarness({
   shop,
   tools: M.MERCHANT_TOOLS,
-  toolContext: {
-    shop,
-    shopName,
-    catalog: C.jsonFeedCatalog(catalogUrl),
-    cache: {},
-  },
+  toolContext,
   system: `You are an analyst for ${shopName}. Answer using the tools only. Never compute a statistic yourself.`,
   message: q,
-  model: OR.MODELS.analyst(),
-  maxSteps: 6,
-  maxMs: 90000,
+  model: OR.MODELS.orchestrator(),
+  maxSteps: 5,
+  maxMs: 45000,
+  reasoningEffort: "minimal",
+  keyRole: "orchestrator",
 });
-console.log(`\n${Date.now() - t0}ms | model ${out.model} | stoppedBy ${out.stoppedBy ?? "-"} | ${out.steps.length} steps`);
-for (const s of out.steps) console.log(`  ${s.tool}(${JSON.stringify(s.args)}) ${s.ms}ms${s.error ? " ERROR " + s.error : ""}\n     ${s.result.slice(0, 200).replace(/\n/g, "\n     ")}`);
-console.log("\nANSWER:\n" + (out.reply || "(none)"));
+steps = out.steps;
+const reasonedAnswer = await A.reasonAboutAnalystResults({ shop, question: q, steps });
+const reply = await P.presentAnalystAnswer({
+  shop,
+  question: q,
+  steps,
+  reasonedAnswer,
+});
+console.log(`\n${Date.now() - t0}ms | model ${out.model} | stoppedBy ${out.stoppedBy ?? "-"} | ${steps.length} steps`);
+for (const s of steps) console.log(`  ${s.tool}(${JSON.stringify(s.args)}) ${s.ms}ms${s.error ? " ERROR " + s.error : ""}\n     ${s.result.slice(0, 200).replace(/\n/g, "\n     ")}`);
+console.log("\nANSWER:\n" + (reply || "(none)"));

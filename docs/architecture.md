@@ -752,17 +752,57 @@ facts remain outside the shopper projection.
 
 ```mermaid
 flowchart LR
-    Question[Merchant question] --> Analyst[Analyst tool loop]
-    OpenRouter[OpenRouter] --> Analyst
-    MerchantTools[Read-only merchant tools] --> Analyst
-    Orders[Orders and aggregate statistics] --> MerchantTools
-    Cortex[Merchant cortex view] --> MerchantTools
-    Analyst --> Transcript[Answer and tool transcript]
+    Question[Merchant question] --> Router[Deterministic router]
+    Router -->|known intent| Validate[Tool registry validation]
+    Router -->|unmatched intent| Small[Small-model orchestrator]
+    Small --> Validate
+    Validate --> Tools[Read-only merchant tools]
+    Orders[Orders and aggregate data] --> Tools
+    Cortex[Merchant cortex view] --> Tools
+    Tools --> Verified[Verified results and transcript]
+    Verified --> Ultra[Ultra strategic reasoning]
+    Verified --> Presenter[Small-model report editor]
+    Ultra --> Presenter
+    Presenter --> Guard[Grounding and completion guard]
+    Guard --> Answer[Merchant brief]
+    Verified --> Audit[How it got there]
 ```
 
-Unlike the storefront assistant, the Analyst requires OpenRouter because its
-job is to choose and combine merchant tools for an open-ended question. Tools
-remain read-only.
+The useful insight is not that a bigger model can do every job. It is that each
+layer receives only the authority it needs:
+
+| Layer | Trusted to do | Not trusted to do |
+|---|---|---|
+| Deterministic router | Recognise common growth, campaign, retention, concentration, payment, and cross-sell questions | Invent a query for an unmatched request |
+| Small orchestrator | Select bounded read-only tools for an ambiguous question | Write data, contact shoppers, set prices, or move money |
+| Tool executor | Validate calls, execute TypeScript functions, and enforce step, repeat, and wall-clock budgets | Run an unregistered or malformed call |
+| Statistics and economics | Count customers and orders; calculate revenue, AOV, margin, retention, concentration, confidence bounds, and comparable periods | Infer a cause unsupported by the records |
+| Ultra reasoner | Find connections, rank actions, and form strategy from verified results | Access the database, select tools, or recalculate facts |
+| Report editor | Turn evidence and strategy into detailed merchant-facing prose | Introduce a new number or silently remove a caveat |
+
+The current orchestrator protocol is deliberately strict text JSON:
+`{"tool":"<name>","args":{...}}` or `{"answer":"..."}`. This is not yet
+OpenRouter's native `tools`/`tool_calls` transport. The executor parses the
+balanced JSON object, checks the tool name against the read-only registry,
+rejects malformed, unknown, or repeated calls, then executes the actual
+server-side tool function. The distinction matters: the model proposes a call;
+code decides whether it is valid and code computes the result.
+
+Ultra is downstream of that execution. It receives the merchant question and
+verified tool results, not raw tables. A separate small presentation model then
+receives the same verified evidence plus Ultra's validated strategic draft.
+It is instructed not to redo arithmetic, and its output must be grounded,
+bounded, valid JSON, and complete through final sentence punctuation. A
+provider response marked `length`/`max_tokens`, a private planning monologue,
+or a mid-sentence answer is rejected. If either reasoning or presentation is
+unavailable, Chapman degrades to the verified transcript rather than inventing
+a polished answer.
+
+This makes **How it got there** more than a loading detail: it is the audit
+record of which read-only functions ran, with their arguments, timings,
+results, sample sizes, and caveats. The result is layered intelligence without
+layered uncertainty—code establishes truth, Ultra finds the strategy, and a
+small model explains it.
 
 ### Identity and order access
 
@@ -813,6 +853,10 @@ static feature list cannot.
 | Money is a chokepoint                                        | `quote.server.ts` + `reservations.server.ts`                    | a price arriving from the client                                    |
 | Only an approval licenses a price claim                      | `approvals.server.ts`                                           | an assistant that can be argued into a discount                     |
 | Anything countable is counted by code                        | `stats.server.ts`, `detectors.server.ts`, `economics.server.ts` | a plausible number that is wrong                                    |
+| Common analyst questions route before a model                | `analyst-router.server.ts`, `harness.server.ts`                  | a large reasoner choosing tools or touching raw data                 |
+| Analyst tools are validated and read-only                    | `harness.server.ts`, `merchanttools.server.ts`                   | malformed or unregistered model calls executing server work         |
+| Strategy sees verified evidence only                         | `analyst-reasoner.server.ts`                                     | a reasoning model inventing the measurements it explains            |
+| Analyst prose is grounded and complete                       | `analyst-presenter.server.ts`, `openrouter.server.ts`            | new numbers, private planning, or a truncated answer reaching the UI |
 | Floors run before the model                                  | `floors.server.ts`                                              | a trap that passes Fisher's exact reaching a merchant               |
 | A grant is passed by id, never as terms                      | `grants.server.ts`, then `buildQuote`                           | a caller that could pass a depth could pass 90%                     |
 | Memory may not hold anything that expires                    | `checkMemory` in `memory.server.ts`                             | a price read back to a shopper in March                             |

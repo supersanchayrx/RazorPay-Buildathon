@@ -37,9 +37,9 @@ await esbuild.build({
 });
 const DBS = await import(pathToFileURL(dbBundle).href + `?t=${Date.now()}`);
 
-const SEED = 20260905;
+const SEED = 20260911;
 const SHOP = "pk_monsoon_market";
-const TODAY = new Date("2026-09-05T00:00:00Z");
+const TODAY = new Date("2026-09-11T00:00:00Z");
 const DAYS = 180;
 const TEST_PHONE = process.env.TWILIO_TEST_TO?.trim() ?? "";
 
@@ -120,6 +120,14 @@ function resetLoyalDemoRuntime() {
  *       baskets below free delivery. Every one safely clears the 8% margin
  *       floor, making several recovery-call rehearsals repeatable rather than
  *       lucky.
+ *   S8  September month-to-date is deliberately soft after the Rakhi spike.
+ *       The analyst can separate a healthy trailing month from a stale current
+ *       month, compare the same elapsed days, and suggest measured actions
+ *       without pretending eleven days are a full-month forecast.
+ *   S9  declared age bands and first-touch acquisition sources make a bounded
+ *       campaign brief possible. Instagram and ages 25-34 lead the synthetic
+ *       cohort, but spend and impression data stay absent so the analyst must
+ *       refuse ROAS and budget claims.
  *
  * Traps — things a naive proposer will find that are NOT there:
  *
@@ -312,12 +320,35 @@ function makeCustomers(n) {
   const cs = [];
   for (let i = 0; i < n; i++) {
     const name = NAMES[i % NAMES.length];
+    const cohortIndex = i % 20;
     cs.push({
       id: `cus_syn_${String(i).padStart(3, "0")}`,
       name,
       phone:
         TEST_PHONE || `+9199${String(10000000 + i * 7919).slice(0, 8)}`,
       email: `${name}${i}@example.invalid`,
+      // Synthetic, deliberately. Real stores should import declared customer
+      // cohorts or omit them; Chapman never infers age from a name or phone.
+      ageBand:
+        cohortIndex < 9
+          ? "25-34"
+          : cohortIndex < 14
+            ? "35-44"
+            : cohortIndex < 17
+              ? "18-24"
+              : cohortIndex < 19
+                ? "45-54"
+                : "55+",
+      acquisitionSource:
+        cohortIndex < 7
+          ? "instagram"
+          : cohortIndex < 12
+            ? "organic_search"
+            : cohortIndex < 16
+              ? "direct"
+              : cohortIndex < 18
+                ? "referral"
+                : "email",
     });
   }
   return cs;
@@ -370,9 +401,9 @@ function payment(method, dayIndex, total) {
   const daysAgo = DAYS - dayIndex;
   const bank = method === "netbanking" ? pick(BANKS) : null;
 
-  // S4 — one bank, last 60 days, ~40% failure against a ~6% baseline.
+  // S4 — one bank, last 60 days, ~60% failure against a much lower baseline.
   const clustered = method === "netbanking" && bank === "HDFC" && daysAgo <= 60;
-  const failRate = method === "cod" ? 0 : clustered ? 0.4 : 0.09;
+  const failRate = method === "cod" ? 0 : clustered ? 0.65 : 0.09;
 
   const attempts = [];
   let status = "captured";
@@ -458,9 +489,15 @@ function volumeFor(dayIndex) {
   d.setUTCDate(d.getUTCDate() - (DAYS - dayIndex));
   const weekend = d.getUTCDay() === 0 || d.getUTCDay() === 6;
   const trend = 3 + (dayIndex / DAYS) * 2.5;
+  // S8: a visible post-festival slowdown. Keep at least one order per day so
+  // the data feed is clearly alive; this is weak demand, not a sync outage.
+  const septemberSlowdown = d >= new Date("2026-09-01T00:00:00Z") ? 0.42 : 1;
   return Math.max(
     1,
-    Math.round(trend * (weekend ? 0.65 : 1) + (rand() * 2 - 1)),
+    Math.round(
+      trend * (weekend ? 0.65 : 1) * septemberSlowdown +
+        (rand() * 2 - 1),
+    ),
   );
 }
 
@@ -491,6 +528,8 @@ for (let day = 0; day <= DAYS; day++) {
         id: customer.id,
         phone: customer.phone,
         email: customer.email,
+        ageBand: customer.ageBand,
+        acquisitionSource: customer.acquisitionSource,
       },
       lines: ls,
       subtotal,
@@ -524,6 +563,8 @@ for (let day = 0; day <= DAYS; day++) {
         id: customer.id,
         phone: customer.phone,
         email: customer.email,
+        ageBand: customer.ageBand,
+        acquisitionSource: customer.acquisitionSource,
       },
       lines: ls,
       subtotal,
@@ -556,6 +597,8 @@ for (const customer of REPLENISHERS) {
         id: customer.id,
         phone: customer.phone,
         email: customer.email,
+        ageBand: customer.ageBand,
+        acquisitionSource: customer.acquisitionSource,
       },
       lines: ls,
       subtotal,
@@ -584,8 +627,9 @@ for (const customer of REPLENISHERS) {
    The window is chosen to sit inside the fixture so the waste is countable
    rather than argued. */
 // Day index counts forward to TODAY, so index = DAYS - (days before today).
-// 2026-08-14 is 22 days before 2026-09-05, and 2026-08-29 is 7.
-const RAKHI = { from: DAYS - 22, to: DAYS - 7 };
+// Keep the commercial event on its real dates even when the fixture's final
+// date advances for a recording.
+const RAKHI = { from: DAYS - 28, to: DAYS - 13 };
 const GIFT_SKUS = ["CCS-06", "NFG-250", "MCB-250"];
 for (let day = RAKHI.from; day <= RAKHI.to; day++) {
   // A realistic gifting lift is a couple of times baseline, not an order of
@@ -610,6 +654,8 @@ for (let day = RAKHI.from; day <= RAKHI.to; day++) {
         id: customer.id,
         phone: customer.phone,
         email: customer.email,
+        ageBand: customer.ageBand,
+        acquisitionSource: customer.acquisitionSource,
       },
       lines: ls,
       subtotal,
@@ -637,7 +683,13 @@ for (let k = 0; k < kettleDays.length; k++) {
     seed: SEED,
     shop: SHOP,
     ts: tsOn(kettleDays[k], 15),
-    customer: { id: customer.id, phone: customer.phone, email: customer.email },
+    customer: {
+      id: customer.id,
+      phone: customer.phone,
+      email: customer.email,
+      ageBand: customer.ageBand,
+      acquisitionSource: customer.acquisitionSource,
+    },
     lines: ls,
     subtotal,
     shipping: 0,
@@ -654,6 +706,8 @@ const demoCustomer = {
   id: LOYAL_DEMOS[0].customerId,
   phone: TEST_PHONE || "+919900000777",
   email: "demo.regular@example.invalid",
+  ageBand: "25-34",
+  acquisitionSource: "instagram",
 };
 const demoLine = (sku, qty = 1) => ({
   handle: HANDLE[sku],
@@ -742,6 +796,8 @@ for (const [demoIndex, fixture] of extraLoyalDemos.entries()) {
     id: fixture.customerId,
     phone: TEST_PHONE || `+91990000078${demoIndex}`,
     email: fixture.email,
+    ageBand: demoIndex === 1 ? "35-44" : "25-34",
+    acquisitionSource: demoIndex === 2 ? "organic_search" : "instagram",
   };
   for (let i = 0; i < 6; i++) {
     const basketLines = [demoLine(i % 2 === 0 ? "MCB-100" : "SEA-250")];

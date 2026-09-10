@@ -350,6 +350,28 @@ check(
   "advertising a handler the merchant has not configured is the lie the whole file is at risk of",
 );
 
+const download = AF.staticProfileDownload(site(), GW);
+check(
+  "the self-hosted profile downloads as an extensionless JSON attachment",
+  download.headers.get("content-type") === "application/json; charset=utf-8" &&
+    download.headers.get("content-disposition") === 'attachment; filename="ucp"' &&
+    download.headers.get("cache-control") === "private, no-store",
+  "the browser should save ucp, not render or cache an ambiguously named document",
+);
+check(
+  "the downloaded profile is the same generated discovery document",
+  JSON.stringify(JSON.parse(await download.text())) === JSON.stringify(staticDoc),
+  "download, preview and live profile must never become three implementations",
+);
+check(
+  "the dashboard presents self-hosting as a first-class install method",
+  agentFrontPage.includes('label="Host a generated file"') &&
+    agentFrontPage.includes('label="Download ucp file"') &&
+    agentFrontPage.includes("public/.well-known/ucp") &&
+    agentFrontPage.includes("Vercel content-type rule"),
+  "a fallback hidden at the bottom is not a usable merchant install path",
+);
+
 gw.server.close();
 shop.server.close();
 

@@ -58,27 +58,128 @@ only to demonstrate the integration.
 ## Architecture
 
 ```mermaid
-flowchart LR
-    Shopper[Shopper] --> Store[Merchant storefront]
-    Agent[Shopping agent] --> Discovery[Store discovery route]
-    Merchant[Merchant] --> Dashboard[Chapman dashboard]
+flowchart TB
+    subgraph Surfaces[Agent surfaces]
+        Widget[Storefront assistant]
+        Agents[Shopping agents via UCP and MCP]
+        Merchant[Merchant dashboard and Analyst]
+        Recovery[Recovery voice and text]
+    end
 
-    Store --> Razorpay[Razorpay]
-    Store -. after install .-> Gateway[Chapman gateway]
-    Discovery --> Gateway
-    Dashboard --> Gateway
+    Widget & Agents & Merchant & Recovery --> Intake[Identity, site, capability, and request gate]
 
-    Gateway --> Catalog[Merchant catalogue]
-    Gateway --> Checks[Policy and claim checks]
-    Gateway --> Ledger[Decision ledger]
-    Gateway --> Razorpay
-    Gateway --> Voice[Sarvam and Twilio Voice]
-    Gateway --> SMS[Twilio SMS payment handoff]
-    Gateway -. optional .-> OpenRouter[OpenRouter]
+    subgraph Core[Central Chapman agent harness]
+        Intake --> Orchestrator[Orchestrator<br/>ground, route, reason, bound, log]
+        Orchestrator --> Router{Deterministic route?}
+        Router -->|yes| Direct[Direct deterministic path]
+        Router -->|needs composition| Harness[Bounded execution harness<br/>steps, repeats, timeouts, fallbacks]
+        Harness <--> Models[Role-routed models<br/>orchestrator, reasoner, presenter, voice]
+        Direct --> Registry[Audience-scoped read-tool registry]
+        Harness --> Registry
+        Registry --> Evidence[Verified evidence pack]
+        Harness --> Evidence
+    end
+
+    subgraph Memory[Identity-scoped memory system]
+        ShopperMemory[Shopper memory<br/>preferences only]
+        Cortex[Shop cortex<br/>aggregate merchant findings]
+        State[(SQLite operational state)]
+        State --> ShopperMemory
+        State --> Cortex
+    end
+
+    ShopperMemory & Cortex --> Orchestrator
+
+    subgraph Truth[Merchant-controlled truth]
+        Catalog[Catalogue and inventory]
+        Policy[Policies and approved offers]
+        Commerce[Orders, carts, statistics, and economics]
+    end
+
+    Catalog & Policy & Commerce --> Registry
+    Evidence --> Response[Response composer]
+
+    subgraph Enforcement[Response and action enforcement]
+        Response --> Audience{Audience and action}
+        Audience -->|shopper speech| Bounds[Claim and offer bounds]
+        Audience -->|merchant analysis| Grounding[Evidence and completion guard]
+        Audience -->|checkout| Quote[Server quote, reservation, and settlement]
+    end
+
+    Bounds --> Widget
+    Bounds --> Recovery
+    Grounding --> Merchant
+    Quote --> Agents
+    Quote --> Razorpay[Razorpay]
+
+    Orchestrator -. decisions .-> Ledger[(Decision ledger)]
+    Harness -. tool transcript .-> Ledger
+    Bounds -. verdicts .-> Ledger
+    Grounding -. provenance .-> Ledger
+    Quote -. settlement .-> Ledger
 ```
 
-Model output is never sent directly to a shopper and never decides a price.
-See [docs/architecture.md](docs/architecture.md) for per-feature diagrams.
+Chapman is one centralized agent harness behind several specialized agents and
+channels. The orchestrator assembles identity-scoped context, chooses a direct
+deterministic route or the bounded model/tool harness, and produces a verified
+evidence pack. Shopper memory and the merchant cortex share infrastructure but
+remain deliberately isolated projections. The final response then passes
+through the guard for its audience: claim bounds for shoppers, evidence and
+completion checks for merchant analysis, or server-side quote and settlement
+logic for commerce. Model output therefore never reaches a shopper directly
+and never decides a price. Every decision, tool result, guard verdict, and
+settlement transition leaves an inspectable trail.
+
+See [docs/architecture.md](docs/architecture.md) for the deeper execution model
+and per-feature diagrams.
+
+### The layered analyst
+
+The Analyst is not one large model improvising over raw orders. Its design is
+the project's analytics breakthrough:
+
+> **Code establishes truth. Ultra finds the strategy. A small model explains it.**
+
+```mermaid
+flowchart LR
+    Q[Merchant question] --> R[Deterministic router]
+    R -->|known question| V[Validated read-only tool calls]
+    R -->|ambiguous question| O[Small-model orchestrator]
+    O --> V
+    V --> C[Server-side statistics and economics]
+    C --> T[Verified results and audit transcript]
+    T --> U[Ultra strategic reasoning]
+    U --> P[Small-model report editor]
+    T --> P
+    P --> G[Completion and grounding guard]
+    G --> A[Detailed answer]
+    T --> H[How it got there]
+```
+
+Common questions about growth, campaigns, retention, concentration, payment
+incidents, and cross-sells are routed deterministically. Only an unmatched
+question asks a small, fast model to select from Chapman's read-only merchant
+tool registry. Every proposed call is parsed and validated; unknown, malformed,
+or repeated calls are rejected, and step, repeat, and wall-clock budgets bound
+the loop. The current transport is a strict JSON call shape rather than
+OpenRouter's native `tools`/`tool_calls` protocol, but the tool itself is real
+server-side TypeScript code—not model role-play.
+
+The tools count customers, compare equal periods, calculate revenue and margin,
+measure retention and concentration, and attach sample sizes and caveats. The
+Ultra reasoning model sees only those verified results, never the database and
+never control of a tool. A smaller report editor receives the same evidence and
+turns the strategy into a coherent merchant brief without doing new arithmetic.
+Incomplete generations, private planning, invalid JSON, and answers cut off
+mid-sentence are rejected; Chapman falls back to the verified evidence instead
+of displaying them. The dashboard exposes the executed calls under **How it
+got there**, so the impressive answer remains auditable.
+
+Try the complete seeded showcase question:
+
+> How many customers did we have in the past month compared with previous
+> months? Revenue this month looks stale—what are the three highest-impact
+> actions I should take now, and what evidence supports each one?
 
 ## Run the Docker demo
 
@@ -158,8 +259,9 @@ bubble and agent discovery remain absent until their own setup steps.
 
 5. Use **Verify install** on Agent front.
 
-A real storefront should add the generated `/.well-known/ucp` redirect or
-proxy. `DEMO_STORE_CHAPMAN` is only for the bundled demo.
+A real storefront can download and host the generated extensionless
+`/.well-known/ucp` JSON document, or add the generated redirect/proxy rule for
+an always-current copy. `DEMO_STORE_CHAPMAN` is only for the bundled demo.
 
 ## Configure provider keys
 
@@ -174,7 +276,7 @@ docker compose up -d gateway
 | -------------- | ----------------------------------------------------------------------------------------------------------------- |
 | Assistant      | `OPENROUTER_API_KEY` is optional; the safe fallback works without it                                              |
 | Agent front    | Razorpay needs `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`                                                        |
-| Analyst        | `OPENROUTER_API_KEY` is required                                                                                  |
+| Analyst        | `OPENROUTER_API_KEY` is required; keys 2 and 3 are optional, consented account lanes for orchestration/presentation failover |
 | Shopper memory | OpenRouter summarisation is optional                                                                              |
 | Recovery       | Voice needs Sarvam, Twilio SID, Twilio token, Twilio number, and `PUBLIC_ORIGIN`; SMS may reuse the Twilio number |
 
@@ -280,6 +382,9 @@ Implemented:
 - catalogue grounding, approvals, and server-side claim checks;
 - Razorpay checkout and settlement verification;
 - recovery, voice, shopper memory, analyst, cortex, ledger, and test bench;
+- a layered merchant analyst with deterministic/small-model orchestration,
+  verified statistical tools, Ultra reasoning, a smaller report editor,
+  truncation guards, and an inspectable tool transcript;
 - Docker setup, persistent data, doctor, and automated tests;
 - authoritative SQLite state, versioned startup migrations, explicit health
   routes, and verified backup/restore commands;

@@ -89,7 +89,8 @@ check("S3  a replenishment cohort exists", cohort.length >= 10, `${cohort.length
 // check reported n=8 against a cluster that actually holds three times that —
 // a measurement that disagrees with the thing it measures, which is the same
 // class of mistake as testing a request your client never sends.
-const cut = new Date("2026-07-07T00:00:00Z").toISOString();
+const newestOrderAt = Math.max(...orders.map((order) => Date.parse(order.ts)));
+const cut = new Date(newestOrderAt - 60 * 86_400_000).toISOString();
 const nb = orders.filter((o) => o.payment.method === "netbanking" && o.ts >= cut);
 const rate = (bank) => {
   const rows = nb.filter((o) => o.payment.bank === bank);
@@ -145,6 +146,54 @@ check(
   "S6  gifting demand rises inside the Raksha Bandhan window",
   inWin > outWin * 1.5 && inWin < outWin * 4,
   `INR ${inWin.toFixed(0)}/day inside vs ${outWin.toFixed(0)}/day outside (${(inWin / outWin).toFixed(1)}x)`,
+);
+
+/* ---- S8  current-month slowdown, compared fairly ----------------- */
+const revenueBetween = (from, until) =>
+  orders
+    .filter((order) => order.status === "placed" && order.ts >= from && order.ts < until)
+    .reduce((sum, order) => sum + order.total, 0);
+const septemberMtd = revenueBetween("2026-09-01", "2026-09-12");
+const comparableMtd = [
+  revenueBetween("2026-08-01", "2026-08-12"),
+  revenueBetween("2026-07-01", "2026-07-12"),
+  revenueBetween("2026-06-01", "2026-06-12"),
+];
+const comparableAverage = comparableMtd.reduce((sum, value) => sum + value, 0) / comparableMtd.length;
+check(
+  "S8  September month-to-date is visibly stale on an equal-days comparison",
+  septemberMtd > 0 && septemberMtd < comparableAverage * 0.75,
+  `INR ${septemberMtd.toFixed(0)} in Sep 1-11 vs INR ${comparableAverage.toFixed(0)} average for the same 11 days of the prior three months`,
+);
+check(
+  "S8  the feed is current rather than silently missing recent days",
+  new Date(newestOrderAt).toISOString().slice(0, 10) === "2026-09-11",
+  `latest completed order ${new Date(newestOrderAt).toISOString().slice(0, 10)}`,
+);
+
+/* ---- S9  declared marketing cohorts ------------------------------ */
+const profiledCustomers = new Map();
+for (const order of orders.filter((row) => row.status === "placed"))
+  profiledCustomers.set(order.customer.id, order.customer);
+const ageBands = {};
+const acquisitionSources = {};
+for (const customer of profiledCustomers.values()) {
+  if (customer.ageBand) ageBands[customer.ageBand] = (ageBands[customer.ageBand] ?? 0) + 1;
+  if (customer.acquisitionSource)
+    acquisitionSources[customer.acquisitionSource] =
+      (acquisitionSources[customer.acquisitionSource] ?? 0) + 1;
+}
+const topAge = Object.entries(ageBands).sort((a, b) => b[1] - a[1])[0];
+const topSource = Object.entries(acquisitionSources).sort((a, b) => b[1] - a[1])[0];
+check(
+  "S9  age targeting is backed by declared cohort data",
+  topAge?.[0] === "25-34" && topAge[1] >= 30,
+  `${topAge?.[0] ?? "none"} is largest at n=${topAge?.[1] ?? 0}`,
+);
+check(
+  "S9  Instagram is the largest declared acquisition source",
+  topSource?.[0] === "instagram" && topSource[1] >= 30,
+  `${topSource?.[0] ?? "none"} is largest at n=${topSource?.[1] ?? 0}`,
 );
 
 /* ---- S7  deterministic loyal recovery shopper -------------------- */

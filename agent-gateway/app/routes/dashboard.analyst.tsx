@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import {
   Form,
@@ -36,6 +36,9 @@ import { MERCHANT_TOOLS } from "../lib/merchanttools.server";
 import { describeRegistry } from "../lib/tools.server";
 import { MODELS, isConfigured } from "../lib/openrouter.server";
 import { openRouterSetup } from "../lib/integration-setup.server";
+import { presentAnalystAnswer } from "../lib/analyst-presenter.server";
+import { deterministicAnalystSteps } from "../lib/analyst-router.server";
+import { reasonAboutAnalystResults } from "../lib/analyst-reasoner.server";
 
 /**
  * Ask your own data a question.
@@ -59,9 +62,14 @@ import { openRouterSetup } from "../lib/integration-setup.server";
 const SYSTEM = `You are an analyst working for {SHOP}. You answer the merchant's questions about their own shop using the tools below, and only the tools.
 
 Rules:
-- NEVER compute a statistic yourself. If you catch yourself dividing two numbers, call rate_with_confidence instead. Arithmetic in your head is where a confident wrong answer comes from.
+- NEVER compute a statistic yourself. Arithmetic in your head is where a confident wrong answer comes from; use the merchant tools, and say the measurement is unavailable if none returns it.
+- For customer counts, revenue trends, comparisons between months, or whether this month is stale, call growth_snapshot first.
+- If the merchant asks what to do about growth or revenue, call list_proposals after growth_snapshot. Keep observed performance separate from the ranked actions and never present an estimate as guaranteed revenue.
+- For PR, marketing, advertising, audience, channel, or campaign questions, call marketing_campaign_brief. Treat every proposed campaign as a measured experiment and repeat its missing-data caveats.
+- For retention or reactivation questions call customer_retention_cohorts; for whale, dependency, or broad-based-growth questions call revenue_concentration. Do not translate concentration into churn without evidence.
 - Never state a rate without its sample size. "67%" on three orders is three orders, not a rate.
 - Never predict what a price change will do. This shop has never changed a price, so there is nothing to estimate it from. State the break-even and let the merchant judge.
+- Never infer a cause from two values moving together. Say which accounting component moved and which action the proposal pipeline found.
 - If a tool says a sample is too small or a measurement is unavailable, say so plainly. "I cannot tell you that yet" is a real answer.
 - Be brief and concrete. The merchant is busy and can read numbers.`;
 
@@ -95,28 +103,56 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     };
   }
 
-  const out = await runHarness({
+  const toolContext = {
     shop: site.key,
-    tools: MERCHANT_TOOLS,
-    toolContext: {
-      shop: site.key,
-      shopName: site.name,
-      catalog: jsonFeedCatalog(site.catalogFeedUrl),
-      // Shared across the whole loop: the proposal pipeline is expensive, and
-      // a model that calls list_proposals then explain_proposal should not pay
-      // for it twice.
-      cache: {},
-    },
-    system: SYSTEM.replaceAll("{SHOP}", site.name),
-    message: question,
-    // The analyst is unwatched and its answers are acted on, so it gets a
-    // bigger budget than the shopper-facing loop, which a human is waiting on.
-    model: MODELS.analyst(),
-    maxSteps: 6,
-    maxMs: 90_000,
+    shopName: site.name,
+    catalog: jsonFeedCatalog(site.catalogFeedUrl),
+    // Shared across the whole loop: the proposal pipeline is expensive, and
+    // a model that calls list_proposals then explain_proposal should not pay
+    // for it twice.
+    cache: {},
+  };
+  // Common questions route without a model call. Only ambiguous questions use
+  // the small orchestrator; Ultra never enters the tool loop.
+  let steps = await deterministicAnalystSteps(question, toolContext);
+  const out =
+    steps.length > 0
+      ? {
+          reply: "",
+          steps,
+          model: "deterministic-router",
+          stoppedBy: undefined,
+        }
+      : await runHarness({
+          shop: site.key,
+          tools: MERCHANT_TOOLS,
+          toolContext,
+          system: SYSTEM.replaceAll("{SHOP}", site.name),
+          message: question,
+          model: MODELS.orchestrator(),
+          maxSteps: 5,
+          maxMs: 45_000,
+          reasoningEffort: "minimal",
+          keyRole: "orchestrator",
+        });
+  steps = out.steps;
+
+  // Ultra now sees only successful, verified reads and performs the strategic
+  // reasoning pass. A separate model edits that draft into the final brief;
+  // either layer may fail without losing the direct results.
+  const reasonedAnswer = await reasonAboutAnalystResults({
+    shop: site.key,
+    question,
+    steps,
+  });
+  const reply = await presentAnalystAnswer({
+    shop: site.key,
+    question,
+    steps,
+    reasonedAnswer,
   });
 
-  return { question, ...out, error: null };
+  return { question, ...out, steps, reply, error: null };
 };
 
 const SUGGESTIONS = [
@@ -128,6 +164,21 @@ const SUGGESTIONS = [
   "What has the assistant been stopped from saying this week?",
 ];
 
+/**
+ * Time-based UI copy, not a claim that the model exposes its private work.
+ *
+ * The request is one HTTP round trip, so the browser cannot know which server
+ * phase is active. These labels describe Chapman's real overall workflow and
+ * make a long reasoning-model wait feel alive without fabricating progress.
+ */
+const ANALYSIS_STAGES = [
+  "Reading store signals…",
+  "Comparing periods…",
+  "Calculating opportunities…",
+  "Forming recommendations…",
+  "Creating your brief…",
+];
+
 export default function Analyst() {
   const d = useLoaderData<typeof loader>();
   const a = useActionData<typeof action>();
@@ -137,6 +188,20 @@ export default function Analyst() {
   const [question, setQuestion] = useState(
     a && "question" in a ? a.question : "",
   );
+  const [analysisStage, setAnalysisStage] = useState(0);
+
+  useEffect(() => {
+    if (!busy) return;
+
+    setAnalysisStage(0);
+    const timer = window.setInterval(() => {
+      setAnalysisStage((current) =>
+        Math.min(current + 1, ANALYSIS_STAGES.length - 1),
+      );
+    }, 5_000);
+
+    return () => window.clearInterval(timer);
+  }, [busy]);
 
   if (!d.site) {
     return (
@@ -193,7 +258,7 @@ export default function Analyst() {
                   type="submit"
                   variant="primary"
                   isDisabled={busy || question.trim().length === 0}
-                  label={busy ? "Thinking…" : "Ask"}
+                  label={busy ? ANALYSIS_STAGES[analysisStage] : "Ask"}
                 />
               </HStack>
             </Form>

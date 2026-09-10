@@ -649,6 +649,7 @@ async function captureReason(
             maxTokens: 20,
             temperature: 0,
             timeoutMs: 6000,
+            keyRole: "grader",
           })) ?? ""
       : undefined,
   });
@@ -891,6 +892,7 @@ export async function takeTurn(opts: {
       maxTokens: 45,
       temperature: 0.4,
       timeoutMs: MODEL_BUDGET_MS,
+      keyRole: "assistant",
     })) {
       buffer += token;
       if (Date.now() > modelDeadline) break;

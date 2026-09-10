@@ -50,7 +50,12 @@ export type HistoryOrder = {
   total: number;
   currency: string;
   cohort?: string;
-  customer: { id: string };
+  customer: {
+    id: string;
+    /** Optional merchant-supplied cohort fields; synthetic in the demo seed. */
+    ageBand?: string;
+    acquisitionSource?: string;
+  };
   lines: Array<{ handle: string; title: string; sku: string; qty: number; unitPrice: number; unitCost?: number; lineTotal: number }>;
   payment: { method: string; bank: string | null; status: string; attempts?: Array<{ status: string }> };
 };

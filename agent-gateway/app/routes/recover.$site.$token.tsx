@@ -267,6 +267,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
             messages: [{ role: "user", content: prompt }],
             maxTokens: 16,
             temperature: 0,
+            keyRole: "grader",
           })) ?? ""
       : undefined,
   });

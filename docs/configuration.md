@@ -77,8 +77,9 @@ may kill Chapman before SQLite has checkpointed and closed.
 | **Agent front**    | `/.well-known/ucp` discovery            | none                                                                                        | No provider key; install a storefront redirect or proxy                                           |
 | **Agent front**    | Razorpay checkout                       | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`                                                    | Both required for checkout; the storefront must also have been linked to these names during setup |
 | **Agent front**    | Reliable settlement webhook             | `RAZORPAY_WEBHOOK_SECRET`, `PUBLIC_ORIGIN`                                                  | Strongly recommended                                                                              |
-| **Analyst**        | Merchant-side analysis                  | `OPENROUTER_API_KEY`                                                                        | Required                                                                                          |
-| **Analyst**        | Model override                          | `OPENROUTER_MODEL_ANALYST`                                                                  | Optional                                                                                          |
+| **Analyst**        | Merchant-side reasoning                 | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL_ANALYST`                                             | Primary key required; model override optional                                                     |
+| **Analyst**        | Small-model tool orchestration          | `OPENROUTER_API_KEY2`, `OPENROUTER_MODEL_ORCHESTRATOR`                                       | Optional dedicated account lane and model override                                                |
+| **Analyst**        | Final report presentation               | `OPENROUTER_API_KEY3`, `OPENROUTER_MODEL_PRESENTER`                                          | Optional dedicated account lane and model override                                                |
 | **Shopper memory** | Memory consolidation                    | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL_SUMMARISER`                                         | Optional; deterministic storage and retrieval still work                                          |
 | **Recovery**       | Notice-only voice calls                 | `SARVAM_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM`, `PUBLIC_ORIGIN` | All five required together                                                                        |
 | **Recovery**       | Conversational calls and answer grading | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL_ASSISTANT`, `OPENROUTER_MODEL_GRADER`               | Optional                                                                                          |
@@ -89,6 +90,60 @@ Each dedicated page shows the variables it actually consumes, whether each is
 present, a blank copyable `.env` block, setup steps, and links to the provider's
 documentation. The server returns variable names and configured/not-configured
 booleans to the page; it never returns secret values.
+
+Current built-in routing is role-specific:
+
+- storefront assistant and conversational recovery text: Gemma 4 26B, Gemma
+  4 31B, Nemotron 3 Super, then `openrouter/free`;
+- analyst tool orchestration: deterministic routing first, then Nemotron 3.5
+  Lightning, Ling 3.0 Flash, Liquid LFM 2.5 2.6B, Gemma 4 31B, and
+  `openrouter/free` only for questions the deterministic router cannot map;
+- merchant reasoning: the configured `OPENROUTER_MODEL_ANALYST` first, then
+  Ling 3.0 Flash Fin, Nemotron 3 Super, and `openrouter/free`;
+- report presentation: Nemotron 3 Super, Gemma 4 31B, then `openrouter/free`;
+- shopper-memory consolidation: Liquid LFM 2.5 2.6B, Gemma 4 31B, then
+  `openrouter/free`;
+- fast answer grading: Liquid LFM 2.5 2.6B, Nemotron 3.5 Lightning, then Gemma
+  4 31B.
+
+With three distinct keys, the preferred lanes are key 1 for deep analyst
+reasoning, key 2 for orchestration/assistant requests, and key 3 for report
+presentation/summarisation/grading. Every lane can fail over to another
+configured key. Only environment-variable slot names and failure codes enter
+the ledger; credential values never do. Account quota failures cool only that
+key in the current process, while upstream provider failures cool the affected
+model so the same outage is not retried against every account.
+
+The recording stack overrides only the analyst with
+`nvidia/nemotron-3-ultra-550b-a55b:free`. Embedding generation is not active
+yet: shopper-memory retrieval remains deterministic lexical matching in SQLite.
+
+### Analyst request lifecycle
+
+Analyst key lanes are preferences, not hard partitions. Key 1 is preferred for
+deep reasoning, key 2 for orchestration, and key 3 for presentation and other
+small-model work; each role can fail over to another configured key. In-process
+cooldowns honour provider retry guidance and stop one upstream outage from
+being retried against every account. Durable cooldown state and background
+analyst jobs are still planned.
+
+The request itself is layered:
+
+1. The deterministic router handles known analytics intents. A small
+   orchestrator is called only when that router abstains.
+2. The server validates the proposed read-only tool name and arguments, then
+   TypeScript tools perform every count and calculation.
+3. The analyst model reasons over those verified results. It cannot access the
+   database, choose a tool, change data, or move money.
+4. A smaller presenter receives both the verified results and strategic draft,
+   and writes the final detailed report without introducing new arithmetic.
+5. JSON, grounding, completion, and sentence-ending checks reject private
+   planning and truncated output. The verified transcript is the fallback.
+
+The orchestrator currently emits a strict prompt-shaped JSON call. Native
+OpenRouter `tools`/`tool_calls` transport is a future migration; this does not
+make the execution simulated—the named function is validated and run on the
+server, and the dashboard shows its real output under **How it got there**.
 
 ## Razorpay for the bundled demo
 

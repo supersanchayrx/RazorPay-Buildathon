@@ -1,0 +1,11 @@
+# Recording-only recovery-call tunnel. This does not start Chapman, a store,
+# SQLite, or any seed process. The local one-shot script listens on port 3010.
+services:
+  ngrok-recording:
+    image: ngrok/ngrok:3-alpine
+    command: ["http", "host.docker.internal:3010", "--log", "stdout"]
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    ports:
+      - "4040:4040"
+    restart: "no"

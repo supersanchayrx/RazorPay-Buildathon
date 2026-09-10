@@ -148,6 +148,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           tierC: tierCSnippets(base, s.key),
           llmsUrl: `${base}/ucp/${s.key}/llms.txt`,
           staticDoc: staticProfile(s, base),
+          staticDownloadUrl: `/dashboard/agentfront/download?site=${encodeURIComponent(s.key)}`,
           endpoint: discoveryDocument(s, base).ucp.services[
             "dev.ucp.shopping"
           ][0].endpoint,
@@ -454,6 +455,137 @@ function Snippets({
   );
 }
 
+const VERCEL_STATIC_HEADER = [
+  '"headers": [',
+  "  {",
+  '    "source": "/.well-known/ucp",',
+  '    "headers": [',
+  '      { "key": "Content-Type", "value": "application/json; charset=utf-8" }',
+  "    ]",
+  "  }",
+  "]",
+].join("\n");
+
+/** Choose between owning a generated file and forwarding the live document. */
+function DiscoveryInstall({
+  staticDoc,
+  staticDownloadUrl,
+  snippets,
+  guessed,
+}: {
+  staticDoc: string;
+  staticDownloadUrl: string;
+  snippets: Array<{
+    host: string;
+    where: string;
+    lang: string;
+    body: string;
+    proxies?: boolean;
+  }>;
+  guessed: string | null;
+}) {
+  const [mode, setMode] = useState("file");
+
+  return (
+    <VStack gap={4}>
+      <SegmentedControl
+        label="Installation method"
+        size="sm"
+        value={mode}
+        onChange={setMode}
+      >
+        <SegmentedControlItem value="file" label="Host a generated file" />
+        <SegmentedControlItem value="forward" label="Forward to Chapman" />
+      </SegmentedControl>
+
+      {mode === "file" ? (
+        <VStack gap={4}>
+          <Text color="secondary">
+            Download the public UCP manifest and deploy it with your storefront,
+            just like <Code>llms.txt</Code> or <Code>catalog.json</Code>. Agents
+            discover your store without a redirect or runtime proxy.
+          </Text>
+
+          <Card>
+            <List listStyle="decimal" density="spacious">
+              <ListItem
+                label="Download the extensionless ucp file"
+                description="It contains the current MCP endpoint, capabilities and configured payment handlers. It contains no API keys or signing secrets."
+              />
+              <ListItem
+                label="Place it at public/.well-known/ucp"
+                description="For another static host, use the equivalent publish directory. Keep the filename ucp with no .json extension."
+              />
+              <ListItem
+                label="Serve it as application/json"
+                description="Deploy the storefront, then use Verify install below to check the path, document and MCP endpoint together."
+              />
+            </List>
+          </Card>
+
+          <HStack wrap="wrap">
+            <Button
+              href={staticDownloadUrl}
+              variant="primary"
+              label="Download ucp file"
+            />
+          </HStack>
+
+          <Collapsible
+            trigger={<Text color="secondary">Preview the generated file</Text>}
+          >
+            <VStack gap={3} paddingBlockStart={3}>
+              <CodeBlock
+                code={staticDoc}
+                language="json"
+                hasCopyButton
+                maxHeight={320}
+                container="card"
+                size="sm"
+              />
+            </VStack>
+          </Collapsible>
+
+          <Collapsible
+            trigger={<Text color="secondary">Vercel content-type rule</Text>}
+          >
+            <VStack gap={3} paddingBlockStart={3}>
+              <Text type="supporting" color="secondary">
+                Merge this property into the existing top-level{" "}
+                <Code>vercel.json</Code> object. Do not paste a second JSON
+                object or replace existing headers.
+              </Text>
+              <CodeBlock
+                code={VERCEL_STATIC_HEADER}
+                language="json"
+                hasCopyButton
+                isWrapped
+                container="card"
+                size="sm"
+              />
+            </VStack>
+          </Collapsible>
+
+          <Note>
+            This file is a snapshot. Regenerate and redeploy it after changing
+            payments, the public Chapman address, or agent capabilities. Verify
+            install detects a stale payment declaration, but it cannot update a
+            merchant-owned deployment for you.
+          </Note>
+        </VStack>
+      ) : (
+        <VStack gap={3}>
+          <Text color="secondary">
+            A redirect or proxy resolves Chapman&rsquo;s current document on
+            every request, so later configuration changes need no file redeploy.
+          </Text>
+          <Snippets snippets={snippets} guessed={guessed} />
+        </VStack>
+      )}
+    </VStack>
+  );
+}
+
 export default function AgentFront() {
   const d = useLoaderData<typeof loader>();
   const verified = useActionData<typeof action>();
@@ -716,17 +848,17 @@ export default function AgentFront() {
               <VStack gap={3}>
                 <Heading level={3}>Real custom website</Heading>
                 <Text color="secondary">
-                  Point <Code>/.well-known/ucp</Code> on your own domain at the
-                  Chapman profile URL shown in the generated rule below. Put the rule in the host
-                  configuration named by the selected tab, deploy it, then request the well-known
-                  URL on your own domain. That is the only place an agent looks, and deleting the
-                  rule revokes access.
+                  Publish <Code>/.well-known/ucp</Code> on your own domain.
+                  Host the generated document alongside your storefront, or
+                  forward that path to Chapman for an always-current copy. That
+                  is the only place an agent looks.
                 </Text>
-                <Note>
-                  A redirect is enough — no file to host and nothing to keep up
-                  to date.
-                </Note>
-                <Snippets snippets={s.snippets} guessed={s.guessed} />
+                <DiscoveryInstall
+                  staticDoc={s.staticDoc}
+                  staticDownloadUrl={s.staticDownloadUrl}
+                  snippets={s.snippets}
+                  guessed={s.guessed}
+                />
               </VStack>
 
               <VStack gap={3}>
@@ -832,34 +964,6 @@ export default function AgentFront() {
                 </VStack>
               </Collapsible>
 
-              <Collapsible
-                trigger={
-                  <Text color="secondary">
-                    My host cannot redirect — give me a file to upload
-                  </Text>
-                }
-              >
-                <VStack gap={3} paddingBlockStart={3}>
-                  <Note>
-                    Worth avoiding: a file is a copy, and it goes stale
-                    silently. Turn on payments later and this one keeps telling
-                    agents you take none.
-                  </Note>
-                  <Text type="supporting" color="secondary">
-                    Save as <Code>ucp</Code> (no extension) at{" "}
-                    <Code>/.well-known/ucp</Code>, served as{" "}
-                    <Code>application/json</Code>:
-                  </Text>
-                  <CodeBlock
-                    code={s.staticDoc}
-                    language="json"
-                    hasCopyButton
-                    maxHeight={320}
-                    container="card"
-                    size="sm"
-                  />
-                </VStack>
-              </Collapsible>
             </Setup>
           </VStack>
         </Block>

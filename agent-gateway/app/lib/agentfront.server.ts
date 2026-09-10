@@ -364,6 +364,28 @@ export function staticProfile(site: Site, gatewayBaseUrl: string): string {
   return JSON.stringify(discoveryDocument(site, gatewayBaseUrl), null, 2);
 }
 
+/**
+ * The browser download for a merchant-hosted discovery document.
+ *
+ * The filename is deliberately extensionless because the public protocol path
+ * is `/.well-known/ucp`, not `/.well-known/ucp.json`. `no-store` matters here:
+ * changing a payment handler and then downloading a cached old manifest is the
+ * quietest possible way to leave an agent storefront partially installed.
+ */
+export function staticProfileDownload(
+  site: Site,
+  gatewayBaseUrl: string,
+): Response {
+  return new Response(`${staticProfile(site, gatewayBaseUrl)}\n`, {
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": 'attachment; filename="ucp"',
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
 /* ------------------------------------------------------------------ *
  * Verify — the probe, as a button
  * ------------------------------------------------------------------ */

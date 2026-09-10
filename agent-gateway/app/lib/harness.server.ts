@@ -31,7 +31,11 @@
  * tool calls preceded it.
  */
 
-import { complete, MODELS } from "./openrouter.server";
+import {
+  complete,
+  MODELS,
+  type OpenRouterKeyRole,
+} from "./openrouter.server";
 import { record } from "./ledger.server";
 import type { ToolSpec } from "./tools.server";
 
@@ -61,6 +65,9 @@ export type HarnessOptions<C> = {
   model?: string | string[];
   maxSteps?: number;
   maxMs?: number;
+  /** Native model thinking budget; separate from the harness wall-clock cap. */
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
+  keyRole?: OpenRouterKeyRole;
   /** For the ledger, so every tool call is attributable to a shop. */
   shop: string;
 };
@@ -147,7 +154,13 @@ export function extractEmission(text: string): Emission | null {
             };
           }
           if (typeof parsed.answer === "string" && parsed.answer.trim()) {
-            return { kind: "answer", text: parsed.answer.trim() };
+            const answer = parsed.answer.trim();
+            // Some free models satisfy the JSON shape with a literal "...".
+            // That is valid JSON and not an answer. Treat only unmistakable
+            // placeholder tokens as invalid so concise real answers remain
+            // legal and the normal correction nudge gets one chance to help.
+            if (/^(?:\.{2,}|…+|n\/?a|none|null)$/i.test(answer)) break;
+            return { kind: "answer", text: answer };
           }
         } catch {
           // Not JSON, or not a call. Try the next opening brace.
@@ -203,6 +216,7 @@ ${tools.map((t) => `- ${t.name} ${JSON.stringify(t.parameters)}\n  ${t.descripti
 
 export async function runHarness<C>(opts: HarnessOptions<C>): Promise<HarnessResult> {
   const model = opts.model ?? MODELS.assistant();
+  let activeModel = model;
   const maxSteps = opts.maxSteps ?? 4;
   const maxMs = opts.maxMs ?? 30_000;
   const started = Date.now();
@@ -224,7 +238,15 @@ export async function runHarness<C>(opts: HarnessOptions<C>): Promise<HarnessRes
       break;
     }
 
-    const text = await complete({ shop: opts.shop, model, messages, maxTokens: 380, temperature: 0.2 });
+    const text = await complete({
+      shop: opts.shop,
+      model: activeModel,
+      messages,
+      maxTokens: 380,
+      temperature: 0.2,
+      reasoningEffort: opts.reasoningEffort,
+      keyRole: opts.keyRole ?? "assistant",
+    });
     if (!text) break;
 
     const emitted = extractEmission(text);
@@ -244,6 +266,13 @@ export async function runHarness<C>(opts: HarnessOptions<C>): Promise<HarnessRes
         role: "user",
         content: INVALID_REPLY_NUDGE,
       });
+      // A model that emitted private planning instead of the required object
+      // has answered the transport successfully, so `complete` cannot know it
+      // should fall back. Demote it here; the next turn keeps the same grounded
+      // tool transcript and asks the next configured model for the clean JSON.
+      if (Array.isArray(activeModel) && activeModel.length > 1) {
+        activeModel = activeModel.slice(1);
+      }
       continue;
     }
     if (emitted.kind === "answer") {
@@ -302,15 +331,21 @@ export async function runHarness<C>(opts: HarnessOptions<C>): Promise<HarnessRes
   // Out of budget, or the model went quiet. Ask once for an answer from what it
   // already has — far better than returning nothing, and it usually has plenty.
   messages.push({ role: "user", content: FINAL_ANSWER_NUDGE });
-  const final = await complete({ shop: opts.shop, model, messages, maxTokens: 380, temperature: 0.2 });
+  const final = await complete({
+    shop: opts.shop,
+    model: activeModel,
+    messages,
+    maxTokens: 380,
+    temperature: 0.2,
+    reasoningEffort: opts.reasoningEffort,
+    keyRole: opts.keyRole ?? "assistant",
+  });
 
-  // Accept the structured answer. Accept bare prose here too, because this is
-  // the last chance and a readable paragraph beats nothing. Only a further tool
-  // call is refused, since returning that verbatim shows a line of JSON to a
-  // person.
+  // Accept only a structured answer here too. Bare prose can be a reasoning
+  // trace ("We need to answer...") and showing nothing is safer and clearer
+  // than presenting private planning as the merchant-facing conclusion.
   const last = final ? extractEmission(final) : null;
-  const answered =
-    last?.kind === "answer" ? last.text : last?.kind === "call" ? "" : (final ?? "");
+  const answered = last?.kind === "answer" ? last.text : "";
   if (final && !answered) {
     record({
       shop: opts.shop,

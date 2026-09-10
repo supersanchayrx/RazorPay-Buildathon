@@ -9,7 +9,8 @@
  * randomness. Same inputs, same outputs, forever — which is the only reason the
  * numbers in a merchant-facing proposal can be trusted.
  *
- * Every function here was probed against `data/orders.jsonl` (seed 20260905)
+ * Every function here was probed against the deterministic synthetic order
+ * history (currently seed 20260911)
  * before it was written down as design. See the offer-proposer architecture doc.
  */
 
@@ -391,6 +392,20 @@ export function bernoulliCusum(
 
 export const mean = (xs: readonly number[]): number =>
   xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;
+
+/**
+ * Relative change with an honest zero-baseline state.
+ *
+ * `(current - previous) / previous` is simple arithmetic, but letting every
+ * caller reimplement it creates two merchant-facing failure modes: one emits
+ * Infinity when the prior period was empty, and another quietly reports 0%.
+ * `null` means there is no denominator and therefore no defensible percentage.
+ */
+export function relativeChange(current: number, previous: number): number | null {
+  if (!Number.isFinite(current) || !Number.isFinite(previous) || previous === 0)
+    return null;
+  return (current - previous) / previous;
+}
 
 export function stdev(xs: readonly number[]): number {
   if (xs.length < 2) return 0;

@@ -5,7 +5,7 @@ Market. It exists to make the Analyst, Offers, and Recovery pages useful in a
 presentation without passing invented numbers off as merchant data.
 
 Do not enable it for a real merchant evaluation. Every generated order and cart
-has `synthetic: true` and seed `20260905` so it remains distinguishable from
+has `synthetic: true` and seed `20260911` so it remains distinguishable from
 live data.
 
 ## Fieldnote Home Vercel demo
@@ -102,11 +102,11 @@ For a native gateway, run `npm run seed` from `agent-gateway/`.
 
 ## What the seed contains
 
-The current fixture covers 9 March through 5 September 2026:
+The current fixture covers 15 March through 11 September 2026:
 
-- 803 synthetic payment attempts: 748 placed and 55 payment failures;
-- 227 abandoned carts;
-- INR 7,50,790 of placed-order revenue;
+- 782 synthetic payment attempts: 731 placed and 51 payment failures;
+- 246 abandoned carts;
+- INR 7,10,110 of placed-order revenue;
 - merchant-only unit costs and safety floors for every demo SKU.
 
 The volume is intentionally larger than a handful of orders. Offers require a
@@ -120,28 +120,55 @@ The fixture plants these presentation stories:
 | Cross-sell | Masala Chai Blend and Single Estate Assam CTC are the strongest co-purchase pair. |
 | Replenishment | Twelve customers reorder Masala Chai Blend on an approximately monthly rhythm. This supports reminders, not a discount. |
 | Payment incident | Recent HDFC netbanking failures are materially above the other banks. It appears as an incident, not an offer. |
-| Cart recovery | Copper Chai Kettle appears in 82 abandoned carts but only three orders. Recovery can draft messages while showing why most carts are suppressed. |
+| Cart recovery | Copper Chai Kettle appears in 93 abandoned carts but only three orders. Recovery can draft messages while showing why most carts are suppressed. |
 | Slow mover with room | Ceramic Cupping Set clears the sample floor and has a 57% gross margin, making discount economics discussable. |
 | Thin-sample trap | Two of three kettle orders used COD. The system must refuse to call that a preference because `n=3` is below the merchant's floor. |
 | Margin trap | Cold Brew Concentrate sells quickly but has only a 14% gross margin and is on the never-discount list. |
-| Festival trap | Raksha Bandhan gifting demand rises 2.4x. Discounting it would pay for demand that was already arriving. |
+| Festival trap | Raksha Bandhan gifting demand rises 2.0x. Discounting it would pay for demand that was already arriving. |
+| Current-month slowdown | September 1–11 revenue is INR 23,480 versus an INR 50,623 average for the same first 11 days of the prior three months. The feed still has a completed order on September 11, so missing recent data did not manufacture the decline. |
+| Marketing audience | Declared synthetic profiles make age 25–34 the largest band (`n=63`) and Instagram the largest observed acquisition source (`n=49`). No spend or impression data is planted, so the analyst must frame this as a test and refuse to promise ROAS. |
 | Loyal-shopper recovery | A planted shopper has 12 completed orders and a fresh ₹1,140 Masala Chai Blend + Single Estate Assam CTC basket, ₹60 short of free delivery. |
 
 ## Suggested presentation flow
 
 ### Analyst
 
-The Analyst needs a configured OpenRouter model. Ask the built-in questions in
-this order:
+The Analyst needs a configured OpenRouter model. For the complete growth
+showcase, ask this as one compound question:
 
-1. `Is anything wrong with my payments right now?`
-2. `Which two products are most worth cross-selling, and how much is it worth a month?`
-3. `Do people reorder the masala chai on a regular cycle?`
-4. `What would 10% off the ceramic cupping set actually cost me?`
+> How many customers did we have in the past month compared with previous
+> months? Revenue this month looks stale—what are the three highest-impact
+> actions I should take now, and what evidence supports each one?
 
-Open **How it got there** after each answer. The useful proof is that the model
-chooses read-only tools while code performs the arithmetic and returns sample
-sizes and caveats.
+The deterministic router selects `growth_snapshot` and `list_proposals`. Code
+counts unique customers, compares trailing 30-day periods, shows the last six
+calendar months, and calculates the ranked opportunities. Ultra sees only those
+verified results and reasons about priority; a smaller presenter forms the
+final detailed report. The current month is compared only with the same first
+11 days of prior months, never projected into a made-up full-month forecast.
+
+The verified fixture should support a response that includes 86 customers in
+the latest trailing 30 days versus 89 previously (down 3.4%), and INR 1,29,060
+revenue versus INR 1,39,840 (down 7.7%). The leading measured opportunities
+include an Araku Valley Filter Coffee cross-sell for Cold Brew buyers, recovery
+of 93 abandoned Copper Chai Kettle baskets, and a Nilgiri Frost action. Exact
+wording may vary, but numbers must come from the transcript and the final answer
+must retain uncertainty and a measurement plan.
+
+Continue with the other questions if the recording needs more depth:
+
+1. `Design a practical marketing and PR campaign to grow store reach. Which channel and age range should I test, for how long, and what should I measure?`
+2. `Which customer cohorts retain best after 30, 60, and 90 days, and who should I re-engage?`
+3. `Are we too dependent on a few customers or products?`
+4. `Is anything wrong with my payments right now?`
+5. `Which two products are most worth cross-selling, and how much is it worth a month?`
+6. `Do people reorder the masala chai on a regular cycle?`
+7. `What would 10% off the ceramic cupping set actually cost me?`
+
+Open **How it got there** after each answer. The useful proof is that the
+deterministic router or small orchestrator selects read-only tools, the server
+validates the calls, and code performs the arithmetic with sample sizes and
+caveats. Ultra performs strategy only after those results exist.
 
 ### Offers
 
@@ -199,6 +226,7 @@ From `agent-gateway/`, the focused provenance check is:
 
 ```powershell
 node scripts/check-history.mjs
+node scripts/check-analyst-growth.mjs
 ```
 
 The complete project check also exercises the offer and recovery pipelines:

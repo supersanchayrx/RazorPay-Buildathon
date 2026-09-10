@@ -51,6 +51,34 @@ export function openRouterSetup(
       apiKeyRequired ? "required" : "recommended",
       "<paste-your-openrouter-key>",
     ),
+    ...(job === "analyst"
+      ? [
+          variable(
+            "OPENROUTER_API_KEY2",
+            "Optional second account lane for the small tool orchestrator and storefront assistant.",
+            "optional",
+            "<optional-second-openrouter-key>",
+          ),
+          variable(
+            "OPENROUTER_API_KEY3",
+            "Optional third account lane for report presentation, summarisation, and grading.",
+            "optional",
+            "<optional-third-openrouter-key>",
+          ),
+          variable(
+            "OPENROUTER_MODEL_ORCHESTRATOR",
+            "Optional small-model override for choosing read-only analyst tools.",
+            "optional",
+            "<optional-orchestrator-model-id>",
+          ),
+          variable(
+            "OPENROUTER_MODEL_PRESENTER",
+            "Optional structured-output model override for the final report wording.",
+            "optional",
+            "<optional-presenter-model-id>",
+          ),
+        ]
+      : []),
     variable(
       modelVariable,
       "Optional model override. For a predictable demo, use one funded model your OpenRouter account can access; free model quotas and slugs change independently.",
@@ -71,7 +99,7 @@ export function openRouterSetup(
   return {
     title,
     summary: apiKeyRequired
-      ? "The analyst needs a reasoning model to choose and call its read-only tools."
+      ? "Chapman routes read-only tools first, gives their verified results to a reasoning model, then uses a smaller model to format the final brief."
       : "The feature works without a model key; adding one makes the language less templated while the same code-level limits still apply.",
     status: hasKey ? "ready" : apiKeyRequired ? "attention" : "fallback",
     statusLabel: hasKey
@@ -82,7 +110,7 @@ export function openRouterSetup(
     variables,
     envExample: envExample(variables),
     steps: [
-      "Create an OpenRouter API key and keep it server-side.",
+      "Create an OpenRouter API key and keep it server-side. Extra keys from accounts you are authorised to use are optional failover lanes; Chapman never returns or logs their values.",
       ROOT_ENV_STEP,
       "For a predictable live demo, fund the OpenRouter account and set the model override above. Leaving it empty tries free models, which can exhaust their daily quota; removing the API key uses Chapman's deterministic fallback instead.",
       RESTART_STEP,

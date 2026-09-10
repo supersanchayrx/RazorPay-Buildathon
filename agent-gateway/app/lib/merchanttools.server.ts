@@ -47,6 +47,7 @@ import {
   bernoulliCusum,
   coefficientOfVariation,
   mean,
+  relativeChange,
 } from "./stats.server";
 import { classify, type HistoryOrder, type HistoryCart, type MerchantInputs } from "./detectors.server";
 import { markdownEconomics, storeScale } from "./economics.server";
@@ -96,6 +97,472 @@ function history() {
 }
 
 const placed = () => history().orders.filter((o) => o.status === "placed");
+const placedFor = (shop: string) =>
+  placed().filter((order) => {
+    const orderShop = (order as HistoryOrder & { shop?: string }).shop;
+    return orderShop === undefined || orderShop === shop;
+  });
+
+type PeriodPerformance = {
+  orders: number;
+  customers: number;
+  observedNewCustomers: number;
+  returningCustomers: number;
+  revenue: number;
+  ordersPerCustomer: number;
+  averageOrderValue: number;
+};
+
+const DAY_MS = 86_400_000;
+
+const startOfUtcDay = (date: Date) =>
+  new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+
+const shiftUtcDays = (date: Date, days: number) =>
+  new Date(date.getTime() + days * DAY_MS);
+
+const startOfUtcMonth = (date: Date) =>
+  new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+
+const shiftUtcMonths = (date: Date, months: number) =>
+  new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, 1));
+
+const inPeriod = (order: HistoryOrder, from: Date, until: Date) => {
+  const at = Date.parse(order.ts);
+  return at >= from.getTime() && at < until.getTime();
+};
+
+function performance(
+  orders: HistoryOrder[],
+  from: Date,
+  until: Date,
+  firstSeen: Map<string, number>,
+): PeriodPerformance {
+  const rows = orders.filter((order) => inPeriod(order, from, until));
+  const ids = new Set(rows.map((order) => order.customer.id));
+  const observedNewCustomers = [...ids].filter(
+    (id) => (firstSeen.get(id) ?? Number.POSITIVE_INFINITY) >= from.getTime(),
+  ).length;
+  const revenue = rows.reduce((sum, order) => sum + order.total, 0);
+  return {
+    orders: rows.length,
+    customers: ids.size,
+    observedNewCustomers,
+    returningCustomers: ids.size - observedNewCustomers,
+    revenue,
+    ordersPerCustomer: ids.size ? rows.length / ids.size : 0,
+    averageOrderValue: rows.length ? revenue / rows.length : 0,
+  };
+}
+
+const signedChange = (current: number, previous: number) => {
+  const change = relativeChange(current, previous);
+  if (change === null) return "no percentage (the comparison period was zero)";
+  return `${change >= 0 ? "+" : ""}${(change * 100).toFixed(1)}%`;
+};
+
+const monthLabel = (date: Date) =>
+  new Intl.DateTimeFormat("en", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+
+/**
+ * One deterministic growth readout used by the analyst tool below.
+ *
+ * Exported for the focused probe: the model is deliberately absent from these
+ * calculations, so the exact same orders always produce the exact same text.
+ */
+export function growthSnapshot(source: HistoryOrder[], requestedMonths = 6): string {
+  const orders = source
+    .filter((order) => order.status === "placed" && Number.isFinite(Date.parse(order.ts)))
+    .sort((a, b) => a.ts.localeCompare(b.ts));
+  if (!orders.length) return "No completed orders are available, so growth cannot be measured yet.";
+
+  const firstSeen = new Map<string, number>();
+  for (const order of orders) {
+    const at = Date.parse(order.ts);
+    const previous = firstSeen.get(order.customer.id);
+    if (previous === undefined || at < previous) firstSeen.set(order.customer.id, at);
+  }
+
+  // Anchor to the newest completed order rather than the server clock. A feed
+  // that stopped syncing must say DATA THROUGH Friday, not silently count the
+  // missing weekend as zero sales and diagnose a collapse that never occurred.
+  const latest = new Date(Date.parse(orders.at(-1)!.ts));
+  const dataThrough = startOfUtcDay(latest);
+  const dataUntil = shiftUtcDays(dataThrough, 1);
+  const trailingStart = shiftUtcDays(dataUntil, -30);
+  const precedingStart = shiftUtcDays(trailingStart, -30);
+  const trailing = performance(orders, trailingStart, dataUntil, firstSeen);
+  const preceding = performance(orders, precedingStart, trailingStart, firstSeen);
+
+  const currentMonth = startOfUtcMonth(dataThrough);
+  const elapsedDays = Math.floor((dataUntil.getTime() - currentMonth.getTime()) / DAY_MS);
+  const currentMtd = performance(orders, currentMonth, dataUntil, firstSeen);
+  const comparisonMonths = [1, 2, 3].map((offset) => {
+    const from = shiftUtcMonths(currentMonth, -offset);
+    const monthEnd = shiftUtcMonths(from, 1);
+    const until = new Date(Math.min(shiftUtcDays(from, elapsedDays).getTime(), monthEnd.getTime()));
+    return performance(orders, from, until, firstSeen);
+  });
+  const averageComparable = (pick: (row: PeriodPerformance) => number) =>
+    mean(comparisonMonths.map(pick));
+
+  const productRevenue = (from: Date, until: Date) => {
+    const totals = new Map<string, { title: string; revenue: number }>();
+    for (const order of orders.filter((row) => inPeriod(row, from, until))) {
+      for (const line of order.lines) {
+        const row = totals.get(line.handle) ?? { title: line.title, revenue: 0 };
+        row.revenue += line.lineTotal;
+        totals.set(line.handle, row);
+      }
+    }
+    return totals;
+  };
+  const recentProducts = productRevenue(trailingStart, dataUntil);
+  const priorProducts = productRevenue(precedingStart, trailingStart);
+  const productMoves = [...new Set([...recentProducts.keys(), ...priorProducts.keys()])]
+    .map((handle) => ({
+      title: recentProducts.get(handle)?.title ?? priorProducts.get(handle)?.title ?? handle,
+      current: recentProducts.get(handle)?.revenue ?? 0,
+      previous: priorProducts.get(handle)?.revenue ?? 0,
+    }))
+    .map((row) => ({ ...row, delta: row.current - row.previous }))
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, 4);
+
+  const months = Math.max(2, Math.min(Math.round(requestedMonths) || 6, 12));
+  const calendar: string[] = [];
+  for (let offset = months - 1; offset >= 0; offset--) {
+    const from = shiftUtcMonths(currentMonth, -offset);
+    const naturalEnd = shiftUtcMonths(from, 1);
+    const until = offset === 0 ? dataUntil : naturalEnd;
+    const row = performance(orders, from, until, firstSeen);
+    calendar.push(
+      `${monthLabel(from)}${offset === 0 ? ` MTD (${elapsedDays} days)` : ""}: ` +
+        `${row.customers} customers (${row.observedNewCustomers} first seen, ${row.returningCustomers} returning), ` +
+        `${row.orders} orders, ${inr(row.revenue)} revenue, ${inr(row.averageOrderValue)} AOV`,
+    );
+  }
+
+  return [
+    `DATA THROUGH ${dataThrough.toISOString().slice(0, 10)} (the newest completed order).`,
+    `TRAILING 30 DAYS: ${trailing.customers} unique customers, ${trailing.orders} orders, ${inr(trailing.revenue)} revenue. ` +
+      `Against the preceding 30 days: customers ${signedChange(trailing.customers, preceding.customers)} ` +
+      `(${preceding.customers} before), orders ${signedChange(trailing.orders, preceding.orders)} ` +
+      `(${preceding.orders} before), revenue ${signedChange(trailing.revenue, preceding.revenue)} ` +
+      `(${inr(preceding.revenue)} before).`,
+    `CURRENT MONTH TO DATE: ${monthLabel(currentMonth)} through day ${elapsedDays} has ` +
+      `${currentMtd.customers} customers, ${currentMtd.orders} orders and ${inr(currentMtd.revenue)} revenue. ` +
+      `The average for the same first ${elapsedDays} days of the prior 3 months was ` +
+      `${averageComparable((row) => row.customers).toFixed(1)} customers, ` +
+      `${averageComparable((row) => row.orders).toFixed(1)} orders and ` +
+      `${inr(averageComparable((row) => row.revenue))} revenue; revenue is ` +
+      `${signedChange(currentMtd.revenue, averageComparable((row) => row.revenue))}. ` +
+      `This is a like-for-like partial-month comparison, not a forecast for the full month.`,
+    `REVENUE DRIVERS, trailing 30 days vs preceding 30: customer count ` +
+      `${signedChange(trailing.customers, preceding.customers)}; orders per customer ` +
+      `${signedChange(trailing.ordersPerCustomer, preceding.ordersPerCustomer)} ` +
+      `(${trailing.ordersPerCustomer.toFixed(2)} vs ${preceding.ordersPerCustomer.toFixed(2)}); ` +
+      `average order value ${signedChange(trailing.averageOrderValue, preceding.averageOrderValue)} ` +
+      `(${inr(trailing.averageOrderValue)} vs ${inr(preceding.averageOrderValue)}). ` +
+      `These are accounting components, not proof that one caused another.`,
+    `BIGGEST PRODUCT REVENUE MOVES, trailing 30 days vs preceding 30:\n` +
+      productMoves
+        .map(
+          (row) =>
+            `  ${row.delta >= 0 ? "+" : "-"}${inr(Math.abs(row.delta))} ${row.title} ` +
+            `(${inr(row.current)} vs ${inr(row.previous)})`,
+        )
+        .join("\n"),
+    `CALENDAR MONTHS:\n${calendar.map((row) => `  ${row}`).join("\n")}`,
+    `"First seen" means first seen inside the available order history; it is not a lifetime acquisition claim. Exact counts describe this store only and do not establish causality.`,
+  ].join("\n\n");
+}
+
+/** Build a campaign brief only from declared cohorts and observed purchases. */
+export function marketingCampaignBrief(
+  source: HistoryOrder[],
+  inputs: MerchantInputs | null,
+  shopName: string,
+  requestedDays = 180,
+): string {
+  const orders = source
+    .filter((order) => order.status === "placed" && Number.isFinite(Date.parse(order.ts)))
+    .sort((a, b) => a.ts.localeCompare(b.ts));
+  if (!orders.length) return "No completed orders are available, so a campaign audience cannot be grounded yet.";
+
+  const days = Math.max(30, Math.min(Math.round(requestedDays) || 180, 365));
+  const latest = startOfUtcDay(new Date(Date.parse(orders.at(-1)!.ts)));
+  const until = shiftUtcDays(latest, 1);
+  const from = shiftUtcDays(until, -days);
+  const recent = orders.filter((order) => inPeriod(order, from, until));
+  const customers = new Map<
+    string,
+    { ageBand?: string; acquisitionSource?: string }
+  >();
+  for (const order of recent) {
+    const existing = customers.get(order.customer.id) ?? {};
+    customers.set(order.customer.id, {
+      ageBand: order.customer.ageBand ?? existing.ageBand,
+      acquisitionSource:
+        order.customer.acquisitionSource ?? existing.acquisitionSource,
+    });
+  }
+
+  const ageCounts = new Map<string, number>();
+  const sourceCounts = new Map<string, number>();
+  for (const customer of customers.values()) {
+    if (customer.ageBand)
+      ageCounts.set(customer.ageBand, (ageCounts.get(customer.ageBand) ?? 0) + 1);
+    if (customer.acquisitionSource)
+      sourceCounts.set(
+        customer.acquisitionSource,
+        (sourceCounts.get(customer.acquisitionSource) ?? 0) + 1,
+      );
+  }
+  const ages = [...ageCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const sources = [...sourceCounts.entries()].sort((a, b) => b[1] - a[1]);
+  const ageCoverage = ages.reduce((sum, [, count]) => sum + count, 0);
+  const sourceCoverage = sources.reduce((sum, [, count]) => sum + count, 0);
+  const primaryAge = ages[0] ?? null;
+  const primarySource = sources[0] ?? null;
+
+  const productRows = new Map<
+    string,
+    { title: string; revenue: number; buyers: Set<string> }
+  >();
+  if (primaryAge) {
+    for (const order of recent) {
+      if (order.customer.ageBand !== primaryAge[0]) continue;
+      for (const line of order.lines) {
+        const row = productRows.get(line.handle) ?? {
+          title: line.title,
+          revenue: 0,
+          buyers: new Set<string>(),
+        };
+        row.revenue += line.lineTotal;
+        row.buyers.add(order.customer.id);
+        productRows.set(line.handle, row);
+      }
+    }
+  }
+  const leadProduct = [...productRows.values()].sort(
+    (a, b) => b.buyers.size - a.buyers.size || b.revenue - a.revenue,
+  )[0];
+
+  const firstOrders = new Map<string, HistoryOrder>();
+  for (const order of orders) {
+    if (!firstOrders.has(order.customer.id)) firstOrders.set(order.customer.id, order);
+  }
+  const firstOrderMargins = [...firstOrders.values()].flatMap((order) => {
+    if (!inputs) return [];
+    let margin = 0;
+    for (const line of order.lines) {
+      const unitCost = line.unitCost ?? inputs.unitCost[line.sku];
+      if (unitCost === undefined) return [];
+      margin += line.lineTotal - unitCost * line.qty;
+    }
+    return [margin];
+  });
+  const averageFirstOrderMargin = firstOrderMargins.length
+    ? mean(firstOrderMargins)
+    : null;
+  const evidenceFloor = Math.max(inputs?.floors.minSampleSize ?? 30, 30);
+  const channel = primarySource?.[0] ?? "an instrumented prospecting channel";
+  const audience = primaryAge?.[0] ?? "a broad audience until declared cohort data exists";
+  const creative = leadProduct?.title ?? "the store's best-supported product story";
+
+  const ageEvidence = primaryAge
+    ? `${primaryAge[0]} is the largest DECLARED age band: ${primaryAge[1]} of ${ageCoverage} customers ` +
+      `(${pct(primaryAge[1] / ageCoverage)}, 95% interval ${pct(wilsonLower(primaryAge[1], ageCoverage))} to ` +
+      `${pct(wilsonUpper(primaryAge[1], ageCoverage))}). Coverage: ${ageCoverage} of ${customers.size} customers.`
+    : `No declared age-band data exists for these ${customers.size} customers. Do not infer age from names, products, phone numbers, or browsing.`;
+  const sourceEvidence = primarySource
+    ? `${primarySource[0]} is the most common DECLARED acquisition source: ${primarySource[1]} of ` +
+      `${sourceCoverage} attributed customers. This is attribution volume, not incremental lift or channel efficiency.`
+    : "No acquisition source is recorded. Add UTMs and persist first-touch source before naming a best channel.";
+  const productEvidence = leadProduct
+    ? `${creative} reached the most buyers in the leading age band: ${leadProduct.buyers.size} buyers and ` +
+      `${inr(leadProduct.revenue)} observed product revenue.`
+    : "There is no product-by-age evidence to select creative.";
+
+  return [
+    `CAMPAIGN EVIDENCE — last ${days} days through ${latest.toISOString().slice(0, 10)}:`,
+    `  ${ageEvidence}`,
+    `  ${sourceEvidence}`,
+    `  ${productEvidence}`,
+    `PAID REACH EXPERIMENT: run a 14-day ${channel} prospecting test for the observed ${audience} cohort, ` +
+      `using ${creative} as the lead creative and a unique UTM. Keep a comparable holdout if the platform supports it. ` +
+      `Fourteen days is a planning window, not a forecast. Do not declare a winner before ${evidenceFloor} first orders.`,
+    `MONEY GUARD: optimize for new-customer contribution margin, not clicks. ` +
+      (averageFirstOrderMargin === null
+        ? "Unit costs are incomplete, so Chapman cannot give a safe customer-acquisition-cost ceiling."
+        : `Observed average first-order gross margin is ${inr(averageFirstOrderMargin)} across ` +
+          `${firstOrderMargins.length} first orders; CAC must remain below that just to avoid losing gross margin.`) +
+      ` No impression, spend, or holdout data is present, so Chapman cannot claim ROAS, choose a budget, or call ${channel} the best-performing channel.`,
+    `RETENTION CAMPAIGN: use repeat_purchase_rhythm before scheduling product reminders. A regular cohort should receive a timely reminder or useful brewing content first, not an automatic discount.`,
+    `EARNED PR TEST: time-box a three-week outreach sprint around ${shopName}'s single-estate sourcing and the observed interest in ${creative}. ` +
+      `Track replies, qualified placements, referral visits, first orders, and contribution margin with a dedicated landing-page UTM. ` +
+      `This is a testable editorial angle, not evidence that a publication or audience will respond.`,
+  ].join("\n");
+}
+
+/** Retention by first-observed purchase cohort, with right-censoring handled. */
+export function customerRetentionCohorts(
+  source: HistoryOrder[],
+  requestedMonths = 6,
+): string {
+  const orders = source
+    .filter((order) => order.status === "placed" && Number.isFinite(Date.parse(order.ts)))
+    .sort((a, b) => a.ts.localeCompare(b.ts));
+  if (!orders.length) return "No completed orders are available, so retention cannot be measured yet.";
+  const latest = startOfUtcDay(new Date(Date.parse(orders.at(-1)!.ts)));
+  const dataUntil = shiftUtcDays(latest, 1);
+  const byCustomer = new Map<string, HistoryOrder[]>();
+  for (const order of orders) {
+    const rows = byCustomer.get(order.customer.id) ?? [];
+    rows.push(order);
+    byCustomer.set(order.customer.id, rows);
+  }
+  const cohortMap = new Map<string, Array<{ first: number; orders: HistoryOrder[] }>>();
+  for (const customerOrders of byCustomer.values()) {
+    const first = Date.parse(customerOrders[0].ts);
+    const key = customerOrders[0].ts.slice(0, 7);
+    const members = cohortMap.get(key) ?? [];
+    members.push({ first, orders: customerOrders });
+    cohortMap.set(key, members);
+  }
+  const rateAt = (
+    members: Array<{ first: number; orders: HistoryOrder[] }>,
+    horizon: number,
+  ) => {
+    const eligible = members.filter(
+      (member) => dataUntil.getTime() - member.first >= horizon * DAY_MS,
+    );
+    const returned = eligible.filter((member) =>
+      member.orders.some((order) => {
+        const at = Date.parse(order.ts);
+        return at > member.first && at <= member.first + horizon * DAY_MS;
+      }),
+    ).length;
+    if (!eligible.length) return `${horizon}d not mature`;
+    return (
+      `${horizon}d ${returned}/${eligible.length} (${pct(returned / eligible.length)}, ` +
+      `95% interval ${pct(wilsonLower(returned, eligible.length))}–${pct(wilsonUpper(returned, eligible.length))})`
+    );
+  };
+  const months = Math.max(2, Math.min(Math.round(requestedMonths) || 6, 12));
+  const cohorts = [...cohortMap.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(-months)
+    .map(
+      ([key, members]) =>
+        `${key}: ${members.length} first-observed customers; ${rateAt(members, 30)}; ` +
+        `${rateAt(members, 60)}; ${rateAt(members, 90)}`,
+    );
+
+  let reactivationCustomers = 0;
+  let reactivationHistoricRevenue = 0;
+  for (const customerOrders of byCustomer.values()) {
+    const last = Date.parse(customerOrders.at(-1)!.ts);
+    const ageDays = (dataUntil.getTime() - last) / DAY_MS;
+    if (ageDays < 31 || ageDays > 90) continue;
+    reactivationCustomers++;
+    reactivationHistoricRevenue += customerOrders.reduce(
+      (sum, order) => sum + order.total,
+      0,
+    );
+  }
+
+  return [
+    `RETURN WITHIN 30/60/90 DAYS OF FIRST OBSERVED PURCHASE, data through ${latest.toISOString().slice(0, 10)}:`,
+    ...cohorts.map((row) => `  ${row}`),
+    `REACTIVATION POOL: ${reactivationCustomers} customers last purchased 31–90 days ago, with ` +
+      `${inr(reactivationHistoricRevenue)} of observed historic revenue. This is an audience size, not forecast recoverable revenue.`,
+    `Only customers old enough to complete each horizon enter that horizon's denominator; recent cohorts are marked not mature instead of being counted as failures. ` +
+      `Cohorts are based on first purchase inside the available history, not guaranteed lifetime acquisition dates.`,
+  ].join("\n");
+}
+
+/** Exact accounting concentration, not a model-estimated customer segment. */
+export function revenueConcentration(
+  source: HistoryOrder[],
+  requestedDays = 180,
+): string {
+  const orders = source
+    .filter((order) => order.status === "placed" && Number.isFinite(Date.parse(order.ts)))
+    .sort((a, b) => a.ts.localeCompare(b.ts));
+  if (!orders.length) return "No completed orders are available, so revenue concentration cannot be measured yet.";
+  const days = Math.max(30, Math.min(Math.round(requestedDays) || 180, 365));
+  const latest = startOfUtcDay(new Date(Date.parse(orders.at(-1)!.ts)));
+  const until = shiftUtcDays(latest, 1);
+  const from = shiftUtcDays(until, -days);
+  const recent = orders.filter((order) => inPeriod(order, from, until));
+  const customerRevenue = new Map<string, number>();
+  const customerOrders = new Map<string, number>();
+  const productRevenue = new Map<string, { title: string; revenue: number }>();
+  for (const order of recent) {
+    customerRevenue.set(
+      order.customer.id,
+      (customerRevenue.get(order.customer.id) ?? 0) + order.total,
+    );
+    customerOrders.set(
+      order.customer.id,
+      (customerOrders.get(order.customer.id) ?? 0) + 1,
+    );
+    for (const line of order.lines) {
+      const row = productRevenue.get(line.handle) ?? {
+        title: line.title,
+        revenue: 0,
+      };
+      row.revenue += line.lineTotal;
+      productRevenue.set(line.handle, row);
+    }
+  }
+  const totalRevenue = recent.reduce((sum, order) => sum + order.total, 0);
+  const productTotal = [...productRevenue.values()].reduce(
+    (sum, row) => sum + row.revenue,
+    0,
+  );
+  const customerValues = [...customerRevenue.values()].sort((a, b) => b - a);
+  const topCount = Math.max(1, Math.ceil(customerValues.length * 0.1));
+  const topShare = customerValues.slice(0, topCount).reduce((a, b) => a + b, 0) /
+    Math.max(totalRevenue, 1);
+  const customerHhi = customerValues.reduce(
+    (sum, value) => sum + (value / Math.max(totalRevenue, 1)) ** 2,
+    0,
+  ) * 10_000;
+  const productHhi = [...productRevenue.values()].reduce(
+    (sum, row) => sum + (row.revenue / Math.max(productTotal, 1)) ** 2,
+    0,
+  ) * 10_000;
+  const repeatCustomers = [...customerOrders.values()].filter((count) => count > 1).length;
+  const repeatRevenue = [...customerRevenue.entries()]
+    .filter(([id]) => (customerOrders.get(id) ?? 0) > 1)
+    .reduce((sum, [, revenue]) => sum + revenue, 0);
+  const products = [...productRevenue.values()]
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 3);
+
+  return [
+    `REVENUE CONCENTRATION — last ${days} days through ${latest.toISOString().slice(0, 10)}:`,
+    `${customerValues.length} customers generated ${inr(totalRevenue)} across ${recent.length} completed orders. ` +
+      `The top ${topCount} customers (top 10%, rounded up) contributed ${pct(topShare)}. ` +
+      `Customer HHI is ${customerHhi.toFixed(0)} on a 0–10,000 scale; lower means revenue is spread across more customers.`,
+    `${repeatCustomers} repeat customers contributed ${inr(repeatRevenue)} (${pct(repeatRevenue / Math.max(totalRevenue, 1))}) of revenue.`,
+    `Product HHI is ${productHhi.toFixed(0)}. Largest product shares:\n` +
+      products
+        .map(
+          (row) =>
+            `  ${row.title}: ${inr(row.revenue)} (${pct(row.revenue / Math.max(productTotal, 1))} of product revenue)`,
+        )
+        .join("\n"),
+    `Concentration is an exposure measure, not proof of churn risk. Pair it with customer_retention_cohorts before proposing reactivation, and with list_proposals before changing price or placement.`,
+  ].join("\n");
+}
 
 async function onHandBySku(catalog: CatalogSource): Promise<Map<string, number>> {
   const m = new Map<string, number>();
@@ -264,6 +731,85 @@ export const DIAGNOSTIC_TOOLS: ToolSpec<MerchantToolContext>[] = [
  * the conclusion, not the estimator.
  */
 export const MERCHANT_TOOLS: ToolSpec<MerchantToolContext>[] = [
+  {
+    name: "growth_snapshot",
+    description:
+      "START HERE for customer growth, revenue trends, month-over-month comparisons, whether this month is stale, and diagnosing which commercial lever moved. Returns unique customers, orders, revenue, AOV, orders per customer, first-seen versus returning customers, a fair current-month-to-date comparison, the biggest product revenue movements, and up to twelve calendar months. It measures what changed but never claims why. If the merchant also asks what to do, call list_proposals next for quantified margin-safe actions.",
+    parameters: obj(
+      {
+        months: {
+          type: "integer",
+          description: "Calendar months to show, from 2 to 12. Default 6.",
+        },
+      },
+      [],
+    ),
+    async run(ctx, a) {
+      return growthSnapshot(placedFor(ctx.shop), Number(a.months) || 6);
+    },
+  },
+  {
+    name: "marketing_campaign_brief",
+    description:
+      "Use for marketing, PR, advertising, reach, campaign, channel, or target-age questions. Produces a measurable paid-reach experiment, retention direction, and earned-PR test from declared customer cohorts, first-touch attribution, product purchases, and first-order margin. It never infers age from identity, never calls attributed volume incremental lift, and refuses ROAS or budget claims when spend/impression data is missing. For a stale-revenue question call growth_snapshot first; call list_proposals as well before recommending operational actions.",
+    parameters: obj(
+      {
+        days: {
+          type: "integer",
+          description: "Recent evidence window, 30 to 365 days. Default 180.",
+        },
+      },
+      [],
+    ),
+    async run(ctx, a) {
+      return marketingCampaignBrief(
+        placedFor(ctx.shop),
+        history().inputs,
+        ctx.shopName,
+        Number(a.days) || 180,
+      );
+    },
+  },
+  {
+    name: "customer_retention_cohorts",
+    description:
+      "Use for retention, repeat-customer, cohort, loyalty, reactivation, or churn-risk questions. Returns first-observed monthly cohorts and repeat-within-30/60/90-day rates with Wilson intervals. Each horizon excludes customers too recent to have completed it, avoiding the common mistake of counting immature cohorts as failures. Also sizes a 31–90-day reactivation audience without pretending its historic revenue is recoverable revenue.",
+    parameters: obj(
+      {
+        months: {
+          type: "integer",
+          description: "Recent first-purchase cohorts to show, 2 to 12. Default 6.",
+        },
+      },
+      [],
+    ),
+    async run(ctx, a) {
+      return customerRetentionCohorts(
+        placedFor(ctx.shop),
+        Number(a.months) || 6,
+      );
+    },
+  },
+  {
+    name: "revenue_concentration",
+    description:
+      "Use for dependency, whale risk, customer concentration, product concentration, or whether growth is broad-based. Returns the exact top-10%-of-customers revenue share, repeat-customer revenue share, and customer/product Herfindahl concentration indices over a bounded period. It describes exposure but never labels concentration as churn or predicts lost revenue.",
+    parameters: obj(
+      {
+        days: {
+          type: "integer",
+          description: "Evidence window, 30 to 365 days. Default 180.",
+        },
+      },
+      [],
+    ),
+    async run(ctx, a) {
+      return revenueConcentration(
+        placedFor(ctx.shop),
+        Number(a.days) || 180,
+      );
+    },
+  },
   {
     name: "list_proposals",
     description:
