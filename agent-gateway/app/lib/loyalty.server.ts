@@ -31,8 +31,7 @@
  * tiers get.
  */
 
-import fs from "node:fs";
-import { dataPath } from "./paths.server";
+import { fixtureInputs, fixtureOrders } from "./fixture.server";
 import type { HistoryOrder, MerchantInputs } from "./detectors.server";
 
 export type Tier =
@@ -74,25 +73,12 @@ const REGULAR_AT = 4;
 const RETURNING_AT = 2;
 
 function readJsonl<T>(file: string): T[] {
-  try {
-    return fs
-      .readFileSync(dataPath(file), "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as T);
-  } catch {
-    return [];
-  }
+  void file;
+  return fixtureOrders<T>();
 }
 
 function readInputs(): MerchantInputs | null {
-  try {
-    return JSON.parse(
-      fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"),
-    ) as MerchantInputs;
-  } catch {
-    return null;
-  }
+  return fixtureInputs<MerchantInputs>();
 }
 
 /**

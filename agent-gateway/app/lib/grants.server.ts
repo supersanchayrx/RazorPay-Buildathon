@@ -32,9 +32,7 @@
  * never destroys the record of the issuance it consumed.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { dataPath } from "./paths.server";
+import { database, databasePath, ensureStore, json, parseJson, transaction } from "./database.server";
 import crypto from "node:crypto";
 import { record } from "./ledger.server";
 import type { Reason } from "./reasons";
@@ -74,24 +72,58 @@ type Row =
   | ({ kind: "issue" } & RecoveryGrant)
   | { kind: "redeem"; id: string; shop: string; at: string; gatewayOrderId: string };
 
-const FILE = dataPath("recovery-grants.jsonl");
-
 function readAll(): Row[] {
-  try {
-    return fs
-      .readFileSync(FILE, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as Row);
-  } catch {
-    return [];
+  const rows = database().prepare(`
+    SELECT payload, redeemed_at, redeemed_order_id
+    FROM recovery_grants ORDER BY issued_at, id
+  `).all() as Array<{
+    payload: string; redeemed_at: string | null; redeemed_order_id: string | null;
+  }>;
+  const out: Row[] = [];
+  for (const row of rows) {
+    const grant = parseJson<RecoveryGrant>(row.payload, null as never);
+    out.push({ kind: "issue", ...grant });
+    if (row.redeemed_at && row.redeemed_order_id) {
+      out.push({
+        kind: "redeem", id: grant.id, shop: grant.shop,
+        at: row.redeemed_at, gatewayOrderId: row.redeemed_order_id,
+      });
+    }
   }
+  return out;
 }
 
 function append(r: Row): boolean {
   try {
-    fs.mkdirSync(path.dirname(FILE), { recursive: true });
-    fs.appendFileSync(FILE, JSON.stringify(r) + "\n", "utf8");
+    if (r.kind === "issue") {
+      transaction((db) => {
+        db.prepare(`
+          INSERT INTO recovery_grants(
+            id, store_id, cart_id, customer_id, issued_at, expires_at,
+            margin_cost_minor, payload
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          r.id, ensureStore(r.shop), r.cartId, r.customerId, r.issuedAt,
+          r.expiresAt, Math.round(r.marginCost * 100), json(r),
+        );
+        db.prepare(`
+          INSERT INTO grant_events(grant_id, kind, occurred_at, payload)
+          VALUES (?, 'issued', ?, ?)
+        `).run(r.id, r.issuedAt, json(r));
+      });
+    } else {
+      transaction((db) => {
+        const changed = db.prepare(`
+          UPDATE recovery_grants SET redeemed_at = ?, redeemed_order_id = ?
+          WHERE id = ? AND store_id = ? AND redeemed_at IS NULL
+        `).run(r.at, r.gatewayOrderId, r.id, ensureStore(r.shop));
+        if (Number(changed.changes) !== 1) throw new Error("grant was not redeemable");
+        db.prepare(`
+          INSERT INTO grant_events(grant_id, kind, occurred_at, payload)
+          VALUES (?, 'redeemed', ?, ?)
+        `).run(r.id, r.at, json(r));
+      });
+    }
     return true;
   } catch {
     return false;
@@ -106,12 +138,13 @@ export type GrantState = "live" | "redeemed" | "expired";
 
 export function allGrants(
   shop: string,
+  asOf = new Date(),
 ): Array<RecoveryGrant & { state: GrantState; redeemedAt?: string; redeemedOrderId?: string }> {
   const rows = readAll().filter((r) => r.shop === shop);
   const redeemed = new Map<string, { at: string; gatewayOrderId: string }>();
   for (const r of rows) if (r.kind === "redeem") redeemed.set(r.id, { at: r.at, gatewayOrderId: r.gatewayOrderId });
 
-  const now = Date.now();
+  const now = asOf.getTime();
   return rows
     .filter((r): r is { kind: "issue" } & RecoveryGrant => r.kind === "issue")
     .map((g) => ({
@@ -136,15 +169,17 @@ export function allGrants(
 export function grantFor(
   shop: string,
   cartId: string,
+  asOf = new Date(),
 ): (RecoveryGrant & { state: GrantState; redeemedOrderId?: string }) | null {
-  return allGrants(shop).find((g) => g.cartId === cartId) ?? null;
+  return allGrants(shop, asOf).find((g) => g.cartId === cartId) ?? null;
 }
 
 export function findGrant(
   shop: string,
   id: string,
+  asOf = new Date(),
 ): (RecoveryGrant & { state: GrantState; redeemedOrderId?: string }) | null {
-  return allGrants(shop).find((g) => g.id === id) ?? null;
+  return allGrants(shop, asOf).find((g) => g.id === id) ?? null;
 }
 
 /**
@@ -157,7 +192,7 @@ export function findGrant(
  */
 export function monthlySpend(shop: string, asOf = new Date()): { count: number; margin: number } {
   const since = asOf.getTime() - 30 * 86_400_000;
-  const rows = allGrants(shop).filter((g) => Date.parse(g.issuedAt) >= since);
+  const rows = allGrants(shop, asOf).filter((g) => Date.parse(g.issuedAt) >= since);
   return {
     count: rows.length,
     margin: rows.reduce((s, g) => s + g.marginCost, 0),
@@ -186,7 +221,11 @@ export function issue(input: IssueInput): { grant: RecoveryGrant & { state: Gran
     id: `grn_${crypto.randomBytes(9).toString("base64url")}`,
     issuedAt: new Date().toISOString(),
   };
-  append({ kind: "issue", ...grant });
+  if (!append({ kind: "issue", ...grant })) {
+    const winner = grantFor(input.shop, input.cartId);
+    if (winner) return { grant: winner, created: false };
+    throw new Error("could not persist recovery grant");
+  }
 
   // Into the decision ledger too. A merchant reviewing what was done in their
   // name should find money leaving in the same place as everything else.
@@ -216,8 +255,13 @@ export type RedeemResult = { ok: true } | { ok: false; reason: "unknown" | "expi
  * other. The failure we are refusing is a single-use discount that is
  * single-use only if nobody clicks twice.
  */
-export function redeem(shop: string, id: string, gatewayOrderId: string): RedeemResult {
-  const g = findGrant(shop, id);
+export function redeem(
+  shop: string,
+  id: string,
+  gatewayOrderId: string,
+  asOf = new Date(),
+): RedeemResult {
+  const g = findGrant(shop, id, asOf);
   if (!g) return { ok: false, reason: "unknown" };
   if (g.state === "redeemed") return { ok: false, reason: "already_redeemed" };
   if (g.state === "expired") return { ok: false, reason: "expired" };
@@ -249,5 +293,5 @@ export function priceable(g: RecoveryGrant & { state: GrantState }, asOf = new D
 
 /** Test seam. */
 export function _file(): string {
-  return FILE;
+  return databasePath();
 }

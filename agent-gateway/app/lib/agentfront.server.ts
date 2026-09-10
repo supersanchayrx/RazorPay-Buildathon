@@ -67,13 +67,11 @@ export function installSnippets(profileUrl: string): Snippet[] {
     },
     {
       host: "Vercel",
-      where: "vercel.json",
+      where: "vercel.json — merge this property into the existing top-level object",
       lang: "json",
-      body: `{
-  "redirects": [
-    { "source": "/.well-known/ucp", "destination": "${profileUrl}", "permanent": false }
-  ]
-}`,
+      body: `"redirects": [
+  { "source": "/.well-known/ucp", "destination": "${profileUrl}", "permanent": false }
+]`,
     },
     {
       host: "Cloudflare Pages",
@@ -227,13 +225,12 @@ export function tierCSnippets(
     },
     {
       host: "Vercel — no code",
-      where: "vercel.json",
+      where: "vercel.json — merge these entries into the existing top-level arrays",
       lang: "json",
       covers: NO_CODE,
       missing: NO_CODE_MISSING,
-      body: `{
-  "redirects": [
-    { "source": "/llms.txt", "destination": "${base}/llms.txt", "permanent": false }
+      body: `"rewrites": [
+    { "source": "/llms.txt", "destination": "${base}/llms.txt" }
   ],
   "headers": [
     {
@@ -242,8 +239,7 @@ export function tierCSnippets(
         { "key": "Link", "value": "</.well-known/ucp>; rel=\\"ucp\\"; type=\\"application/json\\"" }
       ]
     }
-  ]
-}`,
+  ]`,
     },
     {
       host: "nginx — no code",

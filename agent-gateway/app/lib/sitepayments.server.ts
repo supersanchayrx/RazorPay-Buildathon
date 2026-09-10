@@ -7,15 +7,7 @@
  * browser. Switching checkout off is handled by feature flags and deliberately
  * leaves this link intact, so turning it back on is reversible.
  */
-import crypto from "node:crypto";
-import fs from "node:fs";
-
-import {
-  findConfigFile,
-  parseSitesConfig,
-  resetConfigCache,
-  stripJsonComments,
-} from "./config.server";
+import { database, databasePath, json } from "./database.server";
 import { secret } from "./env.server";
 import {
   isConfigured as razorpayConfigured,
@@ -56,9 +48,6 @@ type LinkOptions = {
   resolveSecret?: (name: string) => string | null;
 };
 
-const object = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
-
 /**
  * Link one registered storefront to the canonical Razorpay variable names.
  *
@@ -70,77 +59,27 @@ export function linkAgentRazorpay(
   siteKey: string,
   options: LinkOptions = {},
 ): { changed: boolean; file: string; backup: string | null } {
-  const file = options.configFile ?? findConfigFile();
-  if (!file) throw new Error("No Chapman storefront registry exists yet.");
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stripJsonComments(fs.readFileSync(file, "utf8")));
-  } catch (error) {
-    throw new Error(
-      `The Chapman storefront registry is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  void options.configFile;
+  const db = database();
+  const row = db.prepare(`
+    SELECT id, razorpay_json FROM stores WHERE site_key = ? AND configured = 1
+  `).get(siteKey) as { id: string; razorpay_json: string | null } | undefined;
+  if (!row) throw new Error(`Storefront ${siteKey} is not registered.`);
+  if (row.razorpay_json) {
+    return { changed: false, file: databasePath(), backup: null };
   }
-  if (!object(parsed) || !Array.isArray(parsed.sites)) {
-    throw new Error(
-      'The Chapman storefront registry needs a top-level "sites" list.',
-    );
+  const getSecret = options.resolveSecret ?? secret;
+  const missing = [
+    DEFAULT_AGENT_RAZORPAY_REF.keyIdEnv,
+    DEFAULT_AGENT_RAZORPAY_REF.keySecretEnv,
+  ].filter((name) => !getSecret(name));
+  if (missing.length) {
+    throw new Error(`The Razorpay link is missing ${missing.join(" and ")}.`);
   }
-
-  const matches = parsed.sites.filter(
-    (entry) => object(entry) && entry.key === siteKey,
-  );
-  if (matches.length !== 1) {
-    throw new Error(
-      matches.length === 0
-        ? `Storefront ${siteKey} is not registered.`
-        : `Storefront ${siteKey} appears more than once.`,
-    );
-  }
-
-  const existing = matches[0].razorpay;
-  if (object(existing)) {
-    return { changed: false, file, backup: null };
-  }
-
-  const next = structuredClone(parsed) as Record<string, unknown> & {
-    sites: unknown[];
-  };
-  const site = next.sites.find(
-    (entry: unknown) => object(entry) && entry.key === siteKey,
-  ) as Record<string, unknown>;
-  site.razorpay = { ...DEFAULT_AGENT_RAZORPAY_REF };
-
-  const text = `${JSON.stringify(next, null, 2)}\n`;
-  const report = parseSitesConfig(text, file, {
-    production: true,
-    resolveSecret: options.resolveSecret ?? secret,
-  });
-  if (report.errors.length > 0) {
-    throw new Error(
-      `The Razorpay link did not validate: ${report.errors.join(" ")}`,
-    );
-  }
-
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const nonce = crypto.randomBytes(4).toString("hex");
-  const backup = `${file}.before-agent-razorpay-${stamp}-${nonce}`;
-  const temporary = `${file}.tmp-${process.pid}-${nonce}`;
-  fs.copyFileSync(file, backup, fs.constants.COPYFILE_EXCL);
-  try {
-    fs.writeFileSync(temporary, text, { encoding: "utf8", flag: "wx" });
-    fs.renameSync(temporary, file);
-  } catch (error) {
-    try {
-      fs.rmSync(temporary, { force: true });
-    } catch {
-      // Preserve the original write error. The registry and backup still exist.
-    }
-    throw new Error(
-      `The Razorpay link could not be saved: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-
-  resetConfigCache();
-  return { changed: true, file, backup };
+  db.prepare(`
+    UPDATE stores SET razorpay_json = ?, updated_at = ? WHERE id = ?
+  `).run(json(DEFAULT_AGENT_RAZORPAY_REF), new Date().toISOString(), row.id);
+  return { changed: true, file: databasePath(), backup: null };
 }
+
+export { closeDatabase as _closeDatabase } from "./database.server";

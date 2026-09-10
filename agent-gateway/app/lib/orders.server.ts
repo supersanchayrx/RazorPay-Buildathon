@@ -20,8 +20,7 @@
  *                   returns is flagged, so nothing can quietly present demo
  *                   data as a real order.
  */
-import fs from "node:fs";
-import { dataPath } from "./paths.server";
+import { readDocuments } from "./database.server";
 import crypto from "node:crypto";
 
 export type OrderLine = {
@@ -116,14 +115,8 @@ let cache: { at: number; rows: Array<Order & { customer: string }> } | null = nu
 
 function loadSeed(): Array<Order & { customer: string }> {
   if (cache && Date.now() - cache.at < 30_000) return cache.rows;
-  let rows: Array<Order & { customer: string }> = [];
-  try {
-    rows = fs
-      .readFileSync(dataPath("orders.jsonl"), "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => {
-        const o = JSON.parse(l);
+  const rows = readDocuments<Record<string, any>>("seed.orders")
+      .map((o) => {
         return {
           id: o.id,
           placedAt: o.ts,
@@ -140,11 +133,8 @@ function loadSeed(): Array<Order & { customer: string }> {
           payment: { method: o.payment.method, status: o.payment.status },
           customer: o.customer.id,
           synthetic: true,
-        };
+        } as Order & { customer: string };
       });
-  } catch {
-    rows = [];
-  }
   cache = { at: Date.now(), rows };
   return rows;
 }
@@ -200,6 +190,28 @@ export function describeOrder(o: Order): string {
 
 /** A way to reach one shopper, as the merchant chose to expose it. */
 export type ShopperContact = { phone: string | null; email: string | null };
+
+/**
+ * Resolve contact from the explicitly synthetic merchant fixture.
+ *
+ * This exists for the self-hosted hackathon demo, where the Vercel storefront
+ * proves only a pseudonymous customer id and the operator supplies the actual
+ * test phone while seeding Chapman. A random signed-in id has no matching row
+ * and therefore returns no channel. Production integrations should use the
+ * signed merchant feed below instead.
+ */
+export function seededContact(shop: string, sub: string): ShopperContact {
+  const empty: ShopperContact = { phone: null, email: null };
+  if (!shop || !sub) return empty;
+  const row = readDocuments<Record<string, any>>("seed.orders").find(
+    (order) => order.shop === shop && order.synthetic === true && order.customer?.id === sub,
+  );
+  if (!row) return empty;
+  return {
+    phone: typeof row.customer?.phone === "string" ? row.customer.phone : null,
+    email: typeof row.customer?.email === "string" ? row.customer.email : null,
+  };
+}
 
 /**
  * Ask the merchant how to reach one of their own customers.

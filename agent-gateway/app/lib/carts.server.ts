@@ -41,9 +41,7 @@
  * contact, which means recovery suppresses the basket as `no_channel` and says
  * so. That is the correct outcome, not a gap.
  */
-import fs from "node:fs";
-import path from "node:path";
-import { dataPath } from "./paths.server";
+import { database, databasePath, ensureStore, json, parseJson, transaction } from "./database.server";
 import crypto from "node:crypto";
 import type { CatalogSource } from "./catalog.server";
 
@@ -72,12 +70,38 @@ export type LiveCart = {
   recovered: boolean;
 };
 
-const FILE = dataPath("live-carts.jsonl");
-
 function append(row: LiveCart): boolean {
   try {
-    fs.mkdirSync(path.dirname(FILE), { recursive: true });
-    fs.appendFileSync(FILE, JSON.stringify(row) + "\n", "utf8");
+    const storeId = ensureStore(row.shop);
+    transaction((db) => {
+      db.prepare(`
+        INSERT INTO carts(id, store_id, client_reference_hash, customer_id, payload, updated_at, recovered)
+        VALUES (?, ?, NULL, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET customer_id = excluded.customer_id,
+          payload = excluded.payload, updated_at = excluded.updated_at,
+          recovered = excluded.recovered
+      `).run(
+        row.id, storeId, row.customer?.id ?? null, json(row), row.ts,
+        row.recovered ? 1 : 0,
+      );
+      db.prepare("DELETE FROM cart_lines WHERE cart_id = ?").run(row.id);
+      const lineInsert = db.prepare(`
+        INSERT INTO cart_lines(
+          cart_id, line_key, handle, sku, title, quantity, unit_price_minor,
+          unit_cost_minor, line_total_minor
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      row.lines.forEach((line, index) => lineInsert.run(
+        row.id, String(index), line.handle, line.sku || null, line.title,
+        line.qty, Math.round(line.unitPrice * 100),
+        line.unitCost === undefined ? null : Math.round(line.unitCost * 100),
+        Math.round(line.lineTotal * 100),
+      ));
+      db.prepare(`
+        INSERT INTO cart_events(cart_id, store_id, occurred_at, payload)
+        VALUES (?, ?, ?, ?)
+      `).run(row.id, storeId, row.ts, json(row));
+    });
     return true;
   } catch {
     return false;
@@ -85,15 +109,8 @@ function append(row: LiveCart): boolean {
 }
 
 function readAll(): LiveCart[] {
-  try {
-    return fs
-      .readFileSync(FILE, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as LiveCart);
-  } catch {
-    return [];
-  }
+  return (database().prepare("SELECT payload FROM carts ORDER BY updated_at, id").all() as
+    Array<{ payload: string }>).map((r) => parseJson<LiveCart>(r.payload, null as never));
 }
 
 /**
@@ -110,6 +127,16 @@ export function liveCarts(shop: string): LiveCart[] {
     latest.set(row.id, row);
   }
   return [...latest.values()].filter((c) => c.lines.length > 0);
+}
+
+/** The immutable state transitions for one basket, oldest first. */
+export function cartHistory(shop: string, id: string): LiveCart[] {
+  return (database().prepare(`
+    SELECT e.payload FROM cart_events e
+    JOIN stores s ON s.id = e.store_id
+    WHERE s.site_key = ? AND e.cart_id = ? ORDER BY e.id
+  `).all(shop, id) as Array<{ payload: string }>).map((row) =>
+    parseJson<LiveCart>(row.payload, null as never));
 }
 
 /**
@@ -240,5 +267,5 @@ export function markRecovered(shop: string, clientRefOrId: string): boolean {
 
 /** Test seam. */
 export function _file(): string {
-  return FILE;
+  return databasePath();
 }

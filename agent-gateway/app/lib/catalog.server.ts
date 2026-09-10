@@ -320,6 +320,123 @@ function fromFeed(p: any, currency: string, base: string): CatalogProduct {
 const feedCache = new Map<string, { at: number; feed: Feed }>();
 const FEED_TTL_MS = 60_000;
 
+function storeCatalogSnapshot(
+  feedUrl: string,
+  products: CatalogProduct[],
+  policies: ShopPolicies,
+): void {
+  const db = database();
+  const stores = db.prepare(`
+    SELECT id FROM stores WHERE configured = 1 AND catalog_feed_url = ?
+  `).all(feedUrl) as Array<{ id: string }>;
+  if (!stores.length) return;
+  const contentHash = crypto.createHash("sha256")
+    .update(json({ products, policies })).digest("hex");
+  for (const store of stores) {
+    const existing = db.prepare(`
+      SELECT id FROM catalog_snapshots WHERE store_id = ? AND content_hash = ?
+    `).get(store.id, contentHash) as { id: string } | undefined;
+    if (existing) {
+      db.prepare(`UPDATE stores SET active_catalog_snapshot_id = ? WHERE id = ?`)
+        .run(existing.id, store.id);
+      continue;
+    }
+    const snapshotId = `cat_${crypto.randomBytes(10).toString("hex")}`;
+    const now = new Date().toISOString();
+    transaction((tx) => {
+      tx.prepare(`
+        INSERT INTO catalog_snapshots(
+          id, store_id, source, source_url, content_hash, status, created_at, activated_at
+        ) VALUES (?, ?, 'feed', ?, ?, 'ready', ?, ?)
+      `).run(snapshotId, store.id, feedUrl, contentHash, now, now);
+      const productInsert = tx.prepare(`
+        INSERT INTO catalog_products(
+          id, snapshot_id, handle, title, description, product_type, vendor,
+          url, image, currency, total_inventory
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const variantInsert = tx.prepare(`
+        INSERT INTO catalog_variants(
+          id, product_id, title, sku, price_minor, currency, available, inventory_quantity
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const tagInsert = tx.prepare(`INSERT INTO catalog_tags(product_id, tag) VALUES (?, ?)`);
+      for (const product of products) {
+        const productId = `prd_${crypto.randomBytes(10).toString("hex")}`;
+        productInsert.run(
+          productId, snapshotId, product.handle, product.title, product.description,
+          product.productType, product.vendor, product.url, product.image,
+          product.currency, product.totalInventory,
+        );
+        for (const variant of product.variants) {
+          variantInsert.run(
+            `var_${crypto.randomBytes(10).toString("hex")}`, productId,
+            variant.title, variant.sku, Math.round(Number(variant.price) * 100),
+            variant.currency, variant.availableForSale ? 1 : 0,
+            variant.inventoryQuantity,
+          );
+        }
+        for (const tag of new Set(product.tags)) tagInsert.run(productId, tag);
+      }
+      const policyInsert = tx.prepare(`
+        INSERT INTO catalog_policies(snapshot_id, policy_type, body) VALUES (?, ?, ?)
+      `);
+      for (const key of ["returns", "shipping", "cod"] as const) {
+        if (policies[key]) policyInsert.run(snapshotId, key, policies[key]);
+      }
+      tx.prepare(`
+        UPDATE stores SET active_catalog_snapshot_id = ?, updated_at = ? WHERE id = ?
+      `).run(snapshotId, now, store.id);
+    });
+  }
+}
+
+function storedCatalog(feedUrl: string): { products: CatalogProduct[]; policies: ShopPolicies } | null {
+  const db = database();
+  const snapshot = db.prepare(`
+    SELECT cs.id FROM stores s JOIN catalog_snapshots cs
+      ON cs.id = s.active_catalog_snapshot_id
+    WHERE s.configured = 1 AND s.catalog_feed_url = ? LIMIT 1
+  `).get(feedUrl) as { id: string } | undefined;
+  if (!snapshot) return null;
+  const rows = db.prepare(`
+    SELECT * FROM catalog_products WHERE snapshot_id = ? ORDER BY rowid
+  `).all(snapshot.id) as Array<Record<string, unknown>>;
+  const variants = db.prepare(`
+    SELECT * FROM catalog_variants WHERE product_id = ? ORDER BY rowid
+  `);
+  const tags = db.prepare(`SELECT tag FROM catalog_tags WHERE product_id = ? ORDER BY tag`);
+  const products: CatalogProduct[] = rows.map((row) => {
+    const vs = variants.all(row.id as string) as Array<Record<string, unknown>>;
+    const mapped = vs.map((v) => ({
+      title: String(v.title), price: (Number(v.price_minor) / 100).toFixed(2),
+      currency: String(v.currency), sku: v.sku === null ? null : String(v.sku),
+      availableForSale: Number(v.available) === 1,
+      inventoryQuantity: v.inventory_quantity === null ? null : Number(v.inventory_quantity),
+    }));
+    const prices = mapped.map((v) => Number(v.price));
+    return {
+      handle: String(row.handle), title: String(row.title), description: String(row.description),
+      productType: row.product_type === null ? null : String(row.product_type),
+      vendor: row.vendor === null ? null : String(row.vendor),
+      tags: (tags.all(row.id as string) as Array<{ tag: string }>).map((x) => x.tag),
+      url: row.url === null ? null : String(row.url),
+      image: row.image === null ? null : String(row.image),
+      minPrice: String(prices.length ? Math.min(...prices) : 0),
+      maxPrice: String(prices.length ? Math.max(...prices) : 0),
+      currency: String(row.currency),
+      totalInventory: row.total_inventory === null ? null : Number(row.total_inventory),
+      variants: mapped,
+    };
+  });
+  const policyRows = db.prepare(`
+    SELECT policy_type, body FROM catalog_policies WHERE snapshot_id = ?
+  `).all(snapshot.id) as Array<{ policy_type: keyof ShopPolicies; body: string }>;
+  const policies: ShopPolicies = {};
+  for (const row of policyRows) policies[row.policy_type] = row.body;
+  return { products, policies };
+}
+
 export function jsonFeedCatalog(feedUrl: string): CatalogSource {
   async function load(): Promise<Feed> {
     const hit = feedCache.get(feedUrl);
@@ -332,9 +449,17 @@ export function jsonFeedCatalog(feedUrl: string): CatalogSource {
   }
 
   async function all(): Promise<CatalogProduct[]> {
-    const feed = await load();
-    const currency = feed.shop?.currency ?? "INR";
-    return (feed.products ?? []).map((p) => fromFeed(p, currency, feedUrl));
+    try {
+      const feed = await load();
+      const currency = feed.shop?.currency ?? "INR";
+      const products = (feed.products ?? []).map((p) => fromFeed(p, currency, feedUrl));
+      storeCatalogSnapshot(feedUrl, products, feed.shop?.policies ?? {});
+      return products;
+    } catch (error) {
+      const snapshot = storedCatalog(feedUrl);
+      if (snapshot) return snapshot.products;
+      throw error;
+    }
   }
 
   return {
@@ -352,7 +477,18 @@ export function jsonFeedCatalog(feedUrl: string): CatalogSource {
       return applyComplements(await all(), handle, limit);
     },
     async policies() {
-      return (await load()).shop?.policies ?? {};
+      try {
+        const feed = await load();
+        const products = await all();
+        storeCatalogSnapshot(feedUrl, products, feed.shop?.policies ?? {});
+        return feed.shop?.policies ?? {};
+      } catch (error) {
+        const snapshot = storedCatalog(feedUrl);
+        if (snapshot) return snapshot.policies;
+        throw error;
+      }
     },
   };
 }
+import crypto from "node:crypto";
+import { database, json, parseJson, transaction } from "./database.server";

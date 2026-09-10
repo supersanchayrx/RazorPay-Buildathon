@@ -3,6 +3,7 @@ import { allowedOrigin, findSite } from "../lib/sites.server";
 import { featureOn } from "../lib/featureflags.server";
 import { verifySessionToken } from "../lib/identity.server";
 import { forget, memories } from "../lib/memory.server";
+import { publicBodyFailure, readPublicJson } from "../lib/http-security.server";
 
 /**
  * The shopper's own end of memory: see it, and delete it.
@@ -53,9 +54,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   let body: { site?: string; session?: string; op?: "list" | "forget"; id?: string };
   try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return json({ ok: false, error: "expected a JSON body" }, 400, origin);
+    body = await readPublicJson<typeof body>(request, "identity");
+  } catch (error) {
+    const failure = publicBodyFailure(error);
+    return json({ ok: false, error: failure.message, error_code: failure.code }, failure.status, origin);
   }
 
   const site = findSite(body.site ?? null);

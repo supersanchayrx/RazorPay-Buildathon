@@ -31,3 +31,7 @@ _e.js
 # exists so the embed tag can be pasted in on camera, and anything typed into it
 # is meant to be thrown away by the next regeneration.
 demo-store-clean/
+
+# Local Vercel integration fixture and deployment metadata. Keep the demo
+# available for recordings without publishing it with the Chapman repository.
+vercel-demo-store/

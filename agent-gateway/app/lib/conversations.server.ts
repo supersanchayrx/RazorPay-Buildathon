@@ -28,9 +28,7 @@
  * merchant console.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { dataPath } from "./paths.server";
+import { database, databasePath, ensureStore, json, parseJson, transaction } from "./database.server";
 import type { Reason } from "./reasons";
 import type { Tier } from "./loyalty.server";
 
@@ -57,26 +55,58 @@ export type Conversation = {
   finished: boolean;
 };
 
-const FILE = dataPath("recovery-conversations.jsonl");
-
 type Row = { shop: string; cartId: string; customerId: string; turn: ConvTurn };
 
 function readAll(): Row[] {
-  try {
-    return fs
-      .readFileSync(FILE, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as Row);
-  } catch {
-    return [];
-  }
+  return (database().prepare(`
+    SELECT s.site_key, c.cart_id, c.customer_id, t.payload
+    FROM recovery_turns t
+    JOIN recovery_conversations c ON c.id = t.conversation_id
+    JOIN stores s ON s.id = c.store_id
+    ORDER BY c.created_at, t.sequence
+  `).all() as Array<{
+    site_key: string; cart_id: string; customer_id: string; payload: string;
+  }>).map((r) => ({
+    shop: r.site_key, cartId: r.cart_id, customerId: r.customer_id,
+    turn: parseJson<ConvTurn>(r.payload, null as never),
+  }));
 }
 
 function append(r: Row): boolean {
   try {
-    fs.mkdirSync(path.dirname(FILE), { recursive: true });
-    fs.appendFileSync(FILE, JSON.stringify(r) + "\n", "utf8");
+    transaction((db) => {
+      const storeId = ensureStore(r.shop);
+      const existing = db.prepare(`
+        SELECT id FROM recovery_conversations WHERE store_id = ? AND cart_id = ?
+      `).get(storeId, r.cartId) as { id: string } | undefined;
+      const conversationId = existing?.id ?? `conversation_${storeId}_${r.cartId}`;
+      if (!existing) {
+        db.prepare(`
+          INSERT INTO recovery_conversations(
+            id, store_id, cart_id, customer_id, state, finished, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          conversationId, storeId, r.cartId, r.customerId, r.turn.kind,
+          r.turn.kind === "recovered" || r.turn.kind === "closed" ? 1 : 0,
+          r.turn.ts, r.turn.ts,
+        );
+      }
+      const seq = Number((db.prepare(`
+        SELECT COALESCE(MAX(sequence), 0) + 1 AS next
+        FROM recovery_turns WHERE conversation_id = ?
+      `).get(conversationId) as { next: number }).next);
+      db.prepare(`
+        INSERT INTO recovery_turns(conversation_id, sequence, kind, occurred_at, payload)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(conversationId, seq, r.turn.kind, r.turn.ts, json(r.turn));
+      db.prepare(`
+        UPDATE recovery_conversations SET state = ?, finished = ?, updated_at = ?
+        WHERE id = ?
+      `).run(
+        r.turn.kind, r.turn.kind === "recovered" || r.turn.kind === "closed" ? 1 : 0,
+        r.turn.ts, conversationId,
+      );
+    });
     return true;
   } catch {
     return false;
@@ -236,5 +266,5 @@ export function answerRate(shop: string): { asked: number; answered: number; rat
 
 /** Test seam. */
 export function _file(): string {
-  return FILE;
+  return databasePath();
 }

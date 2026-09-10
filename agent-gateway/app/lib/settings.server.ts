@@ -30,9 +30,7 @@
  * setting is not something anyone has asked to audit. Becomes a Prisma row.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { dataPath } from "./paths.server";
+import { database, databasePath, ensureStore, json, parseJson } from "./database.server";
 // Types only — erased at build, so this file stays as cheap to import as it was.
 import type { Reason } from "./reasons";
 import type { Tier } from "./loyalty.server";
@@ -218,9 +216,6 @@ export const DEFAULTS: MerchantSettings = {
   updatedBy: null,
 };
 
-const file = (shop: string) =>
-  dataPath(`settings-${shop.replace(/[^a-z0-9_]/gi, "_")}.json`);
-
 /**
  * Read, with the defaults filled in field by field.
  *
@@ -231,12 +226,12 @@ const file = (shop: string) =>
  * field is absent is worse than no ceiling at all, because nobody looks for it.
  */
 export function readSettings(shop: string): MerchantSettings {
-  let raw: Partial<MerchantSettings> = {};
-  try {
-    raw = JSON.parse(
-      fs.readFileSync(file(shop), "utf8"),
-    ) as Partial<MerchantSettings>;
-  } catch {
+  const row = database().prepare(`
+    SELECT ss.payload FROM store_settings ss
+    JOIN stores s ON s.id = ss.store_id WHERE s.site_key = ?
+  `).get(shop) as { payload: string } | undefined;
+  const raw = row ? parseJson<Partial<MerchantSettings>>(row.payload, {}) : {};
+  if (!row) {
     return {
       ...DEFAULTS,
       outreach: { ...DEFAULTS.outreach },
@@ -444,8 +439,12 @@ export function writeSettings(
   };
 
   try {
-    fs.mkdirSync(path.dirname(file(shop)), { recursive: true });
-    fs.writeFileSync(file(shop), JSON.stringify(next, null, 2) + "\n", "utf8");
+    database().prepare(`
+      INSERT INTO store_settings(store_id, payload, updated_at, updated_by)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(store_id) DO UPDATE SET payload = excluded.payload,
+        updated_at = excluded.updated_at, updated_by = excluded.updated_by
+    `).run(ensureStore(shop), json(next), next.updatedAt, next.updatedBy);
   } catch (e) {
     return bad(`could not save: ${(e as Error).message}`);
   }
@@ -480,5 +479,6 @@ export function quietNow(s: MerchantSettings, asOf = new Date()): boolean {
 
 /** Test seam. */
 export function _file(shop: string): string {
-  return file(shop);
+  void shop;
+  return databasePath();
 }

@@ -4,6 +4,7 @@ import { verifyWebhookSignature } from "../lib/razorpay.server";
 import { settlePayment } from "../lib/settle.server";
 import { record } from "../lib/ledger.server";
 import { release } from "../lib/reservations.server";
+import { publicBodyFailure, readPublicText } from "../lib/http-security.server";
 
 /**
  * Razorpay webhooks.
@@ -47,7 +48,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (!site?.razorpay) return ok({ error: "unknown site" }, 404);
 
   // Raw first. Nothing below may parse before the signature has been checked.
-  const raw = await request.text();
+  let raw: string;
+  try {
+    raw = await readPublicText(request, "webhook");
+  } catch (error) {
+    const failure = publicBodyFailure(error);
+    return ok({ error: failure.message, error_code: failure.code }, failure.status);
+  }
   const signature = request.headers.get("x-razorpay-signature") ?? "";
 
   if (!verifyWebhookSignature(site.razorpay, raw, signature)) {

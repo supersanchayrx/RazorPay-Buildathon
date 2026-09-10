@@ -2,11 +2,12 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { allowedOrigin, findSite } from "../lib/sites.server";
 import { verifySessionToken } from "../lib/identity.server";
 import { jsonFeedCatalog } from "../lib/catalog.server";
-import { jsonFeedContact } from "../lib/orders.server";
+import { jsonFeedContact, seededContact } from "../lib/orders.server";
 import { captureCart, liveCarts, markRecovered, type CaptureLine } from "../lib/carts.server";
 import { record } from "../lib/ledger.server";
 import fs from "node:fs";
 import { dataPath } from "../lib/paths.server";
+import { publicBodyFailure, readPublicJson } from "../lib/http-security.server";
 
 /**
  * Basket capture for custom sites — the missing wire into the recovery loop.
@@ -102,9 +103,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     lastStep?: string;
   };
   try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return json({ ok: false, error: "expected a JSON body" }, 400, origin);
+    body = await readPublicJson<typeof body>(request, "identity");
+  } catch (error) {
+    const failure = publicBodyFailure(error);
+    return json({ ok: false, error: failure.message, error_code: failure.code }, failure.status, origin);
   }
 
   const site = findSite(body.site ?? null);
@@ -136,10 +138,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const verified = verifySessionToken(body.session, { site: site.key, secret: site.secret });
   const sub = verified.ok ? verified.identity.sub : null;
 
-  const contact =
-    sub && site.orders?.feedUrl
+  const contact = sub
+    ? site.orders?.feedUrl
       ? await jsonFeedContact(site.orders.feedUrl, site.secret, sub)
-      : null;
+      : seededContact(site.key, sub)
+    : null;
 
   const res = await captureCart({
     shop: site.key,

@@ -10,7 +10,7 @@ Choose one runtime:
 | Runtime | Requirement                        |
 | ------- | ---------------------------------- |
 | Docker  | Docker Desktop and Docker Compose  |
-| Native  | Node.js `>=20.19 <22` or `>=22.12` |
+| Native  | Node.js `>=22.12`                   |
 
 A real storefront also needs a public origin and a JSON catalogue feed. HTTPS
 is required in production. The feed format is documented in
@@ -284,6 +284,7 @@ Put the returned HTTPS URL in both variables and restart the gateway:
 ```dotenv
 GATEWAY_ORIGIN=https://your-name.ngrok-free.app
 PUBLIC_ORIGIN=https://your-name.ngrok-free.app
+CHAPMAN_TRUST_PROXY=1
 ```
 
 ```bash
@@ -415,9 +416,9 @@ npm run doctor
 npm run dev:gateway
 ```
 
-`npm run init` writes the site registry, appends generated secrets to the root
-`.env`, and creates the merchant account. It does not overwrite existing secret
-values.
+`npm run init` writes the storefront and merchant grant to SQLite, appends
+generated secrets to the root `.env`, and creates the merchant account. It does
+not overwrite existing secret values or create a legacy JSON registry.
 
 Production build:
 
@@ -449,18 +450,35 @@ Use HTTPS and persistent storage. Important variables are:
 | ------------------------ | ------------------------------------ |
 | `NODE_ENV=production`    | Disables development fallbacks       |
 | `CHAPMAN_DATA_DIR`       | Persistent application data          |
-| `CHAPMAN_CONFIG`         | Site registry path                   |
+| `CHAPMAN_DATABASE_PATH`  | SQLite path (Docker: `/data/chapman.sqlite`) |
+| `DATABASE_URL`           | Prisma URL for the same SQLite file  |
 | `CONSOLE_SESSION_SECRET` | Stable merchant sessions             |
 | `GATEWAY_ORIGIN`         | Browser-facing public gateway URL    |
 | `SITE_SECRET_<KEY>`      | Per-site shopper and feed signatures |
+| `CHAPMAN_TRUST_PROXY=1`  | Trust one replacing reverse proxy for client-IP rate limits |
+| `CHAPMAN_SHUTDOWN_TIMEOUT_MS=20000` | Drain deadline before a restart is forced |
 
-Store production credentials in a secret manager. Back up the data directory,
-site registry, and secrets. Run:
+Store production credentials in a secret manager. Back up SQLite and secrets
+separately; see [SQLite operations](docs/database.md). Run:
 
 ```bash
 npm run doctor -- --url https://chapman.example
 npm run check
 ```
+
+Public chat, agent, identity, payment, recovery, voice, and webhook routes have
+route-specific request-size ceilings and process-local token-bucket limits.
+Oversized bodies return `413 HTTP_BODY_TOO_LARGE`; exhausted buckets return
+`429 HTTP_RATE_LIMITED` with `Retry-After`. Leave `CHAPMAN_TRUST_PROXY` unset
+when Chapman is directly exposed. Set it to `1` only when one trusted reverse
+proxy immediately fronts Chapman and replaces `X-Forwarded-For`.
+
+Compose gives Chapman a 30-second stop grace period. On `SIGTERM` the gateway
+stops accepting requests, finishes active responses and tracked background
+work, disconnects Prisma, then checkpoints and closes SQLite. Keep
+`CHAPMAN_SHUTDOWN_TIMEOUT_MS` below the host's stop grace period. Normal drain
+progress appears as `process.shutdown.*` JSON logs; timeout or a second signal
+exits non-zero with `PROCESS_SHUTDOWN_TIMEOUT` or `PROCESS_SHUTDOWN_FORCED`.
 
 ## Data and resets
 
@@ -474,8 +492,8 @@ Use the all-profile `down --volumes` command only for an intentional complete
 reset. If Docker still reports a resource in use, use the project-scoped force
 cleanup in [Fresh storefront setup](docs/fresh-store-setup.md#1-start-docker-and-reset-the-demo).
 
-Native state defaults to `agent-gateway/data/`. Set `CHAPMAN_DATA_DIR` to a
-backed-up location in production.
+Native state defaults to `agent-gateway/data/`. Set `CHAPMAN_DATA_DIR` or
+`CHAPMAN_DATABASE_PATH` to persistent storage in production.
 
 ## Upgrades
 
@@ -494,12 +512,14 @@ Native:
 git pull
 cd agent-gateway
 npm install
+npm run db:migrate
 npm run doctor
 npm run check
 ```
 
-Do not replace `.env`, the site registry, or the data directory during an
-upgrade.
+Do not replace `.env`, `chapman.sqlite`, or the data directory during an
+upgrade. Container startup applies schema migrations before serving traffic.
+The application does not import former JSON/JSONL state during an upgrade.
 
 ## Troubleshooting
 
@@ -510,6 +530,11 @@ docker compose ps
 docker compose logs gateway
 docker compose run --rm gateway npm run doctor
 ```
+
+For a failed HTTP call, copy its `X-Request-ID` response header and find the
+same `request_id` in `docker compose logs gateway`. Error records are JSON and
+include a stable `error_code`; Chapman omits query strings and redacts known
+secrets, credentials, email addresses, and phone numbers.
 
 | Symptom                  | Check                                                               |
 | ------------------------ | ------------------------------------------------------------------- |

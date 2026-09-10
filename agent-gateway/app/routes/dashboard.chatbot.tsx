@@ -34,6 +34,7 @@ import { jsonFeedCatalog } from "../lib/catalog.server";
 import { featureOn } from "../lib/featureflags.server";
 import { jsonFeedOrders, seededOrders } from "../lib/orders.server";
 import { mergeSources, placedOrders } from "../lib/orderstore.server";
+import { selfOrigin } from "../lib/origin.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const merchant = requireMerchant(request);
@@ -99,11 +100,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const url = new URL(request.url);
   // The snippet must carry the origin the merchant will actually call. Printing
-  // a hardcoded localhost here is how a copy-paste install silently fails once
-  // the tunnel URL rotates.
-  const base = `${url.protocol}//${url.host}`;
+  // the dashboard request's localhost origin here is how a copy-paste install
+  // silently fails even when the deployment pinned its public tunnel URL.
+  const base = selfOrigin(request);
   const registered = sitesForMerchant(requireMerchant(request).sites)[0] ?? null;
   const ledger = readLedger(2000);
   const siteLedger = registered

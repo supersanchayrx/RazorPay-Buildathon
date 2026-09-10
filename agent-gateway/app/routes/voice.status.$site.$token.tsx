@@ -8,6 +8,7 @@ import { sendDiscountFollowupTemplate } from "../lib/recovery-message.server";
 import { findSite } from "../lib/sites.server";
 import { config, verifyTwilioSignature } from "../lib/voice.server";
 import { callTranscript } from "../lib/voicetalk.server";
+import { readPublicFormData } from "../lib/http-security.server";
 
 const empty = (status = 204) => new Response(null, { status });
 
@@ -30,8 +31,12 @@ async function handle({ request, params }: LoaderFunctionArgs | ActionFunctionAr
   const draft = draftById(site.key, verified.claim.draft);
   if (!draft) return empty(404);
 
-  const form =
-    request.method === "POST" ? await request.formData() : new FormData();
+  let form: FormData;
+  try {
+    form = request.method === "POST" ? await readPublicFormData(request, "voice") : new FormData();
+  } catch {
+    return empty(413);
+  }
   const values: Record<string, string> = {};
   for (const [key, value] of form.entries()) values[key] = String(value);
 

@@ -14,8 +14,7 @@
  * model's, because everything upstream was already verified.
  */
 
-import fs from "node:fs";
-import { dataPath } from "./paths.server";
+import { fixtureCarts, fixtureInputs, fixtureOrders } from "./fixture.server";
 import type { CatalogSource } from "./catalog.server";
 import {
   runDetectors,
@@ -36,28 +35,6 @@ const WINDOW_MONTHS = 6;
 /* ------------------------------------------------------------------ *
  * Loading the merchant's history
  * ------------------------------------------------------------------ */
-
-function readJsonl<T>(file: string): T[] {
-  try {
-    return fs
-      .readFileSync(dataPath(file), "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as T);
-  } catch {
-    return [];
-  }
-}
-
-function readInputs(): MerchantInputs | null {
-  try {
-    return JSON.parse(
-      fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"),
-    ) as MerchantInputs;
-  } catch {
-    return null;
-  }
-}
 
 /* ------------------------------------------------------------------ *
  * The run
@@ -93,9 +70,11 @@ export async function runProposals(opts: {
   digestSize?: number;
 }): Promise<ProposalRun> {
   const asOf = opts.asOf ?? new Date();
-  const inputs = readInputs();
-  const orders = readJsonl<HistoryOrder>("orders.jsonl").filter((o) => o.lines?.length);
-  const carts = readJsonl<HistoryCart>("carts.jsonl");
+  const inputs = fixtureInputs<MerchantInputs>(opts.shop);
+  const orders = fixtureOrders<HistoryOrder & { shop: string }>()
+    .filter((o) => o.shop === opts.shop && o.lines?.length);
+  const carts = fixtureCarts<HistoryCart & { shop: string }>()
+    .filter((c) => c.shop === opts.shop);
 
   const base: ProposalRun = {
     ranAt: asOf.toISOString(),

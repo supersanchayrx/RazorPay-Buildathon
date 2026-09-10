@@ -5,6 +5,7 @@ import { findPending, findByGatewayOrder } from "../lib/orderstore.server";
 import { publicKeyId, verifyPaymentSignature, fetchPayment } from "../lib/razorpay.server";
 import { settlePayment } from "../lib/settle.server";
 import { record } from "../lib/ledger.server";
+import { publicBodyFailure, readPublicJson } from "../lib/http-security.server";
 
 /**
  * The escalation page — where `continue_url` lands.
@@ -65,10 +66,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const gatewayOrderId = String(params.orderId ?? "");
   if (!site?.razorpay) return Response.json({ ok: false, error: "unknown store" }, { status: 404 });
 
-  const body = (await request.json().catch(() => ({}))) as {
-    razorpay_payment_id?: string;
-    razorpay_signature?: string;
-  };
+  let body: { razorpay_payment_id?: string; razorpay_signature?: string };
+  try {
+    body = await readPublicJson<typeof body>(request, "identity");
+  } catch (error) {
+    const failure = publicBodyFailure(error);
+    return Response.json({ ok: false, error: failure.message, error_code: failure.code }, { status: failure.status });
+  }
   const paymentId = String(body.razorpay_payment_id ?? "");
   const signature = String(body.razorpay_signature ?? "");
 

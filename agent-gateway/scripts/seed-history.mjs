@@ -26,9 +26,16 @@
  * Run:  node scripts/seed-history.mjs
  * Out:  data/orders.jsonl, data/carts.jsonl, data/merchant-inputs.json
  */
-import fs from "node:fs";
 import path from "node:path";
-import { DATA_DIR, dataPath } from "./data-dir.mjs";
+import { pathToFileURL } from "node:url";
+import * as esbuild from "esbuild";
+
+const dbBundle = path.join(process.cwd(), "node_modules", ".cache", "seed-db.mjs");
+await esbuild.build({
+  entryPoints: ["app/lib/database.server.ts"], bundle: true, platform: "node",
+  format: "esm", outfile: dbBundle, logLevel: "silent",
+});
+const DBS = await import(pathToFileURL(dbBundle).href + `?t=${Date.now()}`);
 
 const SEED = 20260905;
 const SHOP = "pk_monsoon_market";
@@ -42,7 +49,6 @@ if (TEST_PHONE && !/^\+[1-9]\d{7,14}$/.test(TEST_PHONE)) {
   );
 }
 
-const OUT = DATA_DIR;
 const LOYAL_DEMOS = [
   { customerId: "cus_demo_regular_delivery", cartId: "crt_demo_regular_delivery" },
   { customerId: "cus_demo_loyal_chai", cartId: "crt_demo_loyal_chai" },
@@ -61,34 +67,29 @@ const LOYAL_DEMOS = [
  * audit trail for the entire fixture.
  */
 function resetLoyalDemoRuntime() {
-  const files = [
-    "outreach-drafts.jsonl",
-    "outreach-log.jsonl",
-    "recovery-conversations.jsonl",
-    "recovery-grants.jsonl",
-    "recovery-message-log.jsonl",
-    "voice-transcripts.jsonl",
-  ];
   let removed = 0;
-
-  for (const name of files) {
-    const file = path.join(OUT, name);
-    if (!fs.existsSync(file)) continue;
-    const lines = fs.readFileSync(file, "utf8").split("\n").filter(Boolean);
-    const kept = lines.filter((line) => {
-      const belongsToDemo = LOYAL_DEMOS.some(
-        ({ customerId, cartId }) =>
-          line.includes(`\"customerId\":\"${customerId}\"`) ||
-          line.includes(`\"cartId\":\"${cartId}\"`),
-      );
-      if (belongsToDemo) removed += 1;
-      return !belongsToDemo;
-    });
-    if (kept.length !== lines.length) {
-      fs.writeFileSync(file, kept.length ? `${kept.join("\n")}\n` : "", "utf8");
+  DBS.transaction((db) => {
+    for (const { customerId, cartId } of LOYAL_DEMOS) {
+      for (const table of ["voice_transcript_turns", "outreach_attempts", "outreach_drafts"])
+        removed += Number(db.prepare(`DELETE FROM ${table} WHERE payload LIKE ? OR payload LIKE ?`)
+          .run(`%${customerId}%`, `%${cartId}%`).changes);
+      const conversations = db.prepare(`
+        SELECT id FROM recovery_conversations WHERE customer_id = ? OR cart_id = ?
+      `).all(customerId, cartId);
+      for (const conversation of conversations) {
+        removed += Number(db.prepare("DELETE FROM recovery_turns WHERE conversation_id = ?")
+          .run(conversation.id).changes);
+        removed += Number(db.prepare("DELETE FROM recovery_conversations WHERE id = ?")
+          .run(conversation.id).changes);
+      }
+      const grants = db.prepare(`SELECT id FROM recovery_grants WHERE customer_id = ? OR cart_id = ?`)
+        .all(customerId, cartId);
+      for (const grant of grants) {
+        removed += Number(db.prepare("DELETE FROM grant_events WHERE grant_id = ?").run(grant.id).changes);
+        removed += Number(db.prepare("DELETE FROM recovery_grants WHERE id = ?").run(grant.id).changes);
+      }
     }
-  }
-
+  });
   return removed;
 }
 
@@ -792,23 +793,13 @@ carts.sort((a, b) => a.ts.localeCompare(b.ts));
 
 /* ------------------------------------------------------------------ */
 
-fs.mkdirSync(OUT, { recursive: true });
 const resetRows = resetLoyalDemoRuntime();
-
-const write = (name, rows) =>
-  fs.writeFileSync(
-    path.join(OUT, name),
-    rows.map((r) => JSON.stringify(r)).join("\n") + "\n",
-    "utf8",
-  );
-
-write("orders.jsonl", orders);
-write("carts.jsonl", carts);
-
-fs.writeFileSync(
-  path.join(OUT, "merchant-inputs.json"),
-  JSON.stringify(
-    {
+DBS.writeStoreDocument(SHOP, "seed.orders", orders, "demo-seed");
+DBS.writeStoreDocument(SHOP, "seed.carts", carts, "demo-seed");
+DBS.writeStoreDocument(
+  SHOP,
+  "merchant.inputs",
+  {
       synthetic: true,
       seed: SEED,
       shop: SHOP,
@@ -823,11 +814,8 @@ fs.writeFileSync(
         neverDiscount: ["cold-brew-concentrate"],
         minSampleSize: 30,
       },
-    },
-    null,
-    2,
-  ) + "\n",
-  "utf8",
+  },
+  "demo-seed",
 );
 
 const captured = orders.filter((o) => o.status === "placed");
@@ -845,6 +833,6 @@ console.log(
   `window      ${orders[0].ts.slice(0, 10)} .. ${orders[orders.length - 1].ts.slice(0, 10)}`,
 );
 console.log(
-  `written     data/orders.jsonl, data/carts.jsonl, data/merchant-inputs.json`,
+  `written     chapman.sqlite: seed.orders, seed.carts, merchant.inputs`,
 );
 console.log(`demo reset  ${resetRows} prior loyal-shopper runtime rows removed`);

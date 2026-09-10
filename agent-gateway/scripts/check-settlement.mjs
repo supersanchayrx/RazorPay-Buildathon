@@ -17,6 +17,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 import * as esbuild from "esbuild";
 
@@ -146,11 +147,13 @@ check(
 const c = S.settlePayment({ ...base, by: "browser" });
 check("replaying the browser's report changes nothing either", c.duplicate && c.order?.id === a.order?.id);
 
-const rows = fs
-  .readFileSync(path.join(SANDBOX, "data", "placed-orders.jsonl"), "utf8")
-  .split("\n")
-  .filter(Boolean);
-check("exactly one order was written for three reports", rows.length === 1, `${rows.length} row(s)`);
+const inspectDb = new DatabaseSync(path.join(SANDBOX, "data", "chapman.sqlite"), { readOnly: true });
+const placedCount = Number(inspectDb.prepare(`
+  SELECT COUNT(*) AS count FROM placed_orders p
+  JOIN stores s ON s.id = p.store_id WHERE s.site_key = ?
+`).get("pk_test").count);
+inspectDb.close();
+check("exactly one order was written for three reports", placedCount === 1, `${placedCount} row(s)`);
 
 /* ---- amount tampering, one layer deeper --------------------------- */
 const GW2 = "order_TESTSETTLE2";

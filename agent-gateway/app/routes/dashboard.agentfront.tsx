@@ -61,6 +61,7 @@ import {
 import { announceable } from "../lib/approvals.server";
 import { DEFAULT_PAYMENT_METHODS } from "../lib/razorpay.server";
 import { TOOLS } from "../lib/ucptools";
+import { selfOrigin } from "../lib/origin.server";
 
 /**
  * The agent-readable storefront, explained to the merchant who has to enable it.
@@ -83,14 +84,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const merchant = await requireMerchant(request);
   const sites = sitesForMerchant(merchant.sites);
 
-  const u = new URL(request.url);
-  const proto =
-    request.headers.get("x-forwarded-proto") ?? u.protocol.replace(":", "");
-  const host =
-    request.headers.get("x-forwarded-host") ??
-    request.headers.get("host") ??
-    u.host;
-  const base = `${proto}://${host}`;
+  const base = selfOrigin(request);
 
   return {
     base,
@@ -175,17 +169,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const site = sitesForMerchant(merchant.sites).find((s) => s.key === key);
   if (!site) return { error: "not your store" as const, result: null };
 
-  const u = new URL(request.url);
-  const proto =
-    request.headers.get("x-forwarded-proto") ?? u.protocol.replace(":", "");
-  const host =
-    request.headers.get("x-forwarded-host") ??
-    request.headers.get("host") ??
-    u.host;
   const reachableOrigin = new URL(site.catalogFeedUrl).origin;
   return {
     error: null,
-    result: await verifyInstall(site, `${proto}://${host}`, reachableOrigin),
+    result: await verifyInstall(site, selfOrigin(request), reachableOrigin),
   };
 };
 

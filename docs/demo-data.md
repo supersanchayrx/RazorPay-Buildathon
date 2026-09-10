@@ -8,6 +8,60 @@ Do not enable it for a real merchant evaluation. Every generated order and cart
 has `synthetic: true` and seed `20260905` so it remains distinguishable from
 live data.
 
+## Fieldnote Home Vercel demo
+
+Fieldnote has a separate deterministic fixture for the integrated Vercel
+storefront. It uses the presenter identity already present in the root `.env`:
+
+```dotenv
+TWILIO_TEST_TO=+91YOUR_CONTROLLED_NUMBER
+USERNAME=Your Demo Name
+```
+
+`TWILIO_TEST_TO` must be a number the presenter controls. The script resolves
+Fieldnote's existing signing secret inside Chapman and derives the same
+pseudonymous customer ID as the Vercel login. It never prints the destination.
+Do not pass the signing secret or phone number on the command line.
+
+Build and seed it from the repository root:
+
+```powershell
+docker compose up -d --build gateway
+docker compose exec -T gateway node scripts/check-fieldnote-seed.mjs
+docker compose exec -T gateway node scripts/seed-fieldnote-demo.mjs
+docker compose exec -T gateway node scripts/configure-demo-recovery.mjs --shop pk_fieldnote_home
+```
+
+The seed command writes only Fieldnote's `seed.orders`, `seed.carts`,
+`seed.customer_profiles`, `merchant.inputs`, and labelled shopper-memory rows
+to SQLite. It also clears prior outreach/grant/conversation state for those
+synthetic Fieldnote identities, making a rehearsal repeatable. It does not
+place a call, send a message, or alter the Vercel deployment.
+
+The current Fieldnote fixture contains:
+
+- 355 orders and payment attempts across six months;
+- 145 abandoned baskets, with Sola Lamp abandonment deliberately
+  overrepresented for analysis;
+- 49 named shoppers and 100 durable synthetic memories;
+- a planted Dune Throw + Moss Cushion co-purchase pattern;
+- recent HDFC payment failures for service-recovery analysis;
+- one prominent controlled shopper, named from `USERNAME`, with 14 completed
+  orders, six current baskets, and four memories.
+
+Only that prominent shopper uses `TWILIO_TEST_TO`. Every supporting shopper has
+a distinct name, a non-deliverable `example.invalid` email, and a number in the
+NANPA-reserved fictional `+1 202-555-01xx` range. Recovery still applies its
+one-message-per-person rule: it selects the controlled shopper's highest-margin
+basket and reports the other five as `duplicate_customer` suppressions. The
+merchant dashboard shows the synthetic display name, but identity and memory
+remain keyed by the signed pseudonymous customer ID.
+
+For the recording, sign into the Vercel storefront with the same `USERNAME`
+and `TWILIO_TEST_TO`, then open **Shopper memory** and **Recovery** in Chapman.
+Opening either page sends nothing. A real call or message occurs only after an
+explicit send action, and should only target the controlled shopper.
+
 ## Load or refresh the fixture
 
 For Docker, set this in the root `.env`:
@@ -38,10 +92,10 @@ docker compose exec -T gateway npm run seed
 docker compose --profile demo up -d --force-recreate store
 ```
 
-The first command replaces only the deterministic `orders.jsonl`,
-`carts.jsonl`, and `merchant-inputs.json` fixture files. Live captured carts,
-placed checkout orders, offer decisions, recovery grants, conversations, and
-the decision ledger are separate files and are not rewritten. The store restart
+The first command replaces only the deterministic `seed.orders`, `seed.carts`,
+and `merchant.inputs` document rows in SQLite. Live captured carts, placed
+checkout orders, offer decisions, recovery grants, conversations, and decision
+ledger rows are separate records and are not rewritten. The store restart
 reloads the refreshed order history used by its sample account page.
 
 For a native gateway, run `npm run seed` from `agent-gateway/`.

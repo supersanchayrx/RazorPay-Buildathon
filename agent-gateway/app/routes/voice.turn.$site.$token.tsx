@@ -6,6 +6,9 @@ import { cachedSpeech, config, VOICE_FILLER } from "../lib/voice.server";
 import { fallbackAudio, noteFallbackSpoken, optOut, takeSilence, takeTurn, speak, SAFE_LINE } from "../lib/voicetalk.server";
 import { hangup, listen, pending, reply, xml , respondWithin } from "../lib/twiml.server";
 import { record } from "../lib/ledger.server";
+import { logInfo } from "../lib/logging.server";
+import { readPublicFormData } from "../lib/http-security.server";
+import { trackBackgroundTask } from "../lib/runtime-lifecycle.server";
 
 const DEADLINE_MS = Number(process.env.VOICE_DEADLINE_MS ?? 4000);
 const INLINE_MS = Number(process.env.VOICE_INLINE_MS ?? 1200);
@@ -51,7 +54,12 @@ async function inner({ request, params }: LoaderFunctionArgs | ActionFunctionArg
   const draft = draftById(site.key, v.claim.draft);
   if (!draft) return xml(hangup("Sorry, this call cannot continue."));
 
-  const form = request.method === "POST" ? await request.formData() : new FormData();
+  let form: FormData;
+  try {
+    form = request.method === "POST" ? await readPublicFormData(request, "voice") : new FormData();
+  } catch {
+    return xml(hangup("Sorry, this request was too large."), 413);
+  }
   const callSid = String(form.get("CallSid") ?? "unknown");
   const said = String(form.get("SpeechResult") ?? "").trim();
   const digit = String(form.get("Digits") ?? "");
@@ -91,11 +99,11 @@ async function inner({ request, params }: LoaderFunctionArgs | ActionFunctionArg
   // Finish Sarvam speech as part of the parked work, not after Twilio asks for
   // the reply. The route races this promise only briefly, then redirects while
   // synthesis continues in the background.
-  const voicedWork = work.then(async (out) => {
+  const voicedWork = trackBackgroundTask(work.then(async (out) => {
     if (out.audioUrl) return out;
     const utt = await speak(out.line, c, c.origin);
     return { ...out, audioUrl: utt.audioUrl };
-  });
+  }), `voice.turn:${callSid}`);
 
   /**
    * The window, sized from measurement rather than taste.
@@ -179,8 +187,7 @@ async function handle(args: LoaderFunctionArgs | ActionFunctionArgs) {
       return (warm ? `<Play>${warm}</Play>` : `<Say>${SAFE_LINE}</Say>`) + LATE_LISTEN(args.params);
     },
   );
-  // eslint-disable-next-line no-console
-  console.log(`[voice.turn] answered in ${Date.now() - t0}ms`);
+  logInfo("voice.turn.completed", { duration_ms: Date.now() - t0 });
   return res;
 }
 

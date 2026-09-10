@@ -54,8 +54,21 @@ Put secret values in the repository-root `.env`, beside
 docker compose up -d gateway
 ```
 
-Do not put provider secrets in `chapman.config.json`, storefront JavaScript, or
+Do not put provider secrets in SQLite configuration rows, storefront JavaScript, or
 the embed tag.
+
+If the gateway is directly behind one trusted reverse proxy, set
+`CHAPMAN_TRUST_PROXY=1` so Chapman reconstructs the public HTTPS request and
+per-client public rate limits use that proxy's first forwarded address. This is
+required for dashboard form submissions through the bundled ngrok tunnel;
+otherwise React Router correctly rejects the HTTP/HTTPS origin mismatch. Leave
+it unset for direct exposure or an untrusted/multi-hop proxy chain; Chapman then
+uses the TCP peer and ignores client-supplied `X-Forwarded-For` values.
+
+Container stops use `CHAPMAN_SHUTDOWN_TIMEOUT_MS` as the drain deadline. It
+defaults to 20,000 ms and accepts 1,000–120,000 ms. The surrounding platform
+must allow longer than this (the base Compose file allows 30 seconds), or it
+may kill Chapman before SQLite has checkpointed and closed.
 
 | Dedicated page     | What it configures                      | Variables                                                                                   | Required?                                                                                         |
 | ------------------ | --------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |

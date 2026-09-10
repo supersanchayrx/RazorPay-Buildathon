@@ -22,6 +22,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { logWarn } from "./logging.server";
 import { secret } from "./env.server";
 import type { PaymentMethod } from "./razorpay.server";
 import type { Site } from "./sites.server";
@@ -562,7 +563,7 @@ let cached: Site[] | null = null;
 export function loadSites(): Site[] {
   if (cached) return cached;
   const report = readConfig();
-  for (const w of report.warnings) console.warn(`[chapman config] ${w}`);
+  for (const warning of report.warnings) logWarn("config.warning", { warning });
   if (report.errors.length > 0) {
     throw new Error(
       [

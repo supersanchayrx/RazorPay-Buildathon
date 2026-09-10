@@ -34,9 +34,7 @@
  *    cheerfully authorise the next one.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { dataPath } from "./paths.server";
+import { database, databasePath, ensureStore, json, parseJson } from "./database.server";
 import { record } from "./ledger.server";
 import { featureOn } from "./featureflags.server";
 import { quietNow, readSettings } from "./settings.server";
@@ -100,9 +98,6 @@ export type Channel = {
   deliver?: (d: Draft) => Promise<{ ok: boolean; ref?: string; error?: string }>;
 };
 
-const DRAFT_FILE = dataPath("outreach-drafts.jsonl");
-const SEND_FILE = dataPath("outreach-log.jsonl");
-
 /**
  * The only channel with a delivery path today: write the message down.
  *
@@ -136,8 +131,12 @@ const draftChannel: Channel = {
  */
 export function appendDraft(d: Draft): { ok: true } | { ok: false; error: string } {
   try {
-    fs.mkdirSync(path.dirname(DRAFT_FILE), { recursive: true });
-    fs.appendFileSync(DRAFT_FILE, JSON.stringify({ at: new Date().toISOString(), ...d }) + "\n", "utf8");
+    const at = new Date().toISOString();
+    database().prepare(`
+      INSERT INTO outreach_drafts(id, store_id, created_at, payload)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO NOTHING
+    `).run(d.id, ensureStore(d.shop), at, json({ at, ...d }));
     return { ok: true };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
@@ -153,18 +152,11 @@ export function appendDraft(d: Draft): { ok: true } | { ok: false; error: string
  * a sentence, and the sentence it finds is the one that passed `checkReply`.
  */
 export function draftById(shop: string, id: string): (Draft & { at: string }) | null {
-  try {
-    return (
-      fs
-        .readFileSync(DRAFT_FILE, "utf8")
-        .split("\n")
-        .filter(Boolean)
-        .map((l) => JSON.parse(l) as Draft & { at: string })
-        .find((d) => d.shop === shop && d.id === id) ?? null
-    );
-  } catch {
-    return null;
-  }
+  const row = database().prepare(`
+    SELECT d.payload FROM outreach_drafts d JOIN stores s ON s.id = d.store_id
+    WHERE s.site_key = ? AND d.id = ?
+  `).get(shop, id) as { payload: string } | undefined;
+  return row ? parseJson<Draft & { at: string } | null>(row.payload, null) : null;
 }
 
 /**
@@ -349,12 +341,10 @@ export type SendRecord = {
 };
 
 export function readSends(shop?: string): SendRecord[] {
-  try {
-    const rows = fs
-      .readFileSync(SEND_FILE, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as SendRecord);
+    const rows = (database().prepare(`
+      SELECT payload FROM outreach_attempts ORDER BY id
+    `).all() as Array<{ payload: string }>).map((r) =>
+      parseJson<SendRecord>(r.payload, null as never));
 
     /**
      * A successful delivery appends a receipt carrying the provider reference
@@ -371,15 +361,20 @@ export function readSends(shop?: string): SendRecord[] {
       );
     }
     return [...byDraft.values()].filter((r) => !shop || r.shop === shop);
-  } catch {
-    return [];
-  }
 }
 
 function appendSend(r: SendRecord): boolean {
   try {
-    fs.mkdirSync(path.dirname(SEND_FILE), { recursive: true });
-    fs.appendFileSync(SEND_FILE, JSON.stringify(r) + "\n", "utf8");
+    const status = !r.ok ? "failed" : r.ref ? "sent" : "reserved";
+    database().prepare(`
+      INSERT INTO outreach_attempts(
+        attempt_key, store_id, draft_id, channel, status, provider_ref,
+        attempted_at, payload
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      r.draftId, ensureStore(r.shop), r.draftId, r.channel, status,
+      r.ref ?? null, r.ts, json(r),
+    );
     return true;
   } catch {
     return false;
@@ -513,6 +508,14 @@ export async function send(d: Draft): Promise<SendRecord> {
     });
   }
 
+  // The relational send log points at the exact reviewed draft. Persist that
+  // draft before reserving delivery so the foreign key is also the ordering
+  // guarantee: no channel can receive text that has no audit copy.
+  const staged = appendDraft(d);
+  if (!staged.ok) {
+    return { ...base, error: `could not write the draft; nothing was delivered: ${staged.error}` };
+  }
+
   if (!appendSend({ ...base, ok: true })) {
     return { ...base, error: "could not write the send log; nothing was delivered" };
   }
@@ -548,21 +551,14 @@ export async function send(d: Draft): Promise<SendRecord> {
 
 /** Drafts written by the draft channel, newest first, for the console. */
 export function readDrafts(shop: string, limit = 100): Array<Draft & { at: string }> {
-  try {
-    return fs
-      .readFileSync(DRAFT_FILE, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as Draft & { at: string })
-      .filter((d) => d.shop === shop)
-      .reverse()
-      .slice(0, limit);
-  } catch {
-    return [];
-  }
+  return (database().prepare(`
+    SELECT d.payload FROM outreach_drafts d JOIN stores s ON s.id = d.store_id
+    WHERE s.site_key = ? ORDER BY d.created_at DESC LIMIT ?
+  `).all(shop, Math.max(0, limit)) as Array<{ payload: string }>).map((r) =>
+    parseJson<Draft & { at: string }>(r.payload, null as never));
 }
 
 /** Test seam. */
 export function _files() {
-  return { drafts: DRAFT_FILE, sends: SEND_FILE };
+  return { drafts: databasePath(), sends: databasePath() };
 }

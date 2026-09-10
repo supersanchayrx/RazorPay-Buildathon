@@ -150,7 +150,7 @@ console.log("\n-- where things are written --------------------------------\n");
   const initSrc = read("scripts/init.mjs");
   const bootSrc = read("scripts/bootstrap.mjs");
   const envSrc = read("app/lib/env.server.ts");
-  const cfgSrc = read("app/lib/config.server.ts");
+  const dbSrc = read("app/lib/database.server.ts");
 
   check(
     "all four agree on CHAPMAN_ENV_FILE",
@@ -158,19 +158,16 @@ console.log("\n-- where things are written --------------------------------\n");
     "init writes it, bootstrap appends to it, loadRootEnv reads it",
   );
   check(
-    "init and findConfigFile agree on CHAPMAN_CONFIG",
-    initSrc.includes("CHAPMAN_CONFIG") &&
-      cfgSrc.includes("process.env.CHAPMAN_CONFIG"),
-  );
-  check(
-    "the entrypoint exports both, and the data dir",
+    "the entrypoint exports the database, env file, and data dir",
     entrypoint.includes("export CHAPMAN_ENV_FILE") &&
-      entrypoint.includes("export CHAPMAN_DATA_DIR"),
+      entrypoint.includes("export CHAPMAN_DATA_DIR") &&
+      entrypoint.includes("export CHAPMAN_DATABASE_PATH"),
   );
   check(
-    "compose points all three at the volume",
+    "compose points SQLite and generated secrets at the volume",
     /CHAPMAN_DATA_DIR:\s*\/data/.test(compose) &&
-      /CHAPMAN_CONFIG:\s*\/data\//.test(compose) &&
+      /CHAPMAN_DATABASE_PATH:\s*\/data\/chapman\.sqlite/.test(compose) &&
+      /DATABASE_URL:\s*file:\/data\/chapman\.sqlite/.test(compose) &&
       /CHAPMAN_ENV_FILE:\s*\/data\//.test(compose),
     "/app and / are layers; a console account written there is gone on the next up",
   );
@@ -178,6 +175,10 @@ console.log("\n-- where things are written --------------------------------\n");
     "the volume is named, so `down` keeps it",
     /volumes:\s*[\s\S]*chapman-data:/.test(compose) &&
       /chapman-data:\/data/.test(compose),
+  );
+  check(
+    "the shared repository enables SQLite safety pragmas",
+    ["foreign_keys = ON", "journal_mode = WAL", "busy_timeout = 5000"].every((value) => dbSrc.includes(value)),
   );
 }
 
@@ -194,7 +195,7 @@ console.log("\n-- the entrypoint ------------------------------------------\n");
   );
   check("it starts with a POSIX shebang", entrypoint.startsWith("#!/bin/sh"));
   check(
-    "a missing config defaults to dashboard onboarding",
+    "a missing configured store defaults to dashboard onboarding",
     /CHAPMAN_AUTO_INIT/.test(entrypoint) &&
       /starting merchant onboarding/.test(entrypoint),
     "no storefront is registered until the signed-in merchant submits setup",
@@ -210,7 +211,7 @@ console.log("\n-- the entrypoint ------------------------------------------\n");
     "a fresh merchant must never appear to have orders they did not create",
   );
   check(
-    "an existing config still gets its secrets generated",
+    "an existing store still gets its secrets generated",
     /npm run --silent bootstrap/.test(entrypoint),
     "production refuses devSecret, so every route that resolves a site 500s without this",
   );
@@ -238,6 +239,16 @@ console.log("\n-- the entrypoint ------------------------------------------\n");
     "payments need two pasted values and no variable names",
     /CHAPMAN_RAZORPAY_KEY_ID_ENV=RAZORPAY_KEY_ID/.test(entrypoint),
     "the indirection stays, but nobody has to invent a variable name to get started",
+  );
+  check(
+    "database migrations run before bootstrap and traffic",
+    entrypoint.indexOf("npm run --silent db:migrate") >= 0 &&
+      entrypoint.indexOf("npm run --silent db:migrate") < entrypoint.indexOf("npm run --silent bootstrap"),
+  );
+  check(
+    "Compose probes explicit database readiness",
+    compose.includes("http://127.0.0.1:3000/health/ready") &&
+      read("app/routes/health.ready.tsx").includes("databaseHealth()"),
   );
 }
 

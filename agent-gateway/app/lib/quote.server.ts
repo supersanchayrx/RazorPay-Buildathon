@@ -179,6 +179,8 @@ export async function buildQuote(opts: {
    * mechanics of.
    */
   grantId?: string | null;
+  /** Deterministic clock for jobs and tests; live requests omit it. */
+  asOf?: Date;
 }): Promise<QuoteResult> {
   const reserved =
     opts.shop && opts.stock !== "catalogue"
@@ -321,7 +323,8 @@ export async function buildQuote(opts: {
    * threshold the shopper only clears at full price is a threshold they did not
    * really clear, and reconciling that later is worse than being strict now.
    */
-  const live = opts.shop ? activeOffers(opts.shop) : [];
+  const asOf = opts.asOf ?? new Date();
+  const live = opts.shop ? activeOffers(opts.shop, asOf) : [];
   const offers: AppliedOffer[] = [];
   for (const o of live) {
     const eligible = lines.filter((l) => l.handle === o.handle);
@@ -346,8 +349,8 @@ export async function buildQuote(opts: {
    *     rule allowed it.
    */
   if (opts.shop && opts.grantId) {
-    const g = findGrant(opts.shop, opts.grantId);
-    const p = g ? priceable(g) : null;
+    const g = findGrant(opts.shop, opts.grantId, asOf);
+    const p = g ? priceable(g, asOf) : null;
     if (p && !offers.some((o) => o.handle === p.handle)) {
       let remaining = p.qtyCap;
       let base = 0;

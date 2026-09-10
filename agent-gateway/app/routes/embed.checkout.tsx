@@ -9,6 +9,7 @@ import { record } from "../lib/ledger.server";
 import { claim, release } from "../lib/reservations.server";
 import { savePending } from "../lib/orderstore.server";
 import { settlePayment } from "../lib/settle.server";
+import { publicBodyFailure, readPublicJson } from "../lib/http-security.server";
 
 /**
  * Money.
@@ -68,9 +69,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     razorpay_signature?: string;
   };
   try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return json({ error: "expected a JSON body" }, 400, origin);
+    body = await readPublicJson<typeof body>(request, "identity");
+  } catch (error) {
+    const failure = publicBodyFailure(error);
+    return json({ error: failure.message, error_code: failure.code }, failure.status, origin);
   }
 
   const site = findSite(body.site ?? null);

@@ -62,7 +62,7 @@ export async function resolveVoiceRecovery(
       unitPrice: line.unitPrice,
     })),
     policy: settings.recovery,
-    inputs: readRecoveryInputs(),
+    inputs: readRecoveryInputs(site.key),
     catalog,
     policies: await catalog.policies().catch(() => ({})),
     serviceNotice:

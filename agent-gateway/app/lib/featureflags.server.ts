@@ -40,8 +40,7 @@
  *
  * Off means "start nothing new". It never means "drop what is in the air".
  */
-import fs from "node:fs";
-import { dataPath } from "./paths.server";
+import { database, databasePath, ensureStore, transaction } from "./database.server";
 
 export type FeatureKey =
   | "assistant"
@@ -210,9 +209,6 @@ export type FlagsFile = {
 const ALL_ON = (): FeatureFlags =>
   Object.fromEntries(KEYS.map((k) => [k, true])) as FeatureFlags;
 
-const file = (site: string) =>
-  dataPath(`features-${site.replace(/[^a-z0-9_]/gi, "_")}.json`);
-
 /**
  * Read, defaulting every unknown key to ON.
  *
@@ -223,34 +219,39 @@ const file = (site: string) =>
  */
 export function readFlags(site: string): FeatureFlags {
   const out = ALL_ON();
-  let raw: Partial<FlagsFile> = {};
-  try {
-    raw = JSON.parse(fs.readFileSync(file(site), "utf8")) as Partial<FlagsFile>;
-  } catch {
-    return out;
-  }
-  const stored = (raw.flags ?? {}) as Partial<Record<string, unknown>>;
-  for (const k of KEYS) {
+  const rows = database().prepare(`
+    SELECT f.feature, f.enabled
+    FROM feature_flags f JOIN stores s ON s.id = f.store_id
+    WHERE s.site_key = ?
+  `).all(site) as Array<{ feature: string; enabled: number }>;
+  for (const row of rows) {
     // Only an explicit `false` switches anything off. Anything else — absent,
     // null, a string left by a hand edit — is the safe direction.
-    if (stored[k] === false) out[k] = false;
+    if (KEYS.includes(row.feature as FeatureKey) && row.enabled === 0) {
+      out[row.feature as FeatureKey] = false;
+    }
   }
   return out;
 }
 
 /** The whole file, for the console, which wants to say when and by whom. */
 export function readFlagsFile(site: string): FlagsFile {
-  let raw: Partial<FlagsFile> = {};
-  try {
-    raw = JSON.parse(fs.readFileSync(file(site), "utf8")) as Partial<FlagsFile>;
-  } catch {
-    /* A shop that has never touched this has everything on and no history. */
-  }
+  const rows = database().prepare(`
+    SELECT e.changed_at, e.changed_by, e.feature, e.enabled
+    FROM feature_flag_events e JOIN stores s ON s.id = e.store_id
+    WHERE s.site_key = ? ORDER BY e.id DESC LIMIT 20
+  `).all(site) as Array<{
+    changed_at: string; changed_by: string; feature: FeatureKey; enabled: number;
+  }>;
+  const history = rows.reverse().map((r) => ({
+    ts: r.changed_at, by: r.changed_by, key: r.feature, to: r.enabled === 1,
+  }));
+  const last = history.at(-1);
   return {
     flags: readFlags(site),
-    updatedAt: raw.updatedAt ?? null,
-    updatedBy: raw.updatedBy ?? null,
-    history: Array.isArray(raw.history) ? raw.history.slice(-20) : [],
+    updatedAt: last?.ts ?? null,
+    updatedBy: last?.by ?? null,
+    history,
   };
 }
 
@@ -284,14 +285,25 @@ export function writeFlags(
 
   if (changes.length === 0) return current;
 
-  const out: FlagsFile = {
-    flags: next,
-    updatedAt: ts,
-    updatedBy: by,
-    history: [...current.history, ...changes].slice(-20),
-  };
-  fs.writeFileSync(file(site), JSON.stringify(out, null, 2) + "\n", "utf8");
-  return out;
+  const storeId = ensureStore(site);
+  transaction((db) => {
+    const upsert = db.prepare(`
+      INSERT INTO feature_flags(store_id, feature, enabled, updated_at, updated_by)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(store_id, feature) DO UPDATE SET
+        enabled = excluded.enabled, updated_at = excluded.updated_at,
+        updated_by = excluded.updated_by
+    `);
+    const event = db.prepare(`
+      INSERT INTO feature_flag_events(store_id, feature, enabled, changed_at, changed_by)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    for (const change of changes) {
+      upsert.run(storeId, change.key, change.to ? 1 : 0, ts, by);
+      event.run(storeId, change.key, change.to ? 1 : 0, ts, by);
+    }
+  });
+  return readFlagsFile(site);
 }
 
 /* ------------------------------------------------------------------ *
@@ -357,5 +369,8 @@ export function switchFor(key: FeatureKey): FeatureSwitch | null {
 
 /** Test seam: the on-disk path, so a check can clean up after itself. */
 export function _file(site: string): string {
-  return file(site);
+  void site;
+  return databasePath();
 }
+
+export { closeDatabase as _closeDatabase } from "./database.server";

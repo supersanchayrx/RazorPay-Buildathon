@@ -10,11 +10,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { grantSite, type Merchant } from "./auth.server";
-import {
-  parseSitesConfig,
-  resetConfigCache,
-  stripJsonComments,
-} from "./config.server";
+import { parseSitesConfig } from "./config.server";
+import { allSites, saveSite, setCatalogFeed } from "./sites.server";
 
 export type FirstStoreInput = {
   name: string;
@@ -33,11 +30,6 @@ export type FirstStoreResult =
 
 export type CatalogFeedUpdateResult =
   { ok: true } | { ok: false; error: string; fields?: Record<string, string> };
-
-const configFile = () =>
-  process.env.CHAPMAN_CONFIG?.trim()
-    ? path.resolve(process.env.CHAPMAN_CONFIG.trim())
-    : path.join(process.cwd(), "chapman.config.json");
 
 const envFile = () =>
   process.env.CHAPMAN_ENV_FILE?.trim()
@@ -60,14 +52,6 @@ const envValue = (text: string, name: string): string | null => {
     return value || null;
   }
   return null;
-};
-
-const existingSiteCount = (file: string): number => {
-  if (!fs.existsSync(file)) return 0;
-  const parsed = JSON.parse(
-    stripJsonComments(fs.readFileSync(file, "utf8")),
-  ) as { sites?: unknown };
-  return Array.isArray(parsed.sites) ? parsed.sites.length : 0;
 };
 
 export function firstStoreDefaults() {
@@ -105,19 +89,11 @@ export function createFirstStore(
     };
   }
 
-  const file = configFile();
-  try {
-    if (existingSiteCount(file) > 0) {
-      return {
-        ok: false,
-        error:
-          "A storefront registry already exists. Ask an owner to grant this account access.",
-      };
-    }
-  } catch (error) {
+  if (allSites().length > 0) {
     return {
       ok: false,
-      error: `The existing site registry is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      error:
+        "A storefront registry already exists. Ask an owner to grant this account access.",
     };
   }
 
@@ -158,7 +134,7 @@ export function createFirstStore(
       : {}),
   };
   const text = JSON.stringify({ sites: [site] }, null, 2) + "\n";
-  const report = parseSitesConfig(text, file, {
+  const report = parseSitesConfig(text, "merchant onboarding", {
     resolveSecret: (name) => {
       if (name === signingSecretEnv) return signingSecret;
       const value = process.env[name] || envValue(envText, name);
@@ -196,13 +172,8 @@ export function createFirstStore(
     }
     process.env[signingSecretEnv] = signingSecret;
 
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const temporary = `${file}.${crypto.randomBytes(6).toString("hex")}.tmp`;
-    fs.writeFileSync(temporary, text, "utf8");
-    fs.renameSync(temporary, file);
-
+    saveSite(site);
     grantSite(merchant.email, key);
-    resetConfigCache();
     return { ok: true, key };
   } catch (error) {
     return {
@@ -228,54 +199,19 @@ export function updateCatalogFeed(
     return { ok: false, error: "You do not have access to this storefront." };
   }
 
-  const file = configFile();
-  const targetEnv = envFile();
-  let envText = "";
   try {
-    envText = fs.readFileSync(targetEnv, "utf8");
-  } catch {
-    // Environment-only deployments do not need a persisted env file.
-  }
-
-  try {
-    const rawText = fs.readFileSync(file, "utf8");
-    const raw = JSON.parse(stripJsonComments(rawText)) as {
-      sites?: Array<Record<string, unknown>>;
-      [key: string]: unknown;
-    };
-    if (!Array.isArray(raw.sites)) {
-      return { ok: false, error: "The storefront registry has no sites list." };
-    }
-    const index = raw.sites.findIndex((site) => site.key === siteKey);
-    if (index < 0) {
-      return { ok: false, error: "The storefront is no longer registered." };
-    }
-
-    const sites = raw.sites.map((site, siteIndex) =>
-      siteIndex === index
-        ? { ...site, catalogFeedUrl: catalogFeedUrl.trim() }
-        : site,
-    );
-    const nextText = `${JSON.stringify({ ...raw, sites }, null, 2)}\n`;
-    const report = parseSitesConfig(nextText, file, {
-      resolveSecret: (name) => process.env[name] || envValue(envText, name),
-      production: true,
-    });
-    if (report.errors.length > 0) {
-      const catalogError = report.errors.find((error) =>
-        error.includes(".catalogFeedUrl:"),
-      );
+    const value = catalogFeedUrl.trim();
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
       return {
         ok: false,
-        error: catalogError ?? report.errors.join(" "),
-        fields: catalogError ? { catalogFeedUrl: catalogError } : undefined,
+        error: "The catalogue URL must use http or https.",
+        fields: { catalogFeedUrl: "Enter an absolute http(s) URL." },
       };
     }
-
-    const temporary = `${file}.${crypto.randomBytes(6).toString("hex")}.tmp`;
-    fs.writeFileSync(temporary, nextText, "utf8");
-    fs.renameSync(temporary, file);
-    resetConfigCache();
+    if (!setCatalogFeed(siteKey, value)) {
+      return { ok: false, error: "The storefront is no longer registered." };
+    }
     return { ok: true };
   } catch (error) {
     return {
@@ -284,3 +220,5 @@ export function updateCatalogFeed(
     };
   }
 }
+
+export { closeDatabase as _closeDatabase } from "./database.server";

@@ -115,6 +115,7 @@ Copy the printed value into both entries in `.env`:
 ```dotenv
 PUBLIC_ORIGIN=https://your-current-ngrok-host.ngrok-free.app
 GATEWAY_ORIGIN=https://your-current-ngrok-host.ngrok-free.app
+CHAPMAN_TRUST_PROXY=1
 ```
 
 Recreate the gateway and store so generated embed tags, payment links, TwiML
@@ -383,7 +384,8 @@ Offers need no model key. They need evidence:
 
 A real new store should show **too little evidence** until those facts exist.
 Chapman checkout orders enter local history automatically. The current Docker
-build reads costs and floors from `/data/merchant-inputs.json`.
+build reads seeded costs and floors from the `merchant.inputs` document row in
+SQLite.
 
 For a presentation, the deterministic seed supplies synthetic orders, carts,
 costs and floors. Enable it only after registration and label the data as

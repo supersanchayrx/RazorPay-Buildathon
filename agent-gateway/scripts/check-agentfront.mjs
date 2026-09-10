@@ -47,6 +47,18 @@ const check = (label, ok, detail) => {
   if (!ok) failed++;
 };
 
+const agentFrontPage = fs.readFileSync(
+  "app/routes/dashboard.agentfront.tsx",
+  "utf8",
+);
+check(
+  "Agent front uses the pinned public gateway origin for snippets and verification",
+  agentFrontPage.includes('import { selfOrigin } from "../lib/origin.server"') &&
+    agentFrontPage.includes("const base = selfOrigin(request)") &&
+    agentFrontPage.includes("verifyInstall(site, selfOrigin(request), reachableOrigin)"),
+  "opening the dashboard through localhost must not publish localhost to external agents",
+);
+
 /* ------------------------------------------------------------------ *
  * Two servers: the merchant's storefront, and this gateway
  * ------------------------------------------------------------------ */
@@ -148,8 +160,29 @@ const site = (over = {}) => ({ ...SITE, origins: [SHOP], ...over });
 
 const snips = AF.installSnippets(`${GW}/ucp/pk_check/profile`);
 const redirects = snips.filter((s) => !s.proxies);
+const vercel = redirects.find((s) => s.host === "Vercel");
 
 check("every host gets a snippet", redirects.length >= 8, redirects.map((s) => s.host).join(", "));
+check(
+  "the Vercel rule is explicitly a mergeable property, not a replacement file",
+  vercel?.where.includes("merge") &&
+    vercel.body.trimStart().startsWith('"redirects":') &&
+    !vercel.body.trimStart().startsWith("{"),
+  "wrapping a second JSON object inside an existing vercel.json makes the deployment config invalid",
+);
+
+const tierC = AF.tierCSnippets(GW, "pk_check");
+const vercelTierC = tierC.find((s) => s.host === "Vercel — no code");
+check(
+  "the Vercel llms.txt rule is a mergeable same-origin rewrite",
+  vercelTierC?.where.includes("merge") &&
+    vercelTierC.body.trimStart().startsWith('"rewrites":') &&
+    vercelTierC.body.includes('"source": "/llms.txt"') &&
+    vercelTierC.body.includes(`${GW}/ucp/pk_check/llms.txt`) &&
+    !vercelTierC.body.trimStart().startsWith("{") &&
+    !vercelTierC.body.includes('"permanent"'),
+  "a rewrite keeps /llms.txt on the merchant origin and avoids a second nested vercel.json object",
+);
 check(
   "every snippet names the well-known path and our profile URL",
   snips.every((s) => s.body.includes("/.well-known/ucp") && s.body.includes(`${GW}/ucp/pk_check/profile`)),

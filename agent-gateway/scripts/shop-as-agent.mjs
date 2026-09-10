@@ -23,6 +23,7 @@
  *   node scripts/shop-as-agent.mjs --gateway http://localhost:3000 --site pk_monsoon_market
  *   node scripts/shop-as-agent.mjs --store http://127.0.0.1:4000      # discover the way an agent does
  *   node scripts/shop-as-agent.mjs --query "green tea" --qty 2
+ *   node scripts/shop-as-agent.mjs --agent-profile https://agent.example/profile
  *   node scripts/shop-as-agent.mjs --code grn_XXXX                    # redeem a recovery grant
  *   node scripts/shop-as-agent.mjs --no-checkout                      # browse only, hold nothing
  */
@@ -48,6 +49,7 @@ const QTY = Number(arg("qty", "1"));
 const CODE = arg("code");
 const NO_CHECKOUT = flag("no-checkout");
 const POLL_SECONDS = Number(arg("wait", "300"));
+let PROFILE = arg("agent-profile");
 
 const c = {
   dim: (s) => `\x1b[2m${s}\x1b[0m`,
@@ -77,30 +79,43 @@ const die = (msg) => {
 // than a way around it. Stop the script and the identity stops resolving, which
 // is precisely the property the gate is for.
 
-const profileServer = http.createServer((req, res) => {
-  res.writeHead(200, { "content-type": "application/json" });
-  res.end(
-    JSON.stringify({
-      ucp: {
-        version: "2026-08-25",
-        status: "success",
-        capabilities: {
-          "dev.ucp.shopping.cart": [{ version: "2026-08-25" }],
-          "dev.ucp.shopping.checkout": [{ version: "2026-08-25" }],
+let profileServer = null;
+if (PROFILE) {
+  let parsed;
+  try {
+    parsed = new URL(PROFILE);
+  } catch {
+    die("--agent-profile must be an absolute http(s) URL");
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    die("--agent-profile must be an absolute http(s) URL");
+  }
+} else {
+  profileServer = http.createServer((req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify({
+        ucp: {
+          version: "2026-08-25",
+          status: "success",
+          capabilities: {
+            "dev.ucp.shopping.cart": [{ version: "2026-08-25" }],
+            "dev.ucp.shopping.checkout": [{ version: "2026-08-25" }],
+          },
         },
-      },
-      name: "shop-as-agent (local test harness)",
-      description:
-        "A developer driving this store's agent surface from a terminal.",
-    }),
-  );
-});
-await new Promise((r) => profileServer.listen(0, "127.0.0.1", r));
+        name: "shop-as-agent (local test harness)",
+        description:
+          "A developer driving this store's agent surface from a terminal.",
+      }),
+    );
+  });
+  await new Promise((r) => profileServer.listen(0, "127.0.0.1", r));
+  profileServer.unref();
+  PROFILE = `http://127.0.0.1:${profileServer.address().port}/profile`;
+}
 // Unreferenced so it never holds the process open. Closing it explicitly on the
 // way out raced `process.exit` and tripped a libuv assertion — an alarming wall
 // of text at the end of a run that had worked perfectly.
-profileServer.unref();
-const PROFILE = `http://127.0.0.1:${profileServer.address().port}/profile`;
 
 /* ------------------------------------------------------------------ *
  * MCP

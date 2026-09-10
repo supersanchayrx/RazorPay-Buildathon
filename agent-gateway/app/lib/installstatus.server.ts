@@ -10,6 +10,7 @@
  * browser-facing origin is localhost but the gateway reaches `store:4000`.
  */
 import type { Site } from "./sites.server";
+export { closeDatabase as _closeDatabase } from "./database.server";
 
 export type SurfaceInstall = {
   installed: boolean;

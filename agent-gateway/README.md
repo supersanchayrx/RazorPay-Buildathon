@@ -11,7 +11,7 @@ Use the repository-level [README](../README.md) for the demo and
 
 ## Development setup
 
-Requirements: Node.js `>=20.19 <22` or `>=22.12`.
+Requirements: Node.js `>=22.12`.
 
 For a fresh dashboard with no registered storefront:
 
@@ -41,6 +41,9 @@ npm run dev:gateway
 | `npm run bootstrap` | Create a merchant account without registering a site |
 | `npm run init` | Configure a storefront through the command line |
 | `npm run doctor` | Check config, catalogue reachability, and optional providers |
+| `npm run db:migrate` | Apply pending versioned SQLite migrations |
+| `npm run db:backup` | Create and verify a consistent SQLite snapshot |
+| `npm run db:restore -- PATH --yes` | Restore a verified snapshot, preserving the previous database |
 | `npm run demo:clean-store` | Generate the unconfigured Monsoon Market demo |
 | `npm run typecheck` | Generate route types and run TypeScript checks |
 | `npm run build` | Build the production client and server |
@@ -50,9 +53,9 @@ npm run dev:gateway
 
 ## Configuration
 
-The native setup reads secret values from the repository-root `.env`.
-`chapman.config.json` stores site settings and environment-variable names, not
-provider secret values.
+The native setup reads secret values from the repository-root `.env`. Durable
+state and site settings live in `data/chapman.sqlite`; rows contain only
+environment-variable names, never provider secret values.
 
 Important paths:
 
@@ -63,6 +66,7 @@ Important paths:
 | `app/components/` | Shared dashboard components |
 | `scripts/` | Setup, doctor, checks, probes, and demo generation |
 | `docker/entrypoint.sh` | Idempotent container bootstrap |
+| `data/chapman.sqlite` | Native-development database; Docker uses `/data/chapman.sqlite` |
 | `chapman.config.example.json` | Commented custom storefront example |
 | `chapman.config.demo.json` | Explicit test fixture; never an automatic fallback |
 
@@ -80,6 +84,55 @@ agent discovery route.
 The **Feature controls** page governs allowed capabilities. It does not claim
 that provider keys or storefront code exist.
 
+## Runtime health
+
+`/health/live` confirms that the HTTP process is alive. `/health/ready` checks
+the SQLite schema version, foreign keys, WAL mode, and database writeability.
+It deliberately does not make storefront or third-party provider calls.
+
+Every application response includes `X-Request-ID`. Runtime logs are emitted as
+one JSON object per line with the request method, path (never the query string),
+status, duration, and matching `request_id`. HTTP 4xx/5xx and application
+failures use level `error` and always include a stable `error_code`, such as
+`HTTP_404`, `HTTP_UNHANDLED_ERROR`, or `HTTP_RENDER_FAILED`. Known secret fields,
+credentials, email addresses, and phone numbers are redacted.
+
+When investigating a failure, copy the response's `X-Request-ID` and search the
+gateway logs for the same `request_id`. The accompanying `error_code` identifies
+the failure class without exposing the request body or credentials.
+
+Internet-facing routes also have per-surface body ceilings and process-local
+token-bucket rate limits. Oversized requests return `413 HTTP_BODY_TOO_LARGE`;
+exhausted buckets return `429 HTTP_RATE_LIMITED` with `Retry-After`. The limits
+cover chat, MCP/UCP, cart and identity, checkout, recovery, voice callbacks, and
+payment/application webhooks. Set `CHAPMAN_TRUST_PROXY=1` only when Chapman is
+directly behind one trusted reverse proxy that replaces `X-Forwarded-For`;
+otherwise the gateway deliberately keys limits from the direct socket address.
+
+`SIGTERM` and `SIGINT` start a graceful drain: new keep-alive work receives
+`503 HTTP_SERVER_SHUTTING_DOWN`, in-flight responses finish, tracked background
+model/TTS work settles, Prisma disconnects, and SQLite checkpoints its WAL and
+closes. The sequence is emitted as structured `process.shutdown.*` logs. Its
+default 20-second deadline can be changed with
+`CHAPMAN_SHUTDOWN_TIMEOUT_MS` (1,000–120,000 ms); keep the value below the
+container platform's termination grace period. A second signal or expired
+deadline forces a non-zero exit with a stable shutdown error code.
+
+## Deployment roadmap
+
+The current image deliberately bundles the merchant dashboard and runtime
+gateway. The future design separates an independently hosted Chapman
+dashboard/control plane from each merchant's independently deployed gateway,
+while retaining standalone Docker operation. The gateway remains beside the
+merchant's shopper and payment data; the two services exchange signed,
+versioned configuration rather than copying that data into the dashboard.
+
+Catalogue ingestion currently supports CSV and a bounded Schema.org crawler.
+A future optional Firecrawl acquisition adapter will cover more
+JavaScript-rendered storefronts, but its output will still require Chapman's
+missing-field validation and explicit merchant review. See the
+[feature checklist](../docs/feature-checklist.md) for milestone order.
+
 ## Verification before a change is handed off
 
 ```bash
@@ -87,6 +140,8 @@ npm run typecheck
 npm run build
 npm run check
 ```
+
+Run the focused lifecycle regression suite with `npm run check:shutdown`.
 
 When Docker behavior changes, also run from the repository root:
 

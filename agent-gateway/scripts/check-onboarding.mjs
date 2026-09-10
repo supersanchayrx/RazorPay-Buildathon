@@ -34,10 +34,12 @@ async function load(entry, name) {
   return import(pathToFileURL(out).href + `?t=${Date.now()}`);
 }
 
-const [Auth, Onboarding, Install] = await Promise.all([
+const [Auth, Onboarding, Install, Sites, Database] = await Promise.all([
   load("app/lib/auth.server.ts", "auth.mjs"),
   load("app/lib/onboarding.server.ts", "onboarding.mjs"),
   load("app/lib/installstatus.server.ts", "install.mjs"),
+  load("app/lib/sites.server.ts", "sites.mjs"),
+  load("app/lib/database.server.ts", "database.mjs"),
 ]);
 
 let failed = 0;
@@ -94,25 +96,26 @@ try {
   const created = Onboarding.createFirstStore(merchant, input());
   check("valid first-store setup succeeds", created.ok, created.error);
 
-  const configText = fs.readFileSync(process.env.CHAPMAN_CONFIG, "utf8");
-  const config = JSON.parse(configText);
+  const config = Sites.allSites();
   const envText = fs.readFileSync(process.env.CHAPMAN_ENV_FILE, "utf8");
   const stored = Auth.findMerchantByEmail("merchant@example.com");
   const secret = envText.match(/^SITE_SECRET_MONSOON_MARKET=(.+)$/m)?.[1] ?? "";
 
-  check("exactly one storefront is registered", config.sites?.length === 1);
+  check("exactly one storefront is registered", config.length === 1);
   check(
     "the registered storefront has the merchant's site key",
-    config.sites?.[0]?.key === input().key,
+    config[0]?.key === input().key,
   );
   check("the signing secret is generated server-side", secret.length >= 64);
   check(
-    "the config contains only the secret variable name",
-    config.sites?.[0]?.secretEnv === "SITE_SECRET_MONSOON_MARKET",
+    "the database contains only the secret variable name",
+    Database.database().prepare("SELECT site_secret_env FROM stores WHERE site_key = ?")
+      .get(input().key)?.site_secret_env === "SITE_SECRET_MONSOON_MARKET",
   );
   check(
-    "the secret value is absent from the site registry",
-    !configText.includes(secret),
+    "the secret value is absent from the storefront row",
+    !JSON.stringify(Database.database().prepare("SELECT * FROM stores WHERE site_key = ?")
+      .get(input().key)).includes(secret),
   );
   check(
     "the authenticated merchant receives the new site grant",
@@ -129,8 +132,7 @@ try {
   );
   check(
     "the rejected second submission leaves one storefront",
-    JSON.parse(fs.readFileSync(process.env.CHAPMAN_CONFIG, "utf8")).sites
-      .length === 1,
+    Sites.allSites().length === 1,
   );
 
   const invalidCatalogUpdate = Onboarding.updateCatalogFeed(
@@ -141,8 +143,7 @@ try {
   check("a relative catalogue URL cannot be saved", !invalidCatalogUpdate.ok);
   check(
     "an invalid update leaves the old catalogue URL intact",
-    JSON.parse(fs.readFileSync(process.env.CHAPMAN_CONFIG, "utf8")).sites[0]
-      .catalogFeedUrl === input().catalogFeedUrl,
+    Sites.findSite(input().key)?.catalogFeedUrl === input().catalogFeedUrl,
   );
 
   const outsider = Auth.createMerchant({
@@ -165,8 +166,7 @@ try {
     input().key,
     updatedCatalogUrl,
   );
-  const updatedConfigText = fs.readFileSync(process.env.CHAPMAN_CONFIG, "utf8");
-  const updatedConfig = JSON.parse(updatedConfigText);
+  const updatedSite = Sites.findSite(input().key);
   check(
     "the owning merchant can change the catalogue URL",
     updated.ok,
@@ -174,12 +174,12 @@ try {
   );
   check(
     "the new catalogue URL is persisted",
-    updatedConfig.sites[0].catalogFeedUrl === updatedCatalogUrl,
+    updatedSite?.catalogFeedUrl === updatedCatalogUrl,
   );
   check(
     "editing the catalogue keeps the secret as an environment reference",
-    updatedConfig.sites[0].secretEnv === "SITE_SECRET_MONSOON_MARKET" &&
-      !updatedConfigText.includes(secret),
+    Database.database().prepare("SELECT site_secret_env FROM stores WHERE site_key = ?")
+      .get(input().key)?.site_secret_env === "SITE_SECRET_MONSOON_MARKET",
   );
 
   const cleanFetch = async (url) =>
@@ -233,6 +233,11 @@ try {
     !wrongKey.assistant.installed,
   );
 } finally {
+  Auth._closeDatabase();
+  Onboarding._closeDatabase();
+  Install._closeDatabase();
+  Sites._closeDatabase();
+  Database.closeDatabase();
   fs.rmSync(sandbox, { recursive: true, force: true });
 }
 

@@ -1035,6 +1035,7 @@ function TargetCard({
         <HStack gap={3} hAlign="between" vAlign="start" wrap="wrap">
           <VStack gap={1.5}>
             <Heading level={3}>
+              {t.customerName ? `${t.customerName} · ` : ""}
               {t.items.map((i) => i.title).join(", ")}
             </Heading>
             <Text type="supporting" color="secondary">
@@ -1513,8 +1514,12 @@ export default function Recovery() {
             data={run.suppressedBy.map((s) => ({
               id: s.reason,
               label: s.label,
-              detail:
-                run.suppressed.find((x) => x.reason === s.reason)?.detail ?? "",
+              detail: (() => {
+                const example = run.suppressed.find((x) => x.reason === s.reason);
+                return example
+                  ? `${example.customerName ? `${example.customerName}: ` : ""}${example.detail}`
+                  : "";
+              })(),
               count: s.count,
               margin: inr(s.margin),
             }))}

@@ -25,9 +25,7 @@
  * approval it revoked. Becomes a Prisma table; the shape below is the schema.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { dataPath } from "./paths.server";
+import { database, databasePath, ensureStore, json, parseJson } from "./database.server";
 import { record } from "./ledger.server";
 
 export type Decision = {
@@ -69,26 +67,25 @@ export type ActiveOffer = OfferTerms & {
   approvedBy: string;
 };
 
-const FILE = dataPath("offer-decisions.jsonl");
-
 function readAll(): Decision[] {
-  try {
-    return fs
-      .readFileSync(FILE, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as Decision);
-  } catch {
-    return [];
-  }
+  return (database().prepare(`
+    SELECT payload FROM offer_decisions ORDER BY decided_at, id
+  `).all() as Array<{ payload: string }>).map((r) => parseJson<Decision>(r.payload, null as never));
 }
 
-function append(d: Decision): void {
+function append(d: Decision): boolean {
   try {
-    fs.mkdirSync(path.dirname(FILE), { recursive: true });
-    fs.appendFileSync(FILE, JSON.stringify(d) + "\n", "utf8");
+    database().prepare(`
+      INSERT INTO offer_decisions(
+        store_id, candidate_id, action, decided_at, decided_by, note, payload
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      ensureStore(d.shop), d.candidateId, d.action, d.ts, d.by,
+      d.note ?? null, json(d),
+    );
+    return true;
   } catch {
-    // An approval we could not persist has not happened. The caller checks.
+    return false;
   }
 }
 
@@ -117,7 +114,7 @@ export function decide(input: {
   }
 
   const d: Decision = { ts: new Date().toISOString(), ...input };
-  append(d);
+  if (!append(d)) return { ok: false, error: "could not persist the decision" };
 
   // Approvals and revocations go in the decision ledger too. A merchant
   // reviewing what was said on their behalf should find the moment the system
@@ -209,5 +206,5 @@ export function announceable(shop: string, asOf = new Date()) {
 
 /** Test seam. */
 export function _file(): string {
-  return FILE;
+  return databasePath();
 }

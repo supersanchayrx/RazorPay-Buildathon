@@ -7,6 +7,7 @@ import { TOOLS } from "../lib/ucptools";
 import { featureForUcpTool, featureOn, filterUcpTools } from "../lib/featureflags.server";
 import { record } from "../lib/ledger.server";
 import { selfOrigin } from "../lib/origin.server";
+import { publicBodyFailure, readPublicJson } from "../lib/http-security.server";
 
 /**
  * The MCP endpoint a shopper's agent talks to.
@@ -86,9 +87,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   let body: { jsonrpc?: string; id?: unknown; method?: string; params?: Record<string, unknown> };
   try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return rpcError(null, -32700, "Parse error: body was not JSON.");
+    body = await readPublicJson<typeof body>(request, "agent");
+  } catch (error) {
+    const failure = publicBodyFailure(error);
+    return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: failure.message, data: { error_code: failure.code } } }, failure.status);
   }
 
   const id = body.id ?? null;

@@ -39,6 +39,13 @@ async function load(entry, name) {
   return import(pathToFileURL(out).href + "?t=" + Date.now());
 }
 
+const SANDBOX = path.join(process.cwd(), "node_modules", ".cache", "memory-sandbox");
+fs.rmSync(SANDBOX, { recursive: true, force: true });
+fs.mkdirSync(SANDBOX, { recursive: true });
+process.env.CHAPMAN_DATA_DIR = SANDBOX;
+process.env.CHAPMAN_DATABASE_PATH = path.join(SANDBOX, "chapman.sqlite");
+
+const DBS = await load("app/lib/database.server.ts", "memory-db-check.mjs");
 const MEM = await load("app/lib/memory.server.ts", "mem-check.mjs");
 const CTX = await load("app/lib/cortex.server.ts", "ctx3-check.mjs");
 
@@ -53,21 +60,10 @@ const OTHER = "pk_memcheck_other";
 const A = "cus_memcheck_a";
 const B = "cus_memcheck_b";
 
-/** Wipe only the rows this suite wrote. The file is shared with the real store. */
+/** Wipe only the rows this suite wrote inside its scratch database. */
 function cleanup() {
-  const f = MEM._file();
-  try {
-    const kept = fs
-      .readFileSync(f, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .filter((l) => {
-        const r = JSON.parse(l);
-        return r.shop !== SHOP && r.shop !== OTHER;
-      });
-    fs.writeFileSync(f, kept.length ? kept.join("\n") + "\n" : "", "utf8");
-  } catch {
-    /* nothing written, nothing to clean */
+  for (const shop of [SHOP, OTHER]) {
+    for (const sub of [A, B]) MEM.forget(shop, sub);
   }
 }
 cleanup();
@@ -534,8 +530,10 @@ check(
 cleanup();
 check(
   "the suite cleans up after itself",
-  MEM.memories(SHOP, A).length === 0 && MEM.memories(OTHER, A).length === 0,
-  "no test memories left in the store the real shop shares",
+  MEM.memories(SHOP, A).length === 0 &&
+    MEM.memories(OTHER, A).length === 0 &&
+    DBS.databasePath() === path.join(SANDBOX, "chapman.sqlite"),
+  "no test memories remain, and the real gateway database was never opened",
 );
 
 console.log(failed === 0 ? "\nAll checks passed. Memory holds people; the cortex still cannot." : `\n${failed} FAILED`);

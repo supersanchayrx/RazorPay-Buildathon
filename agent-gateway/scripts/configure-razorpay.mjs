@@ -39,6 +39,57 @@ if (!present(DEFAULT_RAZORPAY_REF.keySecretEnv)) {
   );
 }
 
+let siteKey = valueAfter("site")?.trim() || process.env.CHAPMAN_SITE_KEY?.trim();
+
+/**
+ * Docker's current self-hosted mode keeps registered storefronts in SQLite.
+ * Use the same validated linker as the Features page rather than manufacturing
+ * a second legacy JSON registry beside the authoritative database.
+ */
+if (process.env.CHAPMAN_DATABASE_PATH?.trim()) {
+  if (!siteKey) stop("pass --site <public-site-key>; it cannot be inferred safely");
+  const out = path.join(
+    process.cwd(),
+    "node_modules",
+    ".cache",
+    "configure-razorpay-database.mjs",
+  );
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  await esbuild.build({
+    entryPoints: ["app/lib/sitepayments.server.ts"],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    outfile: out,
+    logLevel: "silent",
+  });
+  const { linkAgentRazorpay } = await import(
+    `${pathToFileURL(out).href}?at=${Date.now()}`
+  );
+  let result;
+  try {
+    result = linkAgentRazorpay(siteKey, {
+      resolveSecret: (name) => process.env[name]?.trim() || null,
+    });
+  } catch (error) {
+    stop(error instanceof Error ? error.message : String(error));
+  }
+  console.log(
+    result.changed
+      ? `\nRazorpay linked for ${siteKey} in ${result.file}.`
+      : `\nRazorpay is already linked for ${siteKey}. No database row was changed.`,
+  );
+  console.log("  Key ID: RAZORPAY_KEY_ID (set)");
+  console.log("  Key Secret: RAZORPAY_KEY_SECRET (set)");
+  console.log(
+    `  Webhook Secret: RAZORPAY_WEBHOOK_SECRET (${present("RAZORPAY_WEBHOOK_SECRET") ? "set" : "optional, not set"})`,
+  );
+  console.log(
+    "\nNow recreate the gateway: docker compose up -d --force-recreate gateway\n",
+  );
+  process.exit(0);
+}
+
 const configFile = path.resolve(
   process.env.CHAPMAN_CONFIG?.trim() ||
     path.join(process.cwd(), "chapman.config.json"),
@@ -77,7 +128,6 @@ try {
   stop(`the existing config is not valid JSON: ${error.message}`);
 }
 
-let siteKey = valueAfter("site")?.trim() || process.env.CHAPMAN_SITE_KEY?.trim();
 if (!siteKey && Array.isArray(parsed.sites) && parsed.sites.length === 1) {
   siteKey = parsed.sites[0]?.key;
 }

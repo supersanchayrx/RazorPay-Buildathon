@@ -39,6 +39,12 @@ async function load(entry, name) {
   return import(pathToFileURL(out).href + "?t=" + Date.now());
 }
 
+const SANDBOX = path.join(process.cwd(), "node_modules", ".cache", "tierc-sandbox");
+fs.rmSync(SANDBOX, { recursive: true, force: true });
+fs.mkdirSync(SANDBOX, { recursive: true });
+process.env.CHAPMAN_DATA_DIR = SANDBOX;
+process.env.CHAPMAN_DATABASE_PATH = path.join(SANDBOX, "chapman.sqlite");
+
 const AV = await load("app/lib/agentview.server.ts", "agentview-check.mjs");
 const AP = await load("app/lib/approvals.server.ts", "approvals-tierc.mjs");
 
@@ -131,30 +137,17 @@ const CATALOG = {
   },
 };
 
-// A live 10% offer on the green tea, written to the real ledger under a test
-// shop key so `announceable` reads it the way production does. Testing against
-// a stubbed offer source would test the stub.
-const LEDGER = AP._file();
-fs.mkdirSync(path.dirname(LEDGER), { recursive: true });
-const before = fs.existsSync(LEDGER) ? fs.readFileSync(LEDGER, "utf8") : null;
+// A live 10% offer on the green tea, written through the real repository in a
+// scratch database. Testing against a stubbed offer source would test the stub.
 const ENDS = new Date(Date.now() + 30 * 864e5).toISOString();
-fs.appendFileSync(
-  LEDGER,
-  JSON.stringify({
-    id: "d-tierc",
-    shop: SITE.key,
-    candidateId: "c-tierc",
-    action: "approve",
-    at: new Date().toISOString(),
-    by: "check-tierc",
-    offer: { handle: "green-tea", title: "Frost pick", depth: 0.1, endsAt: ENDS, maxUnits: 40 },
-  }) + "\n",
-);
-
-const restore = () => {
-  if (before === null) fs.rmSync(LEDGER, { force: true });
-  else fs.writeFileSync(LEDGER, before, "utf8");
-};
+AP.decide({
+  shop: SITE.key,
+  candidateId: "c-tierc",
+  action: "approve",
+  at: new Date().toISOString(),
+  by: "check-tierc",
+  offer: { handle: "green-tea", title: "Frost pick", depth: 0.1, endsAt: ENDS, maxUnits: 40 },
+});
 
 const view = (p, askedOrigin = "https://shop.example") =>
   AV.agentView({
@@ -383,17 +376,13 @@ try {
    * ---------------------------------------------------------------- */
   console.log("\nwithdrawal\n");
 
-  fs.appendFileSync(
-    LEDGER,
-    JSON.stringify({
-      id: "d-tierc-2",
-      shop: SITE.key,
-      candidateId: "c-tierc",
-      action: "reject",
-      at: new Date().toISOString(),
-      by: "check-tierc",
-    }) + "\n",
-  );
+  AP.decide({
+    shop: SITE.key,
+    candidateId: "c-tierc",
+    action: "reject",
+    at: new Date().toISOString(),
+    by: "check-tierc",
+  });
 
   const after = await view("/product.html?handle=green-tea");
   const afterNode = ld(after);
@@ -411,7 +400,7 @@ try {
   });
   check("and from llms.txt", !afterTxt.includes("## Current offers"));
 } finally {
-  restore();
+  // The scratch database is discarded on the next run.
 }
 
 console.log(failed === 0 ? "\nAll Tier C checks passed.\n" : `\n${failed} FAILED\n`);

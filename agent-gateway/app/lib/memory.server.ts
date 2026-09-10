@@ -57,9 +57,7 @@
  * the model layer above them costs. `pgvector` replaces `score()` and nothing
  * else in this file when Prisma arrives; the store shape below is the schema.
  */
-import fs from "node:fs";
-import path from "node:path";
-import { dataPath } from "./paths.server";
+import { database, databasePath, ensureStore, json, parseJson } from "./database.server";
 import crypto from "node:crypto";
 
 /** Written this way so no shell or build step can mangle an escape. */
@@ -209,27 +207,55 @@ export function worthLearning(
  * Store
  * ------------------------------------------------------------------ */
 
-const FILE = dataPath("shopper-memory.jsonl");
-
 /** A delete leaves a tombstone, so the append-only log stays append-only. */
 type Row = ({ op: "put" } & Memory) | { op: "forget"; shop: string; sub: string; id?: string; at: string };
 
 function readRows(): Row[] {
-  try {
-    return fs
-      .readFileSync(FILE, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as Row);
-  } catch {
-    return [];
-  }
+  return (database().prepare(`
+    SELECT s.site_key, m.id, m.subject, m.kind, m.text, m.source,
+      m.created_at, m.last_used_at, m.expires_at, m.evidence
+    FROM shopper_memories m JOIN stores s ON s.id = m.store_id
+    ORDER BY m.created_at, m.id
+  `).all() as Array<{
+    site_key: string; id: string; subject: string; kind: MemoryKind;
+    text: string; source: Memory["source"]; created_at: string;
+    last_used_at: string; expires_at: string; evidence: string | null;
+  }>).map((r) => ({
+    op: "put", id: r.id, shop: r.site_key, sub: r.subject, kind: r.kind,
+    text: r.text, source: r.source, createdAt: r.created_at,
+    lastUsedAt: r.last_used_at, expiresAt: r.expires_at, evidence: r.evidence,
+  }));
 }
 
 function appendRow(row: Row): boolean {
   try {
-    fs.mkdirSync(path.dirname(FILE), { recursive: true });
-    fs.appendFileSync(FILE, JSON.stringify(row) + "\n", "utf8");
+    const storeId = ensureStore(row.shop);
+    if (row.op === "forget") {
+      if (row.id) {
+        database().prepare(`
+          DELETE FROM shopper_memories WHERE store_id = ? AND subject = ? AND id = ?
+        `).run(storeId, row.sub, row.id);
+      } else {
+        database().prepare(`
+          DELETE FROM shopper_memories WHERE store_id = ? AND subject = ?
+        `).run(storeId, row.sub);
+      }
+    } else {
+      const hash = crypto.createHash("sha256").update(row.text.trim().toLowerCase()).digest("hex");
+      database().prepare(`
+        INSERT INTO shopper_memories(
+          id, store_id, subject, kind, text, source, evidence, content_hash,
+          created_at, last_used_at, expires_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, text = excluded.text,
+          source = excluded.source, evidence = excluded.evidence,
+          content_hash = excluded.content_hash, last_used_at = excluded.last_used_at,
+          expires_at = excluded.expires_at
+      `).run(
+        row.id, storeId, row.sub, row.kind, row.text, row.source,
+        row.evidence ?? null, hash, row.createdAt, row.lastUsedAt, row.expiresAt,
+      );
+    }
     return true;
   } catch {
     return false;
@@ -669,7 +695,7 @@ export function learn(input: {
 
 /** Test seam. */
 export function _file(): string {
-  return FILE;
+  return databasePath();
 }
 
 /* ------------------------------------------------------------------ *

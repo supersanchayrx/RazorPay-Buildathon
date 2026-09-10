@@ -71,16 +71,13 @@ import {
   type VoiceConfig,
 } from "./voice.server";
 import type { Draft } from "./outreach.server";
-import fs from "node:fs";
 import path from "node:path";
-import { dataPath } from "./paths.server";
+import { database, databasePath, ensureStore, json, parseJson, transaction } from "./database.server";
 import { resolveVoiceRecovery, voiceRemedyLine } from "./voice-recovery.server";
 
 /* ------------------------------------------------------------------ *
  * The transcript
  * ------------------------------------------------------------------ */
-
-const TRANSCRIPT = dataPath("voice-transcripts.jsonl");
 
 export type TranscriptRow = {
   at: string;
@@ -105,12 +102,18 @@ export type TranscriptRow = {
  */
 function say(row: Omit<TranscriptRow, "at">): void {
   try {
-    fs.mkdirSync(path.dirname(TRANSCRIPT), { recursive: true });
-    fs.appendFileSync(
-      TRANSCRIPT,
-      JSON.stringify({ at: new Date().toISOString(), ...row }) + "\n",
-      "utf8",
-    );
+    const stored = { at: new Date().toISOString(), ...row };
+    transaction((db) => {
+      const sequence = Number((db.prepare(`
+        SELECT COALESCE(MAX(sequence), 0) + 1 AS next
+        FROM voice_transcript_turns WHERE call_id = ?
+      `).get(row.callSid) as { next: number }).next);
+      db.prepare(`
+        INSERT INTO voice_transcript_turns(
+          store_id, call_id, sequence, occurred_at, payload
+        ) VALUES (?, ?, ?, ?, ?)
+      `).run(ensureStore(row.shop), row.callSid, sequence, stored.at, json(stored));
+    });
   } catch (e) {
     // Deliberately not fatal, and deliberately loud. A call already in progress
     // should not be dropped because a disk is full, but nobody should be able
@@ -124,17 +127,12 @@ function say(row: Omit<TranscriptRow, "at">): void {
 }
 
 export function transcript(shop: string, limit = 200): TranscriptRow[] {
-  try {
-    return fs
-      .readFileSync(TRANSCRIPT, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as TranscriptRow)
-      .filter((r) => r.shop === shop)
-      .slice(-limit);
-  } catch {
-    return [];
-  }
+  const rows = database().prepare(`
+    SELECT v.payload FROM voice_transcript_turns v
+    JOIN stores s ON s.id = v.store_id WHERE s.site_key = ?
+    ORDER BY v.id DESC LIMIT ?
+  `).all(shop, Math.max(0, limit)) as Array<{ payload: string }>;
+  return rows.reverse().map((r) => parseJson<TranscriptRow>(r.payload, null as never));
 }
 
 /** One call's lines, oldest first, for the merchant console. */
@@ -1088,7 +1086,7 @@ export function _reset(): void {
   sessions.clear();
 }
 export function _file(): string {
-  return TRANSCRIPT;
+  return databasePath();
 }
 export function _session(callSid: string) {
   return sessions.get(callSid);

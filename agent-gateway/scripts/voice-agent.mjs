@@ -52,7 +52,6 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { DATA_DIR, dataPath } from "./data-dir.mjs";
 import { pathToFileURL } from "node:url";
 import { WebSocketServer } from "ws";
 import * as esbuild from "esbuild";
@@ -77,6 +76,7 @@ const OUT = await load("app/lib/outreach.server.ts", "out-agent.mjs");
 const VOI = await load("app/lib/voice.server.ts", "voi-agent.mjs");
 const LLM = await load("app/lib/openrouter.server.ts", "llm-agent.mjs");
 const BND = await load("app/lib/bounds.server.ts", "bnd-agent.mjs");
+const DBS = await load("app/lib/database.server.ts", "db-agent.mjs");
 
 const PORT = Number(process.env.VOICE_AGENT_PORT || 3000);
 const ORIGIN = (process.env.PUBLIC_ORIGIN || "").replace(/\/+$/, "");
@@ -103,7 +103,6 @@ if (!VERBS.includes(VERB)) {
   process.exit(1);
 }
 
-const TRANSCRIPT = dataPath("voice-transcripts.jsonl");
 /**
  * The turn cap, chosen against Twilio's hop budget rather than picked round.
  *
@@ -190,8 +189,18 @@ async function collect(callSid, ms) {
 
 function logTurn(row) {
   try {
-    fs.mkdirSync(path.dirname(TRANSCRIPT), { recursive: true });
-    fs.appendFileSync(TRANSCRIPT, JSON.stringify({ at: new Date().toISOString(), ...row }) + "\n", "utf8");
+    const stored = { at: new Date().toISOString(), ...row };
+    DBS.transaction((db) => {
+      const sequence = Number(db.prepare(`
+        SELECT COALESCE(MAX(sequence), 0) + 1 AS next
+        FROM voice_transcript_turns WHERE call_id = ?
+      `).get(row.callSid).next);
+      db.prepare(`
+        INSERT INTO voice_transcript_turns(
+          store_id, call_id, sequence, occurred_at, payload
+        ) VALUES (?, ?, ?, ?, ?)
+      `).run(DBS.ensureStore(row.shop), row.callSid, sequence, stored.at, DBS.json(stored));
+    });
   } catch (e) {
     console.error(`[transcript] could not write: ${e.message}`);
   }

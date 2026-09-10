@@ -74,34 +74,16 @@ const ENV_FILE = process.env.CHAPMAN_ENV_FILE?.trim()
   ? path.resolve(process.env.CHAPMAN_ENV_FILE.trim())
   : path.join(process.cwd(), "..", ".env");
 
-const { findConfigFile, stripJsonComments } = await load(
-  "app/lib/config.server.ts",
-  "bootstrap-config.mjs",
-);
-
-const configFile = findConfigFile();
-if (!configFile) {
-  // A merchant account is deliberately independent of a storefront. The
-  // owner signs in first, then registers the site they actually own.
-  console.log(
-    "bootstrap: no site registry found — starting in onboarding mode.",
-  );
-}
-
-let sites = [];
-if (configFile) {
-  try {
-    const parsed = JSON.parse(
-      stripJsonComments(fs.readFileSync(configFile, "utf8")),
-    );
-    sites = Array.isArray(parsed?.sites) ? parsed.sites : [];
-  } catch (e) {
-    console.error(`bootstrap: ${configFile} is not valid JSON — ${e.message}`);
-    console.error("           Fix it and start again. Nothing was written.");
-    process.exit(1);
-  }
-
-  console.log(`bootstrap: config ${configFile}`);
+const DBS = await load("app/lib/database.server.ts", "bootstrap-db.mjs");
+const sites = DBS.database().prepare(`
+  SELECT site_key AS key, name, site_secret_env AS secretEnv
+  FROM stores WHERE configured = 1 AND archived_at IS NULL
+  ORDER BY created_at, site_key
+`).all();
+if (sites.length === 0) {
+  console.log("bootstrap: no storefront in SQLite; starting in onboarding mode.");
+} else {
+  console.log(`bootstrap: database ${DBS.databasePath()} (${sites.length} storefronts)`);
 }
 console.log(`bootstrap: data   ${DATA_DIR}`);
 

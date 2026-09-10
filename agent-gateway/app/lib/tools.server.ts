@@ -247,3 +247,5 @@ export const SHOPPER_TOOLS: ToolSpec<ShopperToolContext>[] = [
  */
 export const describeRegistry = <C,>(tools: ToolSpec<C>[]) =>
   tools.map((t) => ({ name: t.name, description: t.description.split(".")[0] + "." }));
+
+export { closeDatabase as _closeDatabase } from "./database.server";

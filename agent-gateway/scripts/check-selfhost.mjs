@@ -154,62 +154,65 @@ console.log("\n-- where CHAPMAN writes ------------------------------------\n");
     longhand.length === 0,
     longhand.length ? longhand.join(", ") : "dataPath() is the only way in",
   );
-  check("and the helper is genuinely in use", users.length >= 20, `${users.length} modules`);
+  check("and the helper remains available for non-database assets", users.length >= 5, `${users.length} modules`);
+
+  const databaseUsers = [];
+  const collectDatabaseUsers = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) {
+        collectDatabaseUsers(p);
+        continue;
+      }
+      if (!/\.tsx?$/.test(e.name) || p.endsWith("database.server.ts")) continue;
+      const s = fs.readFileSync(p, "utf8");
+      if (s.includes('from "./database.server"')) databaseUsers.push(p);
+    }
+  };
+  collectDatabaseUsers(path.join(REAL, "app", "lib"));
+  check(
+    "stateful modules use the shared SQLite repository",
+    databaseUsers.length >= 15,
+    `${databaseUsers.length} modules`,
+  );
 }
 
 /* ================================================================== *
- * The ledger's move
+ * Existing demo files are deliberately not migrated
  * ================================================================== */
-console.log("\n-- the ledger's move ---------------------------------------\n");
+console.log("\n-- no implicit legacy-data migration -----------------------\n");
 
 {
-  const home = path.join(SANDBOX, "ledger-move");
+  const home = path.join(SANDBOX, "legacy-data");
   fs.mkdirSync(home, { recursive: true });
-  fs.writeFileSync(
-    path.join(home, "decision-ledger.jsonl"),
-    JSON.stringify({ ts: "t", kind: "old" }) + "\n",
-  );
+  const legacy = path.join(home, "decision-ledger.jsonl");
+  const original = JSON.stringify({ ts: "t", kind: "legacy" }) + "\n";
+  fs.writeFileSync(legacy, original);
   process.env.CHAPMAN_DATA_DIR = path.join(home, "data");
+  process.env.CHAPMAN_DATABASE_PATH = path.join(home, "data", "chapman.sqlite");
   process.chdir(home);
-  const L = await load(path.join(REAL, "app/lib/ledger.server.ts"), "ledger-move.mjs");
+  const L = await load(path.join(REAL, "app/lib/ledger.server.ts"), "ledger-sqlite.mjs");
   process.chdir(REAL);
 
+  const initial = L.readLedger(10);
+  check(
+    "legacy JSONL is not silently imported",
+    initial.length === 0,
+    "fresh installations start with a clean authoritative database",
+  );
+  L.record({ shop: "pk_test", kind: "reply", message: "stored in SQLite" });
   const rows = L.readLedger(10);
   check(
-    "a ledger left at the old location is carried across, not abandoned",
-    rows.length === 1 && rows[0].kind === "old",
-    "this is the record of every refusal made on the merchant's behalf",
-  );
-  check("and it is moved, not duplicated", !fs.existsSync(path.join(home, "decision-ledger.jsonl")));
-}
-
-{
-  const home = path.join(SANDBOX, "ledger-keep");
-  fs.mkdirSync(path.join(home, "data"), { recursive: true });
-  fs.writeFileSync(
-    path.join(home, "decision-ledger.jsonl"),
-    JSON.stringify({ ts: "t", kind: "legacy" }) + "\n",
-  );
-  fs.writeFileSync(
-    path.join(home, "data", "decision-ledger.jsonl"),
-    JSON.stringify({ ts: "t", kind: "current" }) + "\n",
-  );
-  process.env.CHAPMAN_DATA_DIR = path.join(home, "data");
-  process.chdir(home);
-  const L = await load(path.join(REAL, "app/lib/ledger.server.ts"), "ledger-keep.mjs");
-  process.chdir(REAL);
-
-  const rows = L.readLedger(10);
-  check(
-    "an existing ledger is never overwritten by the migration",
-    rows.length === 1 && rows[0].kind === "current",
-    "the destination wins; the migration only ever fills an empty slot",
+    "new ledger entries round-trip through SQLite",
+    rows.length === 1 && rows[0].shop === "pk_test" && rows[0].message === "stored in SQLite",
   );
   check(
-    "and the older one is left alone rather than deleted",
-    fs.existsSync(path.join(home, "decision-ledger.jsonl")),
+    "the legacy file is left untouched",
+    fs.readFileSync(legacy, "utf8") === original,
   );
+  L.closeDatabase?.();
   delete process.env.CHAPMAN_DATA_DIR;
+  delete process.env.CHAPMAN_DATABASE_PATH;
 }
 
 /* ================================================================== *

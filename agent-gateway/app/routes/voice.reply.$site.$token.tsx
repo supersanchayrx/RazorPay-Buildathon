@@ -6,6 +6,7 @@ import { cachedSpeech, config } from "../lib/voice.server";
 import { fallbackAudio, noteFallbackSpoken, SAFE_LINE, type TurnOutcome } from "../lib/voicetalk.server";
 import { collect, hangup, listen, reply, xml , respondWithin } from "../lib/twiml.server";
 import { record } from "../lib/ledger.server";
+import { readPublicFormData } from "../lib/http-security.server";
 
 const DEADLINE_MS = Number(process.env.VOICE_DEADLINE_MS ?? 4000);
 
@@ -35,7 +36,12 @@ async function inner({ request, params }: LoaderFunctionArgs | ActionFunctionArg
   const draft = draftById(site.key, v.claim.draft);
   if (!draft) return xml(hangup("Sorry, this call cannot continue."));
 
-  const form = request.method === "POST" ? await request.formData() : new FormData();
+  let form: FormData;
+  try {
+    form = request.method === "POST" ? await readPublicFormData(request, "voice") : new FormData();
+  } catch {
+    return xml(hangup("Sorry, this request was too large."), 413);
+  }
   const callSid = String(form.get("CallSid") ?? "unknown");
   const turnUrl = `${c.origin}/voice/turn/${site.key}/${params.token}`;
 

@@ -113,6 +113,11 @@ console.log("\n-- Razorpay config linker --\n");
     source.indexOf("parseSitesConfig(nextText") < source.indexOf("copyFileSync") &&
       source.indexOf("copyFileSync") < source.indexOf("renameSync"),
   );
+  check(
+    "the command links the authoritative SQLite registry in Docker mode",
+    source.includes("CHAPMAN_DATABASE_PATH") &&
+      source.includes("linkAgentRazorpay(siteKey"),
+  );
 }
 
 console.log(`\n${failed === 0 ? "ALL PASS" : `${failed} FAILED`}\n`);

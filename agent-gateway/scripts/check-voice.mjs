@@ -25,7 +25,6 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { DATA_DIR, dataPath } from "./data-dir.mjs";
 import { pathToFileURL } from "node:url";
 import * as esbuild from "esbuild";
 
@@ -43,6 +42,13 @@ async function load(entry, name) {
   return import(pathToFileURL(out).href + "?t=" + Date.now());
 }
 
+const SANDBOX = path.join(process.cwd(), "node_modules", ".cache", "voice-sandbox");
+fs.rmSync(SANDBOX, { recursive: true, force: true });
+fs.mkdirSync(SANDBOX, { recursive: true });
+process.env.CHAPMAN_DATA_DIR = SANDBOX;
+process.env.CHAPMAN_DATABASE_PATH = path.join(SANDBOX, "chapman.sqlite");
+
+const DBS = await load("app/lib/database.server.ts", "voice-db-check.mjs");
 const IDN = await load("app/lib/identity.server.ts", "idn-cv.mjs");
 const VOI = await load("app/lib/voice.server.ts", "voi-cv.mjs");
 const OUT = await load("app/lib/outreach.server.ts", "out-cv.mjs");
@@ -293,21 +299,31 @@ check(
 check(
   "a corrupted mode falls back to the smaller thing",
   (() => {
-    const f = dataPath(`settings-${SHOP}.json`);
-    const raw = JSON.parse(fs.readFileSync(f, "utf8"));
+    const db = DBS.database();
+    const row = db.prepare(`SELECT payload FROM store_settings WHERE store_id = (
+      SELECT id FROM stores WHERE site_key = ?
+    )`).get(SHOP);
+    const raw = JSON.parse(row.payload);
     raw.outreach.call = { mode: "conversatoin", maxTurns: 6 };
-    fs.writeFileSync(f, JSON.stringify(raw));
+    db.prepare(`UPDATE store_settings SET payload = ? WHERE store_id = (
+      SELECT id FROM stores WHERE site_key = ?
+    )`).run(JSON.stringify(raw), SHOP);
     return SET.readSettings(SHOP).outreach.call.mode === "notice";
   })(),
   "a typo must not silently promote a notice into a conversation",
 );
 check(
-  "an older settings file keeps every call ceiling",
+  "an older settings row keeps every call ceiling",
   (() => {
-    const f = dataPath(`settings-${SHOP}.json`);
-    const raw = JSON.parse(fs.readFileSync(f, "utf8"));
+    const db = DBS.database();
+    const row = db.prepare(`SELECT payload FROM store_settings WHERE store_id = (
+      SELECT id FROM stores WHERE site_key = ?
+    )`).get(SHOP);
+    const raw = JSON.parse(row.payload);
     delete raw.outreach.call;
-    fs.writeFileSync(f, JSON.stringify(raw));
+    db.prepare(`UPDATE store_settings SET payload = ? WHERE store_id = (
+      SELECT id FROM stores WHERE site_key = ?
+    )`).run(JSON.stringify(raw), SHOP);
     const c = SET.readSettings(SHOP).outreach.call;
     return (
       c.maxTurns === SET.DEFAULTS.outreach.call.maxTurns && c.mode === "notice"
@@ -924,40 +940,12 @@ check(
   "the caller gets cached Sarvam filler while voicedWork continues; reply only plays completed audio",
 );
 
-/* ================= cleanup ================= */
-console.log("\n--- leaving nothing behind ---");
-
-try {
-  fs.unlinkSync(dataPath(`settings-${SHOP}.json`));
-} catch {
-  /* already gone */
-}
-const convFile = CNV._file();
-try {
-  const kept = fs
-    .readFileSync(convFile, "utf8")
-    .split("\n")
-    .filter((l) => l && !l.includes(SHOP));
-  fs.writeFileSync(convFile, kept.join("\n") + (kept.length ? "\n" : ""));
-} catch {
-  /* nothing written */
-}
-const tFile = VTK._file();
-try {
-  const kept = fs
-    .readFileSync(tFile, "utf8")
-    .split("\n")
-    .filter((l) => l && !l.includes(SHOP));
-  fs.writeFileSync(tFile, kept.join("\n") + (kept.length ? "\n" : ""));
-} catch {
-  /* nothing written */
-}
+/* ================= isolation ================= */
+console.log("\n--- leaving the real database untouched ---");
 check(
-  "the suite cleans up after itself",
-  !fs.existsSync(dataPath(`settings-${SHOP}.json`)) &&
-    CNV.conversations(SHOP).length === 0 &&
-    VTK.transcript(SHOP).length === 0,
-  "no test conversations, transcripts or settings left on any store",
+  "the suite is isolated from the real gateway database",
+  DBS.databasePath() === path.join(SANDBOX, "chapman.sqlite"),
+  "test conversations, transcripts, and settings exist only in a scratch database",
 );
 
 console.log("");

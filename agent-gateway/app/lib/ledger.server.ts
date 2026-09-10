@@ -9,9 +9,7 @@
  * JSONL for now so it survives restarts with no migration. It should become a
  * Prisma model before this is more than a demo — the shape below is the schema.
  */
-import fs from "node:fs";
-import path from "node:path";
-import { dataPath } from "./paths.server";
+import { database, ensureStore, json, parseJson } from "./database.server";
 
 export type LedgerEntry = {
   ts: string;
@@ -53,35 +51,16 @@ export type LedgerEntry = {
  * destination, so it can never overwrite, and it is silent on failure because
  * a logging module must not be the reason a shop fails to boot.
  */
-function resolveLedgerFile(): string {
-  const current = dataPath("decision-ledger.jsonl");
-  const legacy = path.join(process.cwd(), "decision-ledger.jsonl");
-  if (path.resolve(legacy) !== path.resolve(current)) {
-    try {
-      if (fs.existsSync(legacy) && !fs.existsSync(current)) {
-        try {
-          fs.renameSync(legacy, current);
-        } catch {
-          // A rename cannot cross a filesystem, and a mounted data volume is
-          // very often a different one. Copy first and only then drop the
-          // original, so an interruption leaves two ledgers rather than none.
-          fs.copyFileSync(legacy, current);
-          fs.rmSync(legacy);
-        }
-      }
-    } catch {
-      // Nothing can be done from in here. `npm run doctor` reports it instead.
-    }
-  }
-  return current;
-}
-
-const FILE = resolveLedgerFile();
-
 export function record(entry: Omit<LedgerEntry, "ts">) {
   const row: LedgerEntry = { ts: new Date().toISOString(), ...entry };
   try {
-    fs.appendFileSync(FILE, JSON.stringify(row) + "\n", "utf8");
+    database().prepare(`
+      INSERT INTO decision_ledger(store_id, occurred_at, kind, gate, message, detail)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      ensureStore(row.shop), row.ts, row.kind, row.gate ?? null, row.message,
+      row.detail === undefined ? null : json(row.detail),
+    );
   } catch {
     // Never let logging break a shopper's conversation.
   }
@@ -89,14 +68,22 @@ export function record(entry: Omit<LedgerEntry, "ts">) {
 }
 
 export function readLedger(limit = 200): LedgerEntry[] {
-  try {
-    return fs
-      .readFileSync(FILE, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .slice(-limit)
-      .map((l) => JSON.parse(l) as LedgerEntry);
-  } catch {
-    return [];
-  }
+  const rows = database().prepare(`
+    SELECT s.site_key, l.occurred_at, l.kind, l.gate, l.message, l.detail
+    FROM decision_ledger l JOIN stores s ON s.id = l.store_id
+    ORDER BY l.id DESC LIMIT ?
+  `).all(Math.max(0, limit)) as Array<{
+    site_key: string; occurred_at: string; kind: LedgerEntry["kind"];
+    gate: LedgerEntry["gate"] | null; message: string; detail: string | null;
+  }>;
+  return rows.reverse().map((r) => ({
+    ts: r.occurred_at,
+    shop: r.site_key,
+    kind: r.kind,
+    ...(r.gate ? { gate: r.gate } : {}),
+    message: r.message,
+    ...(r.detail !== null ? { detail: parseJson(r.detail, null) } : {}),
+  }));
 }
+
+export { closeDatabase } from "./database.server";

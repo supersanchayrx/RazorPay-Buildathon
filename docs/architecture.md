@@ -21,6 +21,7 @@ each dashboard feature. Start with [README.md](../README.md) for setup and use
 11. [The return path into the cortex](#11-the-return-path-into-the-cortex)
 12. [Feature architecture diagrams](#12-feature-architecture-diagrams)
 13. [Where each rule is enforced](#13-where-each-rule-is-enforced)
+14. [Future deployment split](#14-future-deployment-split)
 
 ---
 
@@ -536,7 +537,10 @@ Three things the capture endpoint refuses to take from the browser, each of whic
 
 **The question is asked on the merchant's domain.** A shopper who was on monsoonmarket.example should not answer "why didn't you buy?" on a gateway domain they have never heard of — that reads like phishing and gets closed. So the merchant proxies two paths, exactly the `/.well-known/ucp` pattern and about as much code, and the token is unchanged by moving: it is signed with the site secret and verified by us, so relocating the URL relocates no trust. Both directions are forwarded, because forwarding only the GET would render the question perfectly and throw the answer away.
 
-Live baskets are kept in **their own file**, not `carts.jsonl`. `npm run seed` rewrites that one wholesale, so a real basket written there survives until the next seed and then vanishes — intermittent data loss, only ever in the direction that makes a demo look fine.
+Live baskets are normalized rows in `carts`, `cart_lines`, and `cart_events`.
+Synthetic baskets are kept separately as the `seed.carts` store-document row.
+`npm run seed` replaces only that labelled fixture document, so refreshing demo
+history cannot erase a captured live basket.
 
 ---
 
@@ -573,7 +577,7 @@ flowchart LR
     Account --> Login[Merchant signs in]
     Login --> Form[Configure your storefront]
     Form --> Validate[Validate origin, catalogue, and site key]
-    Validate --> Registry[Write site registry]
+    Validate --> Registry[Write store and merchant grant to SQLite]
     Validate --> Secret[Generate site signing secret]
     Registry --> Overview[Overview]
     Secret --> Overview
@@ -820,6 +824,47 @@ static feature list cannot.
 | A model is optional                                          | `reasoner.server.ts`, `pickReasoner()`                          | an outage that looks like a product failure                         |
 | A published page carries terms, never a discounted number    | `agentview.server.ts`                                           | a browsing model quoting a total nobody will honour                 |
 | The legibility layer computes nothing on the merchant's side | `demo-store/agentfront.go`                                      | a second place prices come from, free to disagree with the first    |
+| Public input and request frequency are bounded                | `http-security.server.ts`                                       | oversized/chunked bodies, callback floods, and model-cost amplification |
+| Restarts drain before storage closes                          | `graceful-shutdown.mjs`, `runtime-lifecycle.server.ts`          | cut-off responses, writes after close, and avoidable WAL recovery       |
+
+---
+
+## 14. Future deployment split
+
+Today one Docker application contains both the merchant dashboard and the
+runtime gateway. That is the first release target because configuration,
+SQLite ownership, upgrades, and failure recovery can be made dependable before
+introducing a network boundary between two Chapman services.
+
+The later design separates a hostable Chapman dashboard/control plane from a
+merchant-specific gateway/data plane. The dashboard manages configuration and
+deployment status; the gateway continues to terminate storefront, agent,
+identity, checkout, recovery, and webhook traffic beside the merchant's data.
+They exchange signed, versioned configuration bundles and support registration,
+rotation, revocation, and heartbeat. The dashboard does not receive raw shopper
+memory, orders, recovery conversations, or payment state by default.
+
+```mermaid
+flowchart LR
+    Merchant[Merchant] --> Dashboard[Hosted Chapman dashboard]
+    Dashboard -->|signed configuration| Gateway[Merchant-hosted Chapman gateway]
+    Gateway -->|health and deployment status| Dashboard
+    Store[Vercel or other storefront] --> Gateway
+    Agent[Shopping agent] --> Gateway
+    Gateway --> Data[(Merchant-owned data)]
+```
+
+The gateway can then be hosted independently on Railway, Render, Fly.io, or a
+similar durable container platform while the storefront stays wherever it
+already lives. The standalone Docker mode remains supported. Stateless
+serverless hosting is not promised until SQLite durability, background work,
+and shared rate limiting have explicit replacements.
+
+Catalogue crawling follows the same boundary. A future Firecrawl adapter may
+perform JavaScript rendering and page acquisition, but it will not become the
+catalogue authority. Extracted rows still pass through Chapman's deterministic
+normalizer, missing-field issue list, merchant review, and atomic catalogue
+publication path.
 
 ---
 

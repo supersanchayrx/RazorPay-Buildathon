@@ -350,3 +350,37 @@ then put `SITE_SECRET_<SITEKEY>=...` in your `.env`, or run `npm run init`.
 
 The default Docker path starts with no site at all. Its authenticated onboarding
 flow generates a real site secret when the merchant connects the first store.
+
+---
+
+## A public request returns 413 or 429
+
+`413 HTTP_BODY_TOO_LARGE` means the request exceeded the route-specific body
+ceiling. Reduce chat history, cart lines, webhook payload size, or other posted
+input; do not retry the same body unchanged.
+
+`429 HTTP_RATE_LIMITED` means that client exhausted the process-local bucket
+for chat, agent, identity/payment, recovery, voice, or webhook traffic. Honour
+the response's `Retry-After` header. If every user behind a reverse proxy appears
+to share one bucket, set `CHAPMAN_TRUST_PROXY=1` only when exactly one trusted
+proxy immediately fronts Chapman and replaces `X-Forwarded-For`. Never enable
+it merely to trust an address header sent directly by the public internet.
+
+Both responses include `X-Request-ID`; use it to find the matching structured
+log entry and stable error code.
+
+---
+
+## A restart logs `PROCESS_SHUTDOWN_TIMEOUT`
+
+Chapman could not finish an active response, tracked background job, or server
+connection before `CHAPMAN_SHUTDOWN_TIMEOUT_MS` elapsed. Look at the preceding
+`process.shutdown.*` records to see whether HTTP or background drain was the
+last completed stage. Increase the deadline only if the container platform's
+termination grace period is longer; the base Compose values are 20 seconds for
+Chapman and 30 seconds for Docker. Repeated timeouts usually indicate a hung
+provider request that needs its own tighter timeout.
+
+`PROCESS_SHUTDOWN_FORCED` means a second `SIGTERM`/`SIGINT` arrived during the
+drain. SQLite remains WAL-protected, but investigate the orchestrator or manual
+stop sequence rather than treating it as a clean restart.

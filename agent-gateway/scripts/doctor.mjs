@@ -90,6 +90,8 @@ export { isConfigured as razorpayReady } from "./app/lib/razorpay.server";
 export { missing as voiceMissing } from "./app/lib/voice.server";
 export { shopifyConfigured } from "./app/shopify.server";
 export { readMerchants } from "./app/lib/auth.server";
+export { allSites } from "./app/lib/sites.server";
+export { databaseHealth, databasePath } from "./app/lib/database.server";
 `;
 
 const out = path.join(process.cwd(), "node_modules", ".cache", "doctor.mjs");
@@ -189,7 +191,7 @@ heading("This machine");
   // The range in package.json excludes 22.0–22.11; .npmrc sets engine-strict,
   // so npm has already refused to install on a version outside it. Restating
   // the range beats re-implementing semver here.
-  const ok = major >= 20;
+  const ok = major >= 22;
   say(
     ok ? "PASS" : "FAIL",
     "Node",
@@ -224,13 +226,17 @@ say(
 );
 
 const report = lib.readConfig();
+let sites = report.sites;
 
 if (!report.source) {
-  fail(
-    "Site registry",
-    `no config found in ${process.cwd()}`,
-    "sign in and choose Configure storefront, or run npm run init — for Shopify-only installs, ignore this",
-  );
+  sites = lib.allSites();
+  if (sites.length) pass("Site registry", `${sites.length} storefront(s) in SQLite`);
+  else
+    fail(
+      "Site registry",
+      "no configured storefront in SQLite",
+      "sign in and choose Configure storefront, or run npm run init — for Shopify-only installs, ignore this",
+    );
 } else {
   const name = path.basename(report.source);
   if (name === "chapman.config.demo.json") {
@@ -250,7 +256,7 @@ if (report.errors.length > 0) {
 } else if (report.source) {
   pass(
     "Config validates",
-    `${report.sites.length} storefront${report.sites.length === 1 ? "" : "s"}`,
+    `${sites.length} storefront${sites.length === 1 ? "" : "s"}`,
   );
 }
 for (const w of report.warnings) warn("Config", w);
@@ -309,11 +315,25 @@ heading("Data directory");
     );
   }
 
-  const files = ["orders.jsonl", "decision-ledger.jsonl", "merchants.json"];
+  const files = ["chapman.sqlite", "backups"];
   const have = files.filter((f) => fs.existsSync(path.join(dir, f)));
   if (have.length === 0)
     skip("Contents", "empty — nothing has been written yet");
   else pass("Contents", have.join(", "));
+}
+
+try {
+  const health = lib.databaseHealth();
+  pass(
+    "SQLite",
+    `${lib.databasePath().replace(/\\/g, "/")} — migration ${health.migration.current}/${health.migration.expected}, WAL, foreign keys on`,
+  );
+} catch (e) {
+  fail(
+    "SQLite",
+    e.message,
+    "check the mounted volume permissions, then run npm run db:migrate",
+  );
 }
 
 {
@@ -332,7 +352,7 @@ heading("Data directory");
  * 4. Each storefront
  * ------------------------------------------------------------------ */
 
-for (const site of report.sites) {
+for (const site of sites) {
   heading(`Storefront: ${site.key}  ${c.dim(site.name)}`);
 
   pass("Origins", site.origins.join(", "));
@@ -566,7 +586,7 @@ else
 if (URL_BASE && !OFFLINE) {
   heading(`Running gateway at ${URL_BASE}`);
 
-  const first = report.sites[0];
+  const first = sites[0];
   const probes = [
     { label: "Widget script", url: `${URL_BASE}/embed.js`, want: (r) => r.ok },
     first && {

@@ -255,7 +255,7 @@ export async function chooseRemedy(opts: {
   // Whatever happens below, an existing grant is returned unchanged. This is
   // checked FIRST so that no gate below can produce a different answer on a
   // second pass — a shopper pushing back gets the same grant, not a better one.
-  const existing = grantFor(opts.shop, opts.cartId);
+  const existing = grantFor(opts.shop, opts.cartId, asOf);
   if (existing) {
     return {
       remedy:

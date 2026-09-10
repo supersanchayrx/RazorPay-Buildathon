@@ -30,8 +30,7 @@
  * Most of it is DERIVED, not typed. The merchant supplies what we genuinely
  * cannot compute — their voice, their floors — and nothing else.
  */
-import fs from "node:fs";
-import { dataPath } from "./paths.server";
+import { fixtureInputs, fixtureOrders } from "./fixture.server";
 import type { CatalogSource, ShopPolicies } from "./catalog.server";
 import { readLedger } from "./ledger.server";
 import { conversations } from "./conversations.server";
@@ -184,14 +183,11 @@ function readMerchantInputs(): {
   neverDiscount: string[];
   minSampleSize: number;
 } | null {
-  try {
-    const raw = JSON.parse(
-      fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"),
-    );
-    return raw.floors ?? null;
-  } catch {
-    return null;
-  }
+  const raw = fixtureInputs<{ floors?: {
+    minMarginPct: number; maxDiscountPct: number;
+    neverDiscount: string[]; minSampleSize: number;
+  } }>();
+  return raw?.floors ?? null;
 }
 
 function readOrderSummary(): {
@@ -201,11 +197,7 @@ function readOrderSummary(): {
   windowDays: number;
 } | null {
   try {
-    const rows = fs
-      .readFileSync(dataPath("orders.jsonl"), "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l))
+    const rows = fixtureOrders<any>()
       .filter((o: { status: string }) => o.status === "placed");
     if (!rows.length) return null;
     const first = Date.parse(rows[0].ts);

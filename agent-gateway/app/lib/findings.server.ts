@@ -42,9 +42,7 @@
  * is no safe way to let a model derive it from a CUSUM alarm.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { dataPath } from "./paths.server";
+import { database, databasePath, ensureStore, json, parseJson } from "./database.server";
 import { checkReply } from "./bounds.server";
 
 export type ServiceNotice = {
@@ -145,12 +143,6 @@ export type ShopFindings = {
   serviceNotices: ServiceNotice[];
 };
 
-/** A trailing newline, so the file ends the way every other one here does. */
-const NL = String.fromCharCode(10);
-
-const file = (shop: string) =>
-  dataPath(`findings-${shop.replace(/[^a-z0-9_]/gi, "_")}.json`);
-
 /**
  * How long a finding is allowed to speak for itself.
  *
@@ -167,11 +159,12 @@ export function readFindings(
   asOf = new Date(),
 ): ShopFindings | null {
   let f: ShopFindings;
-  try {
-    f = JSON.parse(fs.readFileSync(file(shop), "utf8")) as ShopFindings;
-  } catch {
-    return null;
-  }
+  const row = database().prepare(`
+    SELECT d.payload FROM store_documents d JOIN stores s ON s.id = d.store_id
+    WHERE s.site_key = ? AND d.kind = 'findings'
+  `).get(shop) as { payload: string } | undefined;
+  if (!row) return null;
+  f = parseJson<ShopFindings>(row.payload, null as never);
   return {
     ...f,
     serviceNotices: (f.serviceNotices ?? []).filter(
@@ -286,12 +279,12 @@ export function publishFindings(input: {
   };
 
   try {
-    fs.mkdirSync(path.dirname(file(input.shop)), { recursive: true });
-    fs.writeFileSync(
-      file(input.shop),
-      JSON.stringify(findings, null, 2) + "\n",
-      "utf8",
-    );
+    database().prepare(`
+      INSERT INTO store_documents(store_id, kind, payload, updated_at, updated_by)
+      VALUES (?, 'findings', ?, ?, 'analyst')
+      ON CONFLICT(store_id, kind) DO UPDATE SET payload = excluded.payload,
+        updated_at = excluded.updated_at, updated_by = excluded.updated_by
+    `).run(ensureStore(input.shop), json(findings), findings.ranAt);
   } catch (e) {
     return { ok: false, findings, error: (e as Error).message };
   }
@@ -300,7 +293,8 @@ export function publishFindings(input: {
 
 /** Test seam. */
 export function _file(shop: string): string {
-  return file(shop);
+  void shop;
+  return databasePath();
 }
 
 /**
@@ -348,7 +342,12 @@ export function updateFindings(
   };
 
   try {
-    fs.writeFileSync(file(shop), JSON.stringify(next, null, 2) + NL, "utf8");
+    database().prepare(`
+      INSERT INTO store_documents(store_id, kind, payload, updated_at, updated_by)
+      VALUES (?, 'findings', ?, ?, 'system')
+      ON CONFLICT(store_id, kind) DO UPDATE SET payload = excluded.payload,
+        updated_at = excluded.updated_at, updated_by = excluded.updated_by
+    `).run(ensureStore(shop), json(next), asOf.toISOString());
   } catch {
     return null;
   }

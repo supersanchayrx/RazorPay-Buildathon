@@ -3,6 +3,7 @@ import { authenticate } from "../shopify.server";
 import { runAssistant } from "../lib/assistant.server";
 import { featureOn } from "../lib/featureflags.server";
 import { shopifyCatalog } from "../lib/catalog.server";
+import { publicBodyFailure, readPublicJson } from "../lib/http-security.server";
 
 /**
  * Conversational endpoint for the storefront overlay.
@@ -37,14 +38,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   let message = "";
   let history: Array<{ role: "user" | "assistant"; content: string }> = [];
   try {
-    const body = (await request.json()) as {
+    const body = await readPublicJson<{
       message?: string;
       history?: Array<{ role: "user" | "assistant"; content: string }>;
-    };
+    }>(request, "chat");
     message = (body.message ?? "").trim().slice(0, 2000);
     history = Array.isArray(body.history) ? body.history : [];
-  } catch {
-    return json({ error: "expected a JSON body" }, 400);
+  } catch (error) {
+    const failure = publicBodyFailure(error);
+    return json({ error: failure.message, error_code: failure.code }, failure.status);
   }
   if (!message) return json({ error: "message is required" }, 400);
 

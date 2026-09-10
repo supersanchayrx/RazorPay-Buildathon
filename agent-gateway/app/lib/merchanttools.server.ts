@@ -35,8 +35,7 @@
  * could approve its own proposal would make the floors layer decorative.
  */
 
-import fs from "node:fs";
-import { dataPath } from "./paths.server";
+import { fixtureCarts, fixtureInputs, fixtureOrders } from "./fixture.server";
 import type { ToolSpec } from "./tools.server";
 import type { CatalogSource } from "./catalog.server";
 import {
@@ -86,24 +85,13 @@ let cached: { at: number; orders: HistoryOrder[]; carts: HistoryCart[]; inputs: 
 
 function history() {
   if (cached && Date.now() - cached.at < 60_000) return cached;
-  const read = <T,>(f: string): T[] => {
-    try {
-      return fs
-        .readFileSync(dataPath(f), "utf8")
-        .split("\n")
-        .filter(Boolean)
-        .map((l) => JSON.parse(l) as T);
-    } catch {
-      return [];
-    }
+  const inputs = fixtureInputs<MerchantInputs>();
+  cached = {
+    at: Date.now(),
+    orders: fixtureOrders<HistoryOrder>(),
+    carts: fixtureCarts<HistoryCart>(),
+    inputs,
   };
-  let inputs: MerchantInputs | null = null;
-  try {
-    inputs = JSON.parse(fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"));
-  } catch {
-    inputs = null;
-  }
-  cached = { at: Date.now(), orders: read<HistoryOrder>("orders.jsonl"), carts: read<HistoryCart>("carts.jsonl"), inputs };
   return cached;
 }
 

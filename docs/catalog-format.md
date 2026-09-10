@@ -4,7 +4,7 @@ One JSON document at a URL you control. It is the source of every number
 CHAPMAN says out loud — every price, every stock figure, every total — so the
 shape below is not a convenience, it is the contract.
 
-Point `catalogFeedUrl` at it in `chapman.config.json`, then run
+Set the storefront's catalogue URL during onboarding or Store configuration, then run
 `npm run doctor` to have it fetched and checked.
 
 A working example ships in the repository:
@@ -30,6 +30,16 @@ facts. A product without a structured price, three-letter currency, and stock
 availability is omitted. Private network destinations and cross-host redirects
 are refused. If the storefront does not expose usable structured data, use the
 CSV importer.
+
+### Future robust crawling
+
+An optional Firecrawl-backed importer is planned after the self-hosted gateway
+milestone. It would cover more JavaScript-rendered storefronts and broader page
+shapes while leaving catalogue decisions in Chapman: acquired pages are
+normalized into a draft, missing required commerce fields are shown to the
+merchant, and nothing is published until the merchant reviews and approves it.
+Firecrawl is not part of the current runtime and the existing crawler should
+not be described as universally reliable.
 
 ## Importing CSV
 

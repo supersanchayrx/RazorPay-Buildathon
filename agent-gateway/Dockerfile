@@ -28,6 +28,8 @@ RUN npm ci
 
 COPY . .
 
+ENV DATABASE_URL=file:/data/chapman.sqlite
+
 # Prisma CLIENT GENERATION, at build time. Not a migration — this writes
 # TypeScript into node_modules and touches no database.
 #
@@ -57,7 +59,7 @@ ENV NODE_ENV=production
 # CHAPMAN writes goes there, and nothing it writes should survive only in a
 # layer.
 ENV CHAPMAN_DATA_DIR=/data
-ENV CHAPMAN_CONFIG=/data/chapman.config.json
+ENV CHAPMAN_DATABASE_PATH=/data/chapman.sqlite
 
 EXPOSE 3000
 

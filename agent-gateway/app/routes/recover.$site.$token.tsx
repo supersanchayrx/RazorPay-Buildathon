@@ -32,6 +32,7 @@ import {
   isConfigured as modelConfigured,
   MODELS,
 } from "../lib/openrouter.server";
+import { publicBodyFailure, readPublicFormData } from "../lib/http-security.server";
 
 /**
  * The page a recovery message points at — the inbound half of the loop.
@@ -78,8 +79,8 @@ function readCart(shop: string, cartId: string): CartRow | null {
   return readRecoveryCart(shop, cartId);
 }
 
-function readInputs() {
-  return readRecoveryInputs();
+function readInputs(shop: string) {
+  return readRecoveryInputs(shop);
 }
 
 /** Resolve the token, or say why not. Shared by the loader and the action. */
@@ -212,7 +213,13 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
   if ("error" in o) return { error: o.error };
   const { site, cart, claim } = o;
 
-  const form = await request.formData();
+  let form: FormData;
+  try {
+    form = await readPublicFormData(request, "recovery");
+  } catch (error) {
+    const failure = publicBodyFailure(error);
+    return Response.json({ error: failure.message, error_code: failure.code }, { status: failure.status });
+  }
   const intent = String(form.get("intent") ?? "answer");
 
   /* ---------------- pay with the grant ---------------- */
@@ -340,7 +347,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       unitPrice: l.unitPrice,
     })),
     policy: settings.recovery,
-    inputs: readInputs(),
+    inputs: readInputs(site.key),
     catalog,
     policies: await catalog.policies().catch(() => ({})),
     serviceNotice:

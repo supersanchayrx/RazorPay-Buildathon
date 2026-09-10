@@ -114,9 +114,6 @@ if (
 // variables the server itself resolves. If these two ever disagree with
 // `findConfigFile()` and `loadRootEnv()`, init writes a configuration nothing
 // loads and reports success. `scripts/check-docker.mjs` asserts they agree.
-const CONFIG_FILE = process.env.CHAPMAN_CONFIG?.trim()
-  ? path.resolve(process.env.CHAPMAN_CONFIG.trim())
-  : path.join(process.cwd(), "chapman.config.json");
 const ENV_FILE = process.env.CHAPMAN_ENV_FILE?.trim()
   ? path.resolve(process.env.CHAPMAN_ENV_FILE.trim())
   : path.join(process.cwd(), "..", ".env");
@@ -224,11 +221,10 @@ ${c.b("CHAPMAN setup")}
 
   This asks about your storefront, generates the secrets, and writes:
 
-    ${c.cy(rel(CONFIG_FILE))}   your site registry
-    ${c.cy(rel(ENV_FILE))}                the generated secrets, appended
-    ${c.cy(rel(path.join(DATA_DIR, "merchants.json")))}     your console account
+    ${c.cy(rel(process.env.CHAPMAN_DATABASE_PATH || path.join(DATA_DIR, "chapman.sqlite")))}   storefront and console account
+    ${c.cy(rel(ENV_FILE))}   generated secrets, appended
 
-  Nothing already in those files is overwritten. Press enter to take a
+  Nothing already stored is overwritten. Press enter to take a
   default. Ctrl-C is safe at any point — nothing is written until the end.
 `);
 
@@ -241,43 +237,9 @@ if (!interactive && !YES) {
 
 /* ---- an existing config decides what kind of run this is ------------- */
 
-let carried = [];
-let backupPath = null;
-
-if (fs.existsSync(CONFIG_FILE)) {
-  const { stripJsonComments } = await load(
-    "app/lib/config.server.ts",
-    "init-config.mjs",
-  );
-  let existing;
-  try {
-    existing = JSON.parse(
-      stripJsonComments(fs.readFileSync(CONFIG_FILE, "utf8")),
-    );
-  } catch (e) {
-    die(
-      `${rel(CONFIG_FILE)} exists but is not valid JSON — ${e.message}\n` +
-        `         Fix it or move it aside, then run this again.`,
-    );
-  }
-  const have = Array.isArray(existing?.sites) ? existing.sites : [];
-  console.log(
-    `  ${c.y("chapman.config.json already exists")} with ${have.length} storefront${have.length === 1 ? "" : "s"}: ` +
-      `${have.map((s) => c.cy(String(s?.key))).join(", ") || c.dim("none")}\n`,
-  );
-
-  const add =
-    flag("add") || (await askYesNo("Add another storefront to it?", true));
-  if (!add) {
-    console.log(
-      `  Nothing written. Edit ${c.cy("chapman.config.json")} by hand, or run ${c.cy("npm run doctor")}.\n`,
-    );
-    rl?.close();
-    process.exit(0);
-  }
-  carried = have;
-  backupPath = `${CONFIG_FILE}.bak`;
-}
+const SITE_DB = await load("app/lib/sites.server.ts", "init-sites.mjs");
+const DATABASE = await load("app/lib/database.server.ts", "init-database.mjs");
+const carried = SITE_DB.allSites();
 
 /* ---- the shop -------------------------------------------------------- */
 
@@ -513,11 +475,7 @@ if (newErrors.length > 0) {
 
 /* ---- config ---------------------------------------------------------- */
 
-if (backupPath) fs.copyFileSync(CONFIG_FILE, backupPath);
-// The directory is ordinarily the one we are standing in. It is not when
-// CHAPMAN_CONFIG points into a volume that has only just been created.
-fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
-fs.writeFileSync(CONFIG_FILE, text, "utf8");
+SITE_DB.saveSite(site);
 
 /* ---- .env ------------------------------------------------------------ */
 
@@ -564,14 +522,10 @@ try {
  * ------------------------------------------------------------------ */
 
 console.log(`\n${c.g("Done.")}\n`);
-console.log(`  ${c.cy(rel(CONFIG_FILE))}`);
+console.log(`  ${c.cy(DATABASE.databasePath())}`);
 console.log(
   `     ${carried.length ? `${carried.length} existing storefront${carried.length === 1 ? "" : "s"} kept, ` : ""}${c.b(key)} added`,
 );
-if (backupPath)
-  console.log(
-    `     ${c.dim(`your previous file, comments and all, is at ${rel(backupPath)}`)}`,
-  );
 console.log(`  ${c.cy(rel(ENV_FILE))}`);
 if (env.added.length)
   console.log(`     added ${env.added.map((k) => c.b(k)).join(", ")}`);
@@ -579,7 +533,7 @@ if (env.kept.length)
   console.log(
     `     ${c.dim(`already set, left alone: ${env.kept.join(", ")}`)}`,
   );
-console.log(`  ${c.cy(rel(path.join(DATA_DIR, "merchants.json")))}`);
+console.log(`  ${c.cy(DATABASE.databasePath())}`);
 console.log(`     ${accountLine}`);
 if (accountPassword) {
   console.log(`     password: ${c.b(accountPassword)}`);

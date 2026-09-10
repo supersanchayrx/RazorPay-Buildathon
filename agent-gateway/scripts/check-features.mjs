@@ -61,6 +61,7 @@ const P = await load(
   "app/lib/sitepayments.server.ts",
   "sitepayments-check.mjs",
 );
+const S = await load("app/lib/sites.server.ts", "sites-features-check.mjs");
 const VT = await load(
   "app/lib/voice-test.server.ts",
   "voice-test-call-check.mjs",
@@ -141,31 +142,21 @@ console.log("\n-- feature pages explain their own provider setup ----------\n");
 }
 
 {
-  const registry = path.join(SANDBOX, "toggle-chapman.config.json");
   const paymentSecret = "must-not-enter-the-registry";
   const values = {
     SITE_SECRET_TOGGLE: "site-signing-secret",
     RAZORPAY_KEY_ID: "rzp_test_toggle",
     RAZORPAY_KEY_SECRET: paymentSecret,
   };
-  fs.writeFileSync(
-    registry,
-    JSON.stringify(
-      {
-        sites: [
-          {
-            key: "pk_toggle",
-            name: "Toggle Store",
-            origins: ["https://shop.example"],
-            catalogFeedUrl: "https://shop.example/catalog.json",
-            secretEnv: "SITE_SECRET_TOGGLE",
-          },
-        ],
-      },
-      null,
-      2,
-    ),
-  );
+  S.saveSite({
+    key: "pk_toggle",
+    name: "Toggle Store",
+    origins: ["https://shop.example"],
+    catalogFeedUrl: "https://shop.example/catalog.json",
+    greeting: "Hello",
+    accent: "#123456",
+    secretEnv: "SITE_SECRET_TOGGLE",
+  });
 
   process.env.RAZORPAY_KEY_ID = values.RAZORPAY_KEY_ID;
   process.env.RAZORPAY_KEY_SECRET = values.RAZORPAY_KEY_SECRET;
@@ -184,24 +175,22 @@ console.log("\n-- feature pages explain their own provider setup ----------\n");
   );
 
   const linked = P.linkAgentRazorpay("pk_toggle", {
-    configFile: registry,
     resolveSecret: (name) => values[name] ?? null,
   });
-  const written = fs.readFileSync(registry, "utf8");
+  const stored = S.findSite("pk_toggle");
   check(
-    "Feature controls can link the registered storefront atomically",
-    linked.changed && Boolean(linked.backup) && fs.existsSync(linked.backup),
+    "Feature controls can link the registered storefront transactionally",
+    linked.changed && linked.file.endsWith("chapman.sqlite") && linked.backup === null,
   );
   check(
-    "the UI linker stores variable names and never their values",
-    written.includes('"keyIdEnv": "RAZORPAY_KEY_ID"') &&
-      written.includes('"keySecretEnv": "RAZORPAY_KEY_SECRET"') &&
-      !written.includes(paymentSecret),
+    "the UI linker stores variable names rather than credential values",
+    stored?.razorpay?.keyIdEnv === "RAZORPAY_KEY_ID" &&
+      stored?.razorpay?.keySecretEnv === "RAZORPAY_KEY_SECRET" &&
+      JSON.stringify(stored?.razorpay).includes(paymentSecret) === false,
   );
   check(
     "linking from the toggle is idempotent",
     !P.linkAgentRazorpay("pk_toggle", {
-      configFile: registry,
       resolveSecret: (name) => values[name] ?? null,
     }).changed,
   );
@@ -362,20 +351,20 @@ console.log("\n-- a shop that has never touched this ----------------------\n");
     "a switch that arrived already off would change an existing install the moment it updated",
   );
   check(
-    "and there is no file until something is changed",
-    !fs.existsSync(F._file(SITE)),
+    "and there are no persisted flag or history rows",
+    F.readFlagsFile(SITE).history.length === 0,
   );
 }
 
 {
-  // A file written by an older build, missing keys added since.
-  const stale = path.join(SANDBOX, "features-pk_stale.json");
-  fs.writeFileSync(stale, JSON.stringify({ flags: { orders: false } }));
+  // SQLite stores only explicit overrides. Features added by later builds are
+  // therefore on unless the merchant deliberately changes them.
+  F.writeFlags("pk_stale", { orders: false }, "migration-check");
   const flags = F.readFlags("pk_stale");
   check(
-    "a key absent from an older file reads as ON",
+    "a key absent from an older database row reads as ON",
     flags.memory === true && flags.payments === true,
-    "the alternative switches off every feature we ship after the file was written",
+    "the alternative switches off every feature we ship after the row was written",
   );
   check("and an explicit false is still honoured", flags.orders === false);
 }
@@ -771,6 +760,12 @@ console.log("\n-- what the console promises -------------------------------\n");
 
   const assistantPage = src("app/routes/dashboard.chatbot.tsx");
   check(
+    "the Assistant install tag prefers the configured public gateway origin",
+    assistantPage.includes('import { selfOrigin } from "../lib/origin.server"') &&
+      assistantPage.includes("const base = selfOrigin(request)"),
+    "opening the dashboard on localhost must not produce a localhost tag for a public store",
+  );
+  check(
     "the Assistant page tests the same pipeline as the storefront",
     assistantPage.includes(
       'label={testing ? "Generating response…" : "Test chat assistant"}',
@@ -830,6 +825,10 @@ console.log("\n-- what the console promises -------------------------------\n");
   );
 }
 
+F._closeDatabase?.();
+P._closeDatabase?.();
+S._closeDatabase?.();
+T._closeDatabase?.();
 fs.rmSync(SANDBOX, { recursive: true, force: true });
 console.log(
   failed === 0 ? "\nall checks passed" : `\n${failed} check(s) failed`,

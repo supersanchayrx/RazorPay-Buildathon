@@ -1,4 +1,8 @@
 import { Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router";
+import { requestLoggingMiddleware } from "./lib/logging.server";
+import { publicRequestGuardMiddleware } from "./lib/http-security.server";
+
+export const middleware = [requestLoggingMiddleware, publicRequestGuardMiddleware];
 
 export default function App() {
   return (

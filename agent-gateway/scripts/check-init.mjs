@@ -438,20 +438,18 @@ console.log("\n-- init writes where the app reads --\n");
       /process\.env\.CHAPMAN_ENV_FILE/.test(envSrc),
   );
   check(
-    "init writes the config where findConfigFile() looks",
-    /path\.join\(process\.cwd\(\),\s*"chapman\.config\.json"\)/.test(initSrc),
+    "init writes the storefront through the SQLite repository",
+    initSrc.includes("SITE_DB.saveSite(site)"),
   );
   check(
-    "init and findConfigFile honour the same CHAPMAN_CONFIG override",
-    /CONFIG_FILE\s*=\s*process\.env\.CHAPMAN_CONFIG/.test(initSrc) &&
-      /process\.env\.CHAPMAN_CONFIG/.test(fs.readFileSync("app/lib/config.server.ts", "utf8")),
+    "init does not write a legacy JSON registry",
+    !initSrc.includes("writeFileSync(CONFIG_FILE"),
   );
   check("init refuses to run outside the gateway directory", initSrc.includes('app", "lib", "config.server.ts"'));
   check("init validates with production: true before writing", /production:\s*true/.test(initSrc));
   check(
-    "init backs the old config up before overwriting it",
-    initSrc.includes("copyFileSync(CONFIG_FILE, backupPath)") &&
-      initSrc.indexOf("copyFileSync(CONFIG_FILE, backupPath)") < initSrc.indexOf("writeFileSync(CONFIG_FILE"),
+    "init reports the authoritative database path",
+    initSrc.includes("DATABASE.databasePath()"),
   );
   check("init appends to .env rather than writing it", initSrc.includes("appendFileSync(ENV_FILE") && !initSrc.includes("writeFileSync(ENV_FILE"));
 }

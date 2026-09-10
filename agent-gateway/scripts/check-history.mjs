@@ -14,15 +14,22 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { DATA_DIR, dataPath } from "./data-dir.mjs";
+import { DatabaseSync } from "node:sqlite";
+import { dataPath } from "./data-dir.mjs";
 
-const D = DATA_DIR;
-const read = (f) =>
-  fs.readFileSync(path.join(D, f), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+const databaseFile = path.resolve(process.env.CHAPMAN_DATABASE_PATH || dataPath("chapman.sqlite"));
+const db = new DatabaseSync(databaseFile, { readOnly: true });
+const readDocument = (kind) => {
+  const row = db.prepare(`
+    SELECT payload FROM store_documents WHERE kind = ? ORDER BY updated_at DESC LIMIT 1
+  `).get(kind);
+  if (!row) throw new Error(`Missing ${kind} in ${databaseFile}; run npm run seed first.`);
+  return JSON.parse(row.payload);
+};
 
-const orders = read("orders.jsonl");
-const carts = read("carts.jsonl");
-const inputs = JSON.parse(fs.readFileSync(path.join(D, "merchant-inputs.json"), "utf8"));
+const orders = readDocument("seed.orders");
+const carts = readDocument("seed.carts");
+const inputs = readDocument("merchant.inputs");
 
 let failed = 0;
 function check(label, ok, detail) {
@@ -208,4 +215,5 @@ check(
 );
 
 console.log(failed === 0 ? "\nall checks passed" : `\n${failed} check(s) failed`);
+db.close();
 process.exit(failed === 0 ? 0 : 1);

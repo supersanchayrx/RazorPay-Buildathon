@@ -31,10 +31,14 @@ set -e
 
 DATA_DIR="${CHAPMAN_DATA_DIR:-/data}"
 ENV_FILE="${CHAPMAN_ENV_FILE:-$DATA_DIR/.env}"
+DB_FILE="${CHAPMAN_DATABASE_PATH:-$DATA_DIR/chapman.sqlite}"
 export CHAPMAN_DATA_DIR="$DATA_DIR"
 export CHAPMAN_ENV_FILE="$ENV_FILE"
+export CHAPMAN_DATABASE_PATH="$DB_FILE"
+export DATABASE_URL="${DATABASE_URL:-file:$DB_FILE}"
 
 mkdir -p "$DATA_DIR"
+npm run --silent db:migrate
 
 # ------------------------------------------------------------------ #
 # 0. Payments, made a two-line job.
@@ -103,8 +107,8 @@ esac
 # The container path and the merchant path being the same path is worth more
 # than a bespoke setup script: one cannot rot while the other works. The flags
 # below are just the interview's answers, supplied by compose instead of typed.
-if [ "$IS_SERVER" = "1" ] && [ "$AUTO_INIT" = "1" ] && [ -n "$CHAPMAN_CONFIG" ] && [ ! -f "$CHAPMAN_CONFIG" ]; then
-  echo "chapman: no site registry at $CHAPMAN_CONFIG — running the setup interview with defaults."
+if [ "$IS_SERVER" = "1" ] && [ "$AUTO_INIT" = "1" ] && ! node scripts/db-has-store.mjs; then
+  echo "chapman: no configured store in $CHAPMAN_DATABASE_PATH — running the setup interview with defaults."
 
   # Built up one argument at a time rather than in one expansion. A greeting has
   # spaces in it, and `${VAR:+--greeting "$VAR"}` splits on them: the shop ends
@@ -144,8 +148,8 @@ if [ "$IS_SERVER" = "1" ] && [ "$AUTO_INIT" = "1" ] && [ -n "$CHAPMAN_CONFIG" ] 
   set -- npm start
 fi
 
-if [ "$IS_SERVER" = "1" ] && [ "$AUTO_INIT" = "0" ] && [ -n "$CHAPMAN_CONFIG" ] && [ ! -f "$CHAPMAN_CONFIG" ]; then
-  echo "chapman: no site registry at $CHAPMAN_CONFIG — starting merchant onboarding."
+if [ "$IS_SERVER" = "1" ] && [ "$AUTO_INIT" = "0" ] && ! node scripts/db-has-store.mjs; then
+  echo "chapman: no configured store in $CHAPMAN_DATABASE_PATH — starting merchant onboarding."
 fi
 
 # ------------------------------------------------------------------ #
@@ -211,7 +215,7 @@ fi
 # Real merchants must never see invented orders. Seed data is therefore
 # opt-in, even after a storefront has been registered, and it is never written
 # over an existing order history.
-if [ "$IS_SERVER" = "1" ] && [ "$SEED_DEMO" = "1" ] && [ -f "${CHAPMAN_CONFIG:-}" ] && [ ! -f "$DATA_DIR/orders.jsonl" ]; then
+if [ "$IS_SERVER" = "1" ] && [ "$SEED_DEMO" = "1" ] && node scripts/db-has-store.mjs && ! node scripts/db-has-store.mjs seed.orders; then
   echo "chapman: seeding opt-in synthetic commercial history."
   npm run --silent seed
 fi

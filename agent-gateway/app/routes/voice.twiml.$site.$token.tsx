@@ -7,6 +7,7 @@ import { record } from "../lib/ledger.server";
 import { readSettings } from "../lib/settings.server";
 import { openConversation, openSession, speak, THE_ASK, warmFallback } from "../lib/voicetalk.server";
 import { listen, reply, respondWithin } from "../lib/twiml.server";
+import { readPublicFormData } from "../lib/http-security.server";
 
 /**
  * What the shop says when the shopper picks up.
@@ -76,7 +77,12 @@ async function inner({ request, params }: LoaderFunctionArgs | ActionFunctionArg
 
   let formParams: Record<string, string> = {};
   if (request.method === "POST") {
-    const form = await request.formData();
+    let form: FormData;
+    try {
+      form = await readPublicFormData(request, "voice");
+    } catch {
+      return xml("<Response><Say>Sorry, this request was too large.</Say><Hangup/></Response>", 413);
+    }
     for (const [k, v] of form.entries()) formParams[k] = String(v);
   }
 

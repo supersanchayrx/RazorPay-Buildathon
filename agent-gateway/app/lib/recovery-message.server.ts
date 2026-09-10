@@ -8,14 +8,12 @@
  * basket and customer.
  */
 import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
+import { database, databasePath, ensureStore, json, parseJson } from "./database.server";
 import { checkReply } from "./bounds.server";
 import { secret } from "./env.server";
 import { featureOn } from "./featureflags.server";
 import { record } from "./ledger.server";
 import type { Draft } from "./outreach.server";
-import { dataPath } from "./paths.server";
 import type { RecoveryGrant } from "./grants.server";
 import {
   quietNow,
@@ -72,7 +70,6 @@ type Dependencies = {
   quiet: typeof quietNow;
 };
 
-const FILE = dataPath("recovery-message-log.jsonl");
 export const TEST_MESSAGE_COOLDOWN_MS = 30_000;
 export const TEST_MESSAGE_TEXT =
   "This is a Chapman SMS integration test. Twilio messaging is working. No customer or discount message was sent.";
@@ -150,21 +147,23 @@ async function detectAccountType(
 }
 
 function readRows(): HandoffRow[] {
-  try {
-    return fs
-      .readFileSync(FILE, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as HandoffRow);
-  } catch {
-    return [];
-  }
+  return (database().prepare(`
+    SELECT payload FROM outreach_attempts
+    WHERE channel = 'sms_handoff' ORDER BY id
+  `).all() as Array<{ payload: string }>).map((r) =>
+    parseJson<HandoffRow>(r.payload, null as never));
 }
 
 function appendRow(row: HandoffRow): boolean {
   try {
-    fs.mkdirSync(path.dirname(FILE), { recursive: true });
-    fs.appendFileSync(FILE, `${JSON.stringify(row)}\n`, "utf8");
+    database().prepare(`
+      INSERT INTO outreach_attempts(
+        attempt_key, store_id, draft_id, channel, status, provider_ref,
+        attempted_at, payload
+      ) VALUES (?, ?, NULL, 'sms_handoff', ?, ?, ?, ?)
+    `).run(
+      row.id, ensureStore(row.shop), row.status, row.ref ?? null, row.ts, json(row),
+    );
     return true;
   } catch {
     return false;
@@ -728,5 +727,5 @@ export async function sendDiscountHandoff(
 
 /** Test seam. */
 export function _messageFile(): string {
-  return FILE;
+  return databasePath();
 }

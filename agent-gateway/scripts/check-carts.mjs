@@ -37,7 +37,15 @@ async function load(entry, name) {
   return import(pathToFileURL(out).href + "?t=" + Date.now());
 }
 
+const SANDBOX = path.join(process.cwd(), "node_modules", ".cache", "carts-sandbox");
+fs.rmSync(SANDBOX, { recursive: true, force: true });
+fs.mkdirSync(SANDBOX, { recursive: true });
+process.env.CHAPMAN_DATA_DIR = SANDBOX;
+process.env.CHAPMAN_DATABASE_PATH = path.join(SANDBOX, "chapman.sqlite");
+
+const DBS = await load("app/lib/database.server.ts", "carts-db-check.mjs");
 const CRT = await load("app/lib/carts.server.ts", "crt-check.mjs");
+const ORD = await load("app/lib/orders.server.ts", "orders-cart-check.mjs");
 
 let failed = 0;
 const check = (label, ok, detail) => {
@@ -47,6 +55,19 @@ const check = (label, ok, detail) => {
 
 const SHOP = "pk_cartcheck_dev";
 const OTHER = "pk_cartcheck_other";
+
+DBS.writeStoreDocument(SHOP, "seed.orders", [{
+  id: "ord_fixture_contact",
+  shop: SHOP,
+  synthetic: true,
+  customer: { id: "cus_seeded_test", phone: "+919810000001", email: "seeded@example.invalid" },
+}], "check");
+check(
+  "only a customer present in the synthetic merchant seed resolves to a contact",
+  ORD.seededContact(SHOP, "cus_seeded_test").phone === "+919810000001" &&
+    ORD.seededContact(SHOP, "cus_not_seeded").phone === null,
+  "an arbitrary pseudonymous login has no channel and cannot be called",
+);
 
 /** A catalogue with two products and prices only IT knows. */
 const catalog = {
@@ -80,24 +101,6 @@ const catalog = {
     };
   },
 };
-
-function cleanup() {
-  const f = CRT._file();
-  try {
-    const kept = fs
-      .readFileSync(f, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .filter((l) => {
-        const r = JSON.parse(l);
-        return r.shop !== SHOP && r.shop !== OTHER;
-      });
-    fs.writeFileSync(f, kept.length ? kept.join("\n") + "\n" : "", "utf8");
-  } catch {
-    /* nothing written yet */
-  }
-}
-cleanup();
 
 /* ------------------------------------------------------------------ *
  * The client sends WHAT. The server decides everything else.
@@ -248,7 +251,7 @@ check(
 );
 check(
   "...and the record that it WAS abandoned survives",
-  fs.readFileSync(CRT._file(), "utf8").split("\n").filter((l) => l.includes('"ref') || l.includes(CRT.cartId(SHOP, "ref-known"))).length > 1,
+  CRT.cartHistory(SHOP, CRT.cartId(SHOP, "ref-known")).length > 1,
   "appended, not edited — a row that looks like it was never abandoned loses the fact worth keeping",
 );
 check("marking an unknown basket changes nothing", CRT.markRecovered(SHOP, "never-seen") === false);
@@ -276,11 +279,10 @@ check(
 
 /* ------------------------------------------------------------------ */
 
-cleanup();
 check(
-  "the suite cleans up after itself",
-  CRT.liveCarts(SHOP).length === 0 && CRT.liveCarts(OTHER).length === 0,
-  "no test baskets left in the store the real shop shares",
+  "the suite is isolated from the real gateway database",
+  DBS.databasePath() === path.join(SANDBOX, "chapman.sqlite"),
+  "test baskets exist only in a scratch database",
 );
 
 console.log(

@@ -56,8 +56,7 @@
  * Only the aggregate crosses back — see `recoverySummary`.
  */
 
-import fs from "node:fs";
-import { dataPath } from "./paths.server";
+import { fixtureCarts, fixtureInputs, fixtureOrders } from "./fixture.server";
 import { checkReply } from "./bounds.server";
 import { paymentFailures, type DetectorInput, type HistoryCart, type HistoryOrder, type MerchantInputs } from "./detectors.server";
 import { activeOffers, type ActiveOffer } from "./approvals.server";
@@ -124,6 +123,8 @@ export const SUPPRESSION_LABEL: Record<SuppressionReason, string> = {
 export type Suppressed = {
   cartId: string;
   customerId: string;
+  /** Merchant-visible display name when the merchant fixture supplied one. */
+  customerName?: string | null;
   reason: SuppressionReason;
   /** The specific numbers, so "skipped" becomes something a merchant can argue with. */
   detail: string;
@@ -141,6 +142,8 @@ export type Treatment =
 export type RecoveryTarget = {
   cartId: string;
   customerId: string;
+  /** Merchant-visible display name; never used as identity or contact. */
+  customerName?: string | null;
   to: { phone: string | null; email: string | null };
   cartAt: string;
   ageHours: number;
@@ -191,30 +194,17 @@ export type RecoveryRun = {
  * ------------------------------------------------------------------ */
 
 function readJsonl<T>(file: string): T[] {
-  try {
-    return fs
-      .readFileSync(dataPath(file), "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as T);
-  } catch {
-    return [];
-  }
+  return file.startsWith("order") ? fixtureOrders<T>() : fixtureCarts<T>();
 }
 
-function readInputs(): MerchantInputs | null {
-  try {
-    return JSON.parse(
-      fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"),
-    ) as MerchantInputs;
-  } catch {
-    return null;
-  }
+function readInputs(shop?: string): MerchantInputs | null {
+  return fixtureInputs<MerchantInputs>(shop);
 }
 
 /** Carts carry contact details; the history types used by the detectors do not. */
 type CartWithContact = HistoryCart & {
-  customer?: { id: string; phone?: string | null; email?: string | null };
+  shop: string;
+  customer?: { id: string; name?: string | null; phone?: string | null; email?: string | null };
   subtotal?: number;
 };
 
@@ -459,9 +449,10 @@ export function runRecovery(opts: {
   const carts = [
     ...readJsonl<CartWithContact>("carts.jsonl"),
     ...(liveCarts(opts.shop) as unknown as CartWithContact[]),
-  ].filter((c) => c.lines?.length);
-  const orders = readJsonl<HistoryOrder>("orders.jsonl").filter((o) => o.lines?.length);
-  const inputs = readInputs();
+  ].filter((c) => c.shop === opts.shop && c.lines?.length);
+  const orders = readJsonl<HistoryOrder & { shop: string }>("orders.jsonl")
+    .filter((o) => o.shop === opts.shop && o.lines?.length);
+  const inputs = readInputs(opts.shop);
   const channel: ChannelId = opts.channel ?? (settings.outreach.channels[0] as ChannelId) ?? "draft";
 
   const base: RecoveryRun = {
@@ -530,6 +521,7 @@ export function runRecovery(opts: {
     suppressed.push({
       cartId: c.id,
       customerId: c.customer?.id ?? "unknown",
+      customerName: c.customer?.name ?? null,
       reason,
       detail,
       marginAtStake: marginOf(c),
@@ -721,6 +713,7 @@ export function runRecovery(opts: {
     const draft: Omit<RecoveryTarget, "text" | "facts"> = {
       cartId: c.id,
       customerId: c.customer?.id ?? "unknown",
+      customerName: c.customer?.name ?? null,
       to: { phone: c.customer?.phone ?? null, email: c.customer?.email ?? null },
       cartAt: c.ts,
       ageHours,
@@ -838,7 +831,7 @@ export function runRecovery(opts: {
 /** A target, in the form the outreach layer accepts. Nothing else may build one. */
 export function toDraft(shop: string, t: RecoveryTarget): Draft {
   return {
-    id: `rcv_${t.cartId}`,
+    id: `rcv_${shop}_${t.cartId}`,
     shop,
     cartId: t.cartId,
     customerId: t.customerId,

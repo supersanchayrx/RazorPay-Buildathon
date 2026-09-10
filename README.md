@@ -85,7 +85,7 @@ See [docs/architecture.md](docs/architecture.md) for per-feature diagrams.
 Requirements:
 
 - Docker Desktop with Docker Compose;
-- Node.js `>=20.19 <22` or `>=22.12` to generate the clean demo store;
+- Node.js `>=22.12` to generate the clean demo store;
 - ports `3000` and `4000` available.
 
 From the repository root:
@@ -163,8 +163,8 @@ proxy. `DEMO_STORE_CHAPMAN` is only for the bundled demo.
 
 ## Configure provider keys
 
-Provider secrets go in the root `.env`, never in storefront code or
-`chapman.config.json`. Apply changes with:
+Provider secrets go in the root `.env`, never in storefront code or SQLite
+configuration rows. Apply changes with:
 
 ```bash
 docker compose up -d gateway
@@ -268,6 +268,11 @@ See [INSTALL.md](INSTALL.md) for the full native and production setup.
 
 ## Project status
 
+The detailed, current implementation and roadmap are tracked in the
+[feature checklist](docs/feature-checklist.md). The active milestone is a
+dependable Docker self-hosted gateway; the hosted control-plane split is
+deliberately deferred.
+
 Implemented:
 
 - clean first-store onboarding;
@@ -275,21 +280,61 @@ Implemented:
 - catalogue grounding, approvals, and server-side claim checks;
 - Razorpay checkout and settlement verification;
 - recovery, voice, shopper memory, analyst, cortex, ledger, and test bench;
-- Docker setup, persistent data, doctor, and automated tests.
+- Docker setup, persistent data, doctor, and automated tests;
+- authoritative SQLite state, versioned startup migrations, explicit health
+  routes, and verified backup/restore commands;
+- structured request logging plus streaming-safe body limits and per-client
+  rate limits across the public chat, agent, identity, payment, recovery,
+  voice, and webhook routes;
+- bounded graceful shutdown that drains active HTTP/background work before
+  disconnecting Prisma and checkpointing/closing SQLite.
 
 Current limitations:
 
-- application state is file-backed;
-- the public agent surface does not have general rate limiting;
-- WhatsApp, SMS, and email delivery are not implemented;
+- in-flight inventory reservations are still process-local;
+- public rate limits are process-local and therefore assume the current
+  single-gateway deployment; a multi-replica deployment will need a shared
+  limiter;
+- general WhatsApp and email outreach are not implemented; production Indian
+  SMS still requires DLT registration, while the controlled Twilio SMS handoff
+  already works;
 - shopper-memory search is lexical rather than semantic;
-- production deployment still requires HTTPS, backups, secret management, and
+- production deployment still requires HTTPS, off-host backups, secret management, and
   normal server hardening.
+
+## Future direction
+
+The current Docker build intentionally ships the merchant dashboard and the
+runtime gateway as one self-hosted application. Once that build is dependable,
+the planned next deployment model separates them:
+
+- a Chapman dashboard/control plane that can be hosted independently;
+- a merchant-specific gateway/server that can run on the merchant's own
+  container host and domain, independently of both the dashboard and the
+  storefront;
+- signed, versioned configuration between the two, with revocation and key
+  rotation, while shopper data remains in the merchant gateway by default;
+- continued support for the fully standalone Docker build, so the hosted
+  dashboard never becomes mandatory.
+
+This lets a Vercel-hosted storefront remain a normal independent website while
+its Chapman gateway runs on a durable container platform such as Railway,
+Render, or Fly.io. Serverless gateway deployment will be considered only after
+its database and background-work requirements have a production-safe design.
+
+Catalogue ingestion will also grow beyond the current CSV importer and bounded
+Schema.org crawler. A future optional [Firecrawl](https://github.com/firecrawl/firecrawl)
+integration is planned for JavaScript-rendered and harder-to-parse storefronts.
+Firecrawl would acquire pages; Chapman's validator would still normalize the
+data, flag missing price/currency/availability fields, require merchant review,
+and publish only an explicitly approved catalogue draft. This work is postponed
+until the core gateway and real-store integration tests are stable.
 
 ## Documentation
 
 | Document                                               | Purpose                                     |
 | ------------------------------------------------------ | ------------------------------------------- |
+| [docs/feature-checklist.md](docs/feature-checklist.md) | Current state, decisions, and milestones    |
 | [INSTALL.md](INSTALL.md)                               | Docker, native, and production installation |
 | [docs/configuration.md](docs/configuration.md)         | Provider keys and integration tests         |
 | [docs/agentic-install.md](docs/agentic-install.md)     | Full coding-agent setup prompt              |
@@ -297,6 +342,7 @@ Current limitations:
 | [docs/catalog-format.md](docs/catalog-format.md)       | Catalogue JSON format                       |
 | [docs/fresh-store-setup.md](docs/fresh-store-setup.md) | Empty-volume setup for every feature        |
 | [docs/demo-plan.md](docs/demo-plan.md)                 | Demo runbook                                |
+| [docs/demo-data.md](docs/demo-data.md)                 | Repeatable Monsoon and Fieldnote demo data  |
 | [docs/troubleshooting.md](docs/troubleshooting.md)     | Common failures                             |
 
 ## What broke @2am

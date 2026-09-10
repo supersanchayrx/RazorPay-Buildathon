@@ -24,6 +24,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { dataPath } from "./paths.server";
+import { database, ensureStore, transaction } from "./database.server";
 
 export type Merchant = {
   id: string;
@@ -35,8 +36,6 @@ export type Merchant = {
   sites: string[];
   createdAt: string;
 };
-
-const FILE = dataPath("merchants.json");
 
 /**
  * The secret that signs console sessions.
@@ -109,16 +108,26 @@ export function verifyPassword(plain: string, stored: string): boolean {
  * ------------------------------------------------------------------ */
 
 export function readMerchants(): Merchant[] {
-  try {
-    return JSON.parse(fs.readFileSync(FILE, "utf8")) as Merchant[];
-  } catch {
-    return [];
-  }
-}
-
-function writeMerchants(rows: Merchant[]) {
-  fs.mkdirSync(path.dirname(FILE), { recursive: true });
-  fs.writeFileSync(FILE, JSON.stringify(rows, null, 2) + "\n", "utf8");
+  const db = database();
+  const rows = db.prepare(`
+    SELECT id, email, name, password_hash, created_at
+    FROM merchants ORDER BY created_at, id
+  `).all() as Array<{
+    id: string; email: string; name: string; password_hash: string; created_at: string;
+  }>;
+  const access = db.prepare(`
+    SELECT s.site_key
+    FROM merchant_stores ms JOIN stores s ON s.id = ms.store_id
+    WHERE ms.merchant_id = ? ORDER BY s.site_key
+  `);
+  return rows.map((row) => ({
+    id: row.id,
+    email: row.email,
+    name: row.name,
+    password: row.password_hash,
+    sites: (access.all(row.id) as Array<{ site_key: string }>).map((x) => x.site_key),
+    createdAt: row.created_at,
+  }));
 }
 
 export function createMerchant(opts: {
@@ -127,9 +136,7 @@ export function createMerchant(opts: {
   password: string;
   sites: string[];
 }): Merchant {
-  const rows = readMerchants();
   const email = opts.email.trim().toLowerCase();
-  if (rows.some((m) => m.email === email)) throw new Error(`${email} already exists`);
   const m: Merchant = {
     id: "mch_" + crypto.randomBytes(8).toString("hex"),
     email,
@@ -138,7 +145,20 @@ export function createMerchant(opts: {
     sites: opts.sites,
     createdAt: new Date().toISOString(),
   };
-  writeMerchants([...rows, m]);
+  transaction((db) => {
+    if (db.prepare("SELECT 1 FROM merchants WHERE email = ?").get(email)) {
+      throw new Error(`${email} already exists`);
+    }
+    db.prepare(`
+      INSERT INTO merchants(id, email, name, password_hash, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(m.id, m.email, m.name, m.password, m.createdAt);
+    const grant = db.prepare(`
+      INSERT OR IGNORE INTO merchant_stores(merchant_id, store_id, role, created_at)
+      VALUES (?, ?, 'owner', ?)
+    `);
+    for (const siteKey of m.sites) grant.run(m.id, ensureStore(siteKey), m.createdAt);
+  });
   return m;
 }
 
@@ -156,13 +176,16 @@ export function createMerchant(opts: {
  * starts working the moment the site is added.
  */
 export function grantSite(email: string, siteKey: string): Merchant {
-  const rows = readMerchants();
   const e = email.trim().toLowerCase();
-  const m = rows.find((x) => x.email === e);
+  const m = findMerchantByEmail(e);
   if (!m) throw new Error(`${e} does not exist`);
   if (!m.sites.includes(siteKey)) {
+    const storeId = ensureStore(siteKey);
+    database().prepare(`
+      INSERT OR IGNORE INTO merchant_stores(merchant_id, store_id, role, created_at)
+      VALUES (?, ?, 'admin', ?)
+    `).run(m.id, storeId, new Date().toISOString());
     m.sites = [...m.sites, siteKey];
-    writeMerchants(rows);
   }
   return m;
 }
@@ -288,3 +311,4 @@ export function sessionCookie(value: string, maxAgeSeconds: number): string {
 }
 
 export const clearCookie = () => sessionCookie("", 0);
+export { closeDatabase as _closeDatabase } from "./database.server";

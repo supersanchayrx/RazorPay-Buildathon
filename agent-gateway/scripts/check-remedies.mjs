@@ -19,7 +19,6 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { DATA_DIR, dataPath } from "./data-dir.mjs";
 import { pathToFileURL } from "node:url";
 import * as esbuild from "esbuild";
 
@@ -37,6 +36,16 @@ async function load(entry, name) {
   return import(pathToFileURL(out).href + "?t=" + Date.now());
 }
 
+const SEEDED_INPUTS = JSON.parse(
+  fs.readFileSync(path.join(process.cwd(), "data", "merchant-inputs.json"), "utf8"),
+);
+const SANDBOX = path.join(process.cwd(), "node_modules", ".cache", "remedies-sandbox");
+fs.rmSync(SANDBOX, { recursive: true, force: true });
+fs.mkdirSync(SANDBOX, { recursive: true });
+process.env.CHAPMAN_DATA_DIR = SANDBOX;
+process.env.CHAPMAN_DATABASE_PATH = path.join(SANDBOX, "chapman.sqlite");
+
+const DBS = await load("app/lib/database.server.ts", "remedies-db-check.mjs");
 const RSN = await load("app/lib/reasons.ts", "rsn-check.mjs");
 const LOY = await load("app/lib/loyalty.server.ts", "loy-check.mjs");
 const GRT = await load("app/lib/grants.server.ts", "grt-check.mjs");
@@ -58,7 +67,7 @@ const AS_OF = new Date("2026-09-05T11:00:00.000Z");
 
 /* ---- a catalogue, and the merchant's real costs ---------------------- */
 const feed = JSON.parse(fs.readFileSync(path.join(process.cwd(), "..", "demo-store", "catalog.json"), "utf8"));
-const inputs = JSON.parse(fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"));
+const inputs = SEEDED_INPUTS;
 
 const products = feed.products.map((p) => ({
   handle: p.handle,
@@ -534,6 +543,7 @@ const withGrant = await QUO.buildQuote({
   items: [{ handle: assam.handle, sku: assamVariant.sku, qty: 2 }],
   shop: SHOP,
   grantId: grant.id,
+  asOf: AS_OF,
 });
 check(
   "a grant discounts the basket, server-side",
@@ -555,6 +565,7 @@ const overCap = await QUO.buildQuote({
   items: [{ handle: assam.handle, sku: assamVariant.sku, qty: 6 }],
   shop: SHOP,
   grantId: grant.id,
+  asOf: AS_OF,
 });
 check(
   "a grant issued on two units discounts two, on a basket of six",
@@ -567,6 +578,7 @@ const bogus = await QUO.buildQuote({
   items: [{ handle: assam.handle, sku: assamVariant.sku, qty: 2 }],
   shop: SHOP,
   grantId: "grn_does_not_exist",
+  asOf: AS_OF,
 });
 check(
   "an unknown grant id is ignored in silence, not honoured and not an error",
@@ -593,6 +605,7 @@ const stacked = await QUO.buildQuote({
   items: [{ handle: assam.handle, sku: assamVariant.sku, qty: 2 }],
   shop: SHOP,
   grantId: grant.id,
+  asOf: AS_OF,
 });
 check(
   "a grant does not stack on top of a live approved offer",
@@ -602,16 +615,17 @@ check(
 APR.decide({ shop: SHOP, candidateId: "check:stack", action: "revoke", by: "check" });
 
 /* ---- single use ---- */
-check("a live grant redeems once", GRT.redeem(SHOP, grant.id, "order_test_1").ok);
+check("a live grant redeems once", GRT.redeem(SHOP, grant.id, "order_test_1", AS_OF).ok);
 check(
   "and not twice",
-  GRT.redeem(SHOP, grant.id, "order_test_2").reason === "already_redeemed",
+  GRT.redeem(SHOP, grant.id, "order_test_2", AS_OF).reason === "already_redeemed",
 );
 const afterRedeem = await QUO.buildQuote({
   catalog,
   items: [{ handle: assam.handle, sku: assamVariant.sku, qty: 2 }],
   shop: SHOP,
   grantId: grant.id,
+  asOf: AS_OF,
 });
 check(
   "a redeemed grant stops discounting immediately",
@@ -728,40 +742,23 @@ for (const [label, patch] of [
   check(`refused: ${label}`, !res.ok, res.error);
 }
 check(
-  "and a settings file from an older build still has every cap",
+  "and a partial settings row from an older build still has every cap",
   (() => {
-    fs.writeFileSync(SET._file(SHOP), JSON.stringify({ recovery: { enabled: true } }), "utf8");
+    DBS.database().prepare(`
+      UPDATE store_settings SET payload = ? WHERE store_id = (
+        SELECT id FROM stores WHERE site_key = ?
+      )
+    `).run(JSON.stringify({ recovery: { enabled: true } }), SHOP);
     const r = SET.readSettings(SHOP).recovery;
     return r.maxDepthPct === SET.DEFAULTS.recovery.maxDepthPct && r.requiresTier === "returning" && r.monthlyGrantCap > 0;
   })(),
   "an absent cap read as undefined is a cap every call site treats as infinite",
 );
 
-/* ================= cleanup ================= */
-const strip = (file) => {
-  try {
-    const kept = fs
-      .readFileSync(file, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .filter((l) => !l.includes(SHOP));
-    fs.writeFileSync(file, kept.length ? kept.join("\n") + "\n" : "", "utf8");
-  } catch {
-    /* nothing written */
-  }
-};
-strip(GRT._file());
-strip(CNV._file());
-strip(APR._file());
-try {
-  fs.unlinkSync(SET._file(SHOP));
-} catch {
-  /* already gone */
-}
 check(
-  "the suite cleans up after itself",
-  GRT.allGrants(SHOP).length === 0 && CNV.conversations(SHOP).length === 0 && !fs.existsSync(SET._file(SHOP)),
-  "no grants, no conversations and no policy left on the real store",
+  "the suite is isolated from the real gateway database",
+  DBS.databasePath() === path.join(SANDBOX, "chapman.sqlite"),
+  "test grants, conversations, and policy exist only in a scratch database",
 );
 
 console.log(failed === 0 ? "\nAll checks passed." : `\n${failed} FAILED`);

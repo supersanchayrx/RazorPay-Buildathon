@@ -25,7 +25,8 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { DATA_DIR, dataPath } from "./data-dir.mjs";
+import { DatabaseSync } from "node:sqlite";
+import { dataPath } from "./data-dir.mjs";
 import { pathToFileURL } from "node:url";
 import * as esbuild from "esbuild";
 
@@ -42,6 +43,32 @@ async function load(entry, name) {
   });
   return import(pathToFileURL(out).href + "?t=" + Date.now());
 }
+
+const SHOP = "pk_check_recovery";
+const sourceDatabasePath = path.resolve(process.env.CHAPMAN_DATABASE_PATH || dataPath("chapman.sqlite"));
+const sourceDb = new DatabaseSync(sourceDatabasePath, { readOnly: true });
+const sourceDocument = (kind) => {
+  const row = sourceDb.prepare(
+    "SELECT payload FROM store_documents WHERE kind = ? ORDER BY updated_at DESC LIMIT 1",
+  ).get(kind);
+  if (!row) throw new Error(`Missing ${kind} in ${sourceDatabasePath}; run npm run seed first.`);
+  return JSON.parse(row.payload);
+};
+const seededOrders = sourceDocument("seed.orders").map((row) => ({ ...row, shop: SHOP }));
+const seededCarts = sourceDocument("seed.carts").map((row) => ({ ...row, shop: SHOP }));
+const seededInputs = sourceDocument("merchant.inputs");
+sourceDb.close();
+
+const SANDBOX = path.join(process.cwd(), "node_modules", ".cache", "recovery-sandbox");
+fs.rmSync(SANDBOX, { recursive: true, force: true });
+fs.mkdirSync(SANDBOX, { recursive: true });
+process.env.CHAPMAN_DATA_DIR = SANDBOX;
+process.env.CHAPMAN_DATABASE_PATH = path.join(SANDBOX, "chapman.sqlite");
+
+const DBS = await load("app/lib/database.server.ts", "recovery-db-check.mjs");
+DBS.writeStoreDocument(SHOP, "seed.orders", seededOrders, "test");
+DBS.writeStoreDocument(SHOP, "seed.carts", seededCarts, "test");
+DBS.writeStoreDocument(SHOP, "merchant.inputs", seededInputs, "test");
 
 const RCV = await load("app/lib/recovery.server.ts", "rcv-check.mjs");
 const OUT = await load("app/lib/outreach.server.ts", "out-check.mjs");
@@ -66,7 +93,6 @@ const check = (label, ok, detail) => {
  * real one. The alternative is a suite that quietly puts the demo store into a
  * cooldown and makes the next campaign page render empty for a month.
  */
-const SHOP = "pk_check_recovery";
 const AS_OF = new Date("2026-09-05T11:00:00.000Z");
 const ORIGIN = "http://127.0.0.1:4000";
 const TPL = "/product.html?handle={handle}";
@@ -141,17 +167,8 @@ check(
  * screenshot. It is also the easiest bug to ship, because the cart record says
  * abandoned and nothing in it knows about the order that followed.
  */
-const carts = fs
-  .readFileSync(dataPath("carts.jsonl"), "utf8")
-  .split("\n")
-  .filter(Boolean)
-  .map((l) => JSON.parse(l));
-const orders = fs
-  .readFileSync(dataPath("orders.jsonl"), "utf8")
-  .split("\n")
-  .filter(Boolean)
-  .map((l) => JSON.parse(l))
-  .filter((o) => o.status === "placed");
+const carts = seededCarts;
+const orders = seededOrders.filter((o) => o.status === "placed");
 
 check(
   "nobody who bought the thing afterwards is written to",
@@ -498,7 +515,7 @@ check(
 /* ================= 6. the numbers agree with the proposer ================= */
 console.log("\n--- the recovery page and the offers page must quote the same money ---");
 
-const inputs = JSON.parse(fs.readFileSync(dataPath("merchant-inputs.json"), "utf8"));
+const inputs = seededInputs;
 const detCandidates = DET.abandonment({ orders, carts, inputs, asOf: AS_OF });
 const detAssumed = Number(
   (detCandidates[0]?.facts.find((f) => f.label === "assumed recovery")?.value ?? "").replace("%", ""),
@@ -728,10 +745,13 @@ for (const [label, patch] of [
 }
 
 check(
-  "a settings file written by an older build keeps every ceiling",
+  "a partial settings row written by an older build keeps every ceiling",
   (() => {
-    const f = SET._file(SHOP);
-    fs.writeFileSync(f, JSON.stringify({ voice: "test", outreach: { enabled: true } }), "utf8");
+    DBS.database().prepare(`
+      UPDATE store_settings SET payload = ? WHERE store_id = (
+        SELECT id FROM stores WHERE site_key = ?
+      )
+    `).run(JSON.stringify({ voice: "test", outreach: { enabled: true } }), SHOP);
     const s = SET.readSettings(SHOP);
     return (
       s.outreach.maxPerRun === SET.DEFAULTS.outreach.maxPerRun &&
@@ -742,40 +762,10 @@ check(
   "a spread-once merge leaves undefined ceilings, which every call site reads as “no limit”",
 );
 
-/* ================= cleanup ================= */
-/**
- * Leave nothing behind that would change what the real store sees.
- *
- * A suite that puts the demo merchant into a thirty-day cooldown is a suite
- * that makes the campaign page render empty tomorrow and nobody knows why.
- */
-const strip = (file) => {
-  try {
-    const kept = fs
-      .readFileSync(file, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .filter((l) => !l.includes(SHOP));
-    fs.writeFileSync(file, kept.length ? kept.join("\n") + "\n" : "", "utf8");
-  } catch {
-    /* nothing written, nothing to clean */
-  }
-};
-const files = OUT._files();
-strip(files.drafts);
-strip(files.sends);
-strip(APR._file());
-for (const f of [SET._file(SHOP), FND._file(SHOP)]) {
-  try {
-    fs.unlinkSync(f);
-  } catch {
-    /* already gone */
-  }
-}
 check(
-  "the suite cleans up after itself",
-  !OUT.readSends(SHOP).length && !APR.activeOffers(SHOP).length && !fs.existsSync(SET._file(SHOP)),
-  "no cooldown, no approval and no settings file left on the real store",
+  "the suite is isolated from the real gateway database",
+  DBS.databasePath() === path.join(SANDBOX, "chapman.sqlite"),
+  "test cooldowns, approvals, and settings exist only in a scratch database",
 );
 
 console.log(

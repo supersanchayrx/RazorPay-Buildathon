@@ -17,6 +17,7 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { Block, Figure, Figures, Note, Page, PageHead, Setup } from "../components/console";
 import { IntegrationSetup } from "../components/integration-setup";
 import { requireMerchant } from "../lib/auth.server";
+import { readStoreDocument } from "../lib/database.server";
 import { sitesForMerchant } from "../lib/sites.server";
 import {
   CONSOLIDATE_ABOVE,
@@ -70,10 +71,19 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       modelSetup: openRouterSetup("summariser"),
     };
 
+  const seededNames = new Map(
+    readStoreDocument<Array<{ id: string; name: string }>>(
+      site.key,
+      "seed.customer_profiles",
+      [],
+    ).map((profile) => [profile.id, profile.name]),
+  );
+
   return {
     site: { key: site.key, name: site.name },
     subjects: memoryBySubject(site.key).map((g) => ({
       sub: g.sub,
+      name: seededNames.get(g.sub) ?? null,
       memories: g.memories.map((m) => ({
         id: m.id,
         kind: m.kind,
@@ -229,6 +239,7 @@ export default function MemoryPage() {
                 <VStack gap={0}>
                   <HStack gap={4} hAlign="between" vAlign="center" wrap="wrap" padding={4}>
                     <HStack gap={3} vAlign="center">
+                      {g.name ? <Text weight="semibold">{g.name}</Text> : null}
                       <Text type="code" size="xsm" weight="semibold">
                         {g.sub}
                       </Text>

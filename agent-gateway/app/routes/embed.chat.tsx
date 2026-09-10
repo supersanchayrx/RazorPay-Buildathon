@@ -6,6 +6,7 @@ import { featureOn } from "../lib/featureflags.server";
 import { verifySessionToken } from "../lib/identity.server";
 import { jsonFeedOrders, seededOrders } from "../lib/orders.server";
 import { placedOrders, mergeSources } from "../lib/orderstore.server";
+import { publicBodyFailure, readPublicJson } from "../lib/http-security.server";
 
 /**
  * Chat endpoint for custom (non-Shopify) sites.
@@ -72,9 +73,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   let body: { site?: string; message?: string; history?: unknown; session?: string; stream?: boolean };
   try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return json({ error: "expected a JSON body" }, 400, origin);
+    body = await readPublicJson<typeof body>(request, "chat");
+  } catch (error) {
+    const failure = publicBodyFailure(error);
+    return json({ error: failure.message, error_code: failure.code }, failure.status, origin);
   }
 
   const site = findSite(body.site ?? new URL(request.url).searchParams.get("site"));

@@ -19,9 +19,7 @@
  * migration. It becomes a Prisma table alongside everything else — the shape
  * below is the schema.
  */
-import fs from "node:fs";
-import path from "node:path";
-import { dataPath } from "./paths.server";
+import { database, ensureStore, json, parseJson, transaction } from "./database.server";
 import type { Order, OrderSource } from "./orders.server";
 
 export type PlacedOrder = {
@@ -51,9 +49,6 @@ export type PlacedOrder = {
   /** Which report arrived first. Useful when reconciling. */
   settledBy: "browser" | "webhook";
 };
-
-const FILE = dataPath("placed-orders.jsonl");
-const PENDING = dataPath("pending-checkouts.jsonl");
 
 /**
  * What we were asked to sell, recorded when the Razorpay order is created.
@@ -91,8 +86,31 @@ export type PendingCheckout = {
 
 export function savePending(p: PendingCheckout): void {
   try {
-    fs.mkdirSync(path.dirname(PENDING), { recursive: true });
-    fs.appendFileSync(PENDING, JSON.stringify(p) + "\n", "utf8");
+    transaction((db) => {
+      db.prepare(`
+        INSERT INTO pending_checkouts(
+          gateway_order_id, store_id, created_at, amount_minor, currency,
+          fingerprint, customer_id, cart_ref, recovery_grant_id, payload
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(gateway_order_id) DO UPDATE SET payload = excluded.payload
+      `).run(
+        p.gatewayOrderId, ensureStore(p.shop), p.createdAt,
+        Math.round(p.amount * 100), p.currency, p.fingerprint, p.customer,
+        p.cartRef ?? null, p.recoveryGrantId ?? null, json(p),
+      );
+      db.prepare("DELETE FROM pending_checkout_lines WHERE gateway_order_id = ?")
+        .run(p.gatewayOrderId);
+      const lineInsert = db.prepare(`
+        INSERT INTO pending_checkout_lines(
+          gateway_order_id, line_index, handle, sku, title, quantity,
+          unit_price_minor, line_total_minor
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      p.lines.forEach((line, index) => lineInsert.run(
+        p.gatewayOrderId, index, line.handle, line.sku || null, line.title,
+        line.qty, Math.round(line.unitPrice * 100), Math.round(line.lineTotal * 100),
+      ));
+    });
   } catch {
     // A lost pending record costs us the line items on a webhook-settled
     // order, not the payment itself. Never fail a checkout over it.
@@ -100,32 +118,15 @@ export function savePending(p: PendingCheckout): void {
 }
 
 export function findPending(gatewayOrderId: string): PendingCheckout | null {
-  try {
-    const rows = fs
-      .readFileSync(PENDING, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as PendingCheckout);
-    // Last write wins, same as placed orders.
-    return (
-      [...rows].reverse().find((r) => r.gatewayOrderId === gatewayOrderId) ??
-      null
-    );
-  } catch {
-    return null;
-  }
+  const row = database().prepare(
+    "SELECT payload FROM pending_checkouts WHERE gateway_order_id = ?",
+  ).get(gatewayOrderId) as { payload: string } | undefined;
+  return row ? parseJson<PendingCheckout | null>(row.payload, null) : null;
 }
 
 function readAll(): PlacedOrder[] {
-  try {
-    return fs
-      .readFileSync(FILE, "utf8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => JSON.parse(l) as PlacedOrder);
-  } catch {
-    return [];
-  }
+  return (database().prepare("SELECT payload FROM placed_orders ORDER BY created_at, id").all() as
+    Array<{ payload: string }>).map((r) => parseJson<PlacedOrder>(r.payload, null as never));
 }
 
 /**
@@ -190,13 +191,37 @@ export function settle(input: {
   };
 
   try {
-    fs.mkdirSync(path.dirname(FILE), { recursive: true });
-    fs.appendFileSync(FILE, JSON.stringify(order) + "\n", "utf8");
+    transaction((db) => {
+      db.prepare(`
+        INSERT INTO placed_orders(
+          id, store_id, gateway_order_id, gateway_payment_id, created_at,
+          settled_at, status, method, amount_minor, currency, customer_id,
+          fingerprint, settled_by, payload
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        order.id, ensureStore(order.shop), order.gatewayOrderId,
+        order.gatewayPaymentId, order.createdAt, order.settledAt, order.status,
+        order.method, Math.round(order.amount * 100), order.currency,
+        order.customer, order.fingerprint, order.settledBy, json(order),
+      );
+      const lineInsert = db.prepare(`
+        INSERT INTO placed_order_lines(
+          order_id, line_index, handle, sku, title, quantity,
+          unit_price_minor, line_total_minor
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      order.lines.forEach((line, index) => lineInsert.run(
+        order.id, index, line.handle, line.sku || null, line.title, line.qty,
+        Math.round(line.unitPrice * 100), Math.round(line.lineTotal * 100),
+      ));
+    });
+    return { order, duplicate: false };
   } catch {
     // Never let a write failure lose a payment that already happened — the
     // caller still gets the order, and the ledger records the attempt.
+    const winner = findByGatewayOrder(input.gatewayOrderId);
+    return winner ? { order: winner, duplicate: true } : { order, duplicate: false };
   }
-  return { order, duplicate: false };
 }
 
 /* ------------------------------------------------------------------ *
