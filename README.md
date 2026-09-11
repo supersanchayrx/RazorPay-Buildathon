@@ -2,6 +2,12 @@
 
 # CHAPMAN
 
+
+
+https://github.com/user-attachments/assets/49c6c457-5a7a-47f6-9573-940e4330e5f1
+
+
+
 **A self-hosted merchant-side gateway for AI-assisted shopping.**
 
 One core for the storefront assistant, shopping agents, merchant decisions,
