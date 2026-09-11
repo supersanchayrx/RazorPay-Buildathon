@@ -7,6 +7,9 @@
 One core for the storefront assistant, shopping agents, merchant decisions,
 and payments.
 
+**[▶ Watch the 5-minute Chapman pitch](brag-output/chapman-pitch/renders/chapman-final-v2.mp4)**
+
+[15-minute setup walkthrough](https://drive.google.com/file/d/1Uvb2gMqPKDCaVwc28e_lvMf4zaGmcAYM/view?usp=drive_link) ·
 [Quickstart](#run-the-docker-demo) · [Fresh setup](docs/fresh-store-setup.md) ·
 [Architecture](#architecture) · [Features](#main-features) ·
 [Install](INSTALL.md) · [What broke @2am](#what-broke-2am)
@@ -14,6 +17,16 @@ and payments.
 </div>
 
 ---
+
+## Start here: the 15-minute walkthrough
+
+> **[Watch the 15-minute video](https://drive.google.com/file/d/1Uvb2gMqPKDCaVwc28e_lvMf4zaGmcAYM/view?usp=drive_link)**
+>
+> That video is all you need to get Chapman up and running against an
+> already-hosted website. It goes from a live storefront with no Chapman code in
+> it to a working install: registering the store, pasting the assistant script
+> tag, adding the agent-discovery route, and verifying each step. Everything
+> below is the written reference for the same path.
 
 ## What this is
 
