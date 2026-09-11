@@ -13,6 +13,7 @@
 | [Demo runbook](demo-plan.md)                                 | A clean, unconfigured-to-working Monsoon Market demonstration              |
 | [Synthetic demo data](demo-data.md)                          | Repeatable Monsoon and Fieldnote histories for Analyst, Memory, and Recovery |
 | [Troubleshooting](troubleshooting.md)                        | Symptom-first fixes                                                        |
+| [Video production handoff](video-production-handoff.md)      | The brag/HyperFrames toolchain, the rendered launch film, and the pitch-video plan |
 
 Start with [Installation](../INSTALL.md). A fresh Chapman instance is supposed
 to know nothing about a storefront until a signed-in merchant registers it.

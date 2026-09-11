@@ -35,3 +35,6 @@ demo-store-clean/
 # Local Vercel integration fixture and deployment metadata. Keep the demo
 # available for recordings without publishing it with the Chapman repository.
 vercel-demo-store/
+
+# Local Claude Code settings — may hold API keys
+.claude/settings.local.json

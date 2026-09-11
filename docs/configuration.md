@@ -45,6 +45,26 @@ Saving the form registers the store and generates its server-side signing
 secret. It does not edit storefront HTML, publish `/.well-known/ucp`, import
 orders, or invent analytics.
 
+## Hosted storefront environment
+
+A custom storefront backend that creates Razorpay orders needs
+`RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` in its own server-side environment.
+If it also mints signed Chapman shopper sessions or serves the signed order
+feed, it needs the same site-signing secret Chapman generated during
+registration.
+
+The variable name is derived from the public site key. For example,
+`pk_my_store` uses `SITE_SECRET_MY_STORE`. Copy both that exact name and the
+exact generated value to the storefront host; do not generate a second value.
+The two servers must share the secret, but it must never enter storefront
+JavaScript, the embed tag, or the public UCP document.
+
+Use [storefront-host.env.example](storefront-host.env.example) as the minimal
+template. On Vercel, configure all three variables in Project Environment
+Variables for each deployment environment the store uses, then redeploy. On
+another host, use its equivalent secret settings and restart or redeploy the
+storefront.
+
 ## Provider matrix
 
 Put secret values in the repository-root `.env`, beside

@@ -16,6 +16,7 @@ and payments.
 **[▶ Watch the 5-minute Chapman pitch](brag-output/chapman-pitch/renders/chapman-final-v2.mp4)**
 
 [15-minute setup walkthrough](https://drive.google.com/file/d/1Uvb2gMqPKDCaVwc28e_lvMf4zaGmcAYM/view?usp=drive_link) ·
+[Video Vault](https://drive.google.com/drive/folders/17hVm17-Eo4X1wZzHwMSm7ZlFp-W99Hz9?usp=sharing) ·
 [Quickstart](#run-the-docker-demo) · [Fresh setup](docs/fresh-store-setup.md) ·
 [Architecture](#architecture) · [Features](#main-features) ·
 [Install](INSTALL.md) · [What broke @2am](#what-broke-2am)
@@ -345,8 +346,9 @@ Paste this into a coding agent while its workspace is the repository root:
 
 ```text
 Install and verify Chapman with Docker. Read README.md, INSTALL.md,
-docs/configuration.md, .env.docker.example, docker-compose.yml, and applicable
-AGENTS.md first. Preserve my .env, worktree, and Docker volume. Keep the first
+docs/configuration.md, .env.docker.example, docs/storefront-host.env.example,
+docker-compose.yml, and applicable AGENTS.md first. Preserve my .env, worktree,
+and Docker volume. Keep the first
 run unconfigured: do not enable CHAPMAN_AUTO_INIT or CHAPMAN_SEED, load a demo
 fixture, invent keys, expose secrets, or run docker compose down -v without my
 approval.
@@ -358,7 +360,10 @@ instructions. Ask only for keys needed by features I choose. Do not place a
 real call without an E.164 number, an expecting recipient, and my explicit
 request. Run doctor and the tests. Report registered, installed,
 provider-configured, fallback, and manual states separately without printing
-secrets.
+secrets. For a hosted storefront, ensure its server-side environment contains
+RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, and the same generated
+SITE_SECRET_<STORE> name and value as Chapman; on Vercel set them for each used
+deployment environment and redeploy.
 ```
 
 The full prompt is in
@@ -462,6 +467,7 @@ until the core gateway and real-store integration tests are stable.
 | [INSTALL.md](INSTALL.md)                               | Docker, native, and production installation |
 | [docs/configuration.md](docs/configuration.md)         | Provider keys and integration tests         |
 | [docs/agentic-install.md](docs/agentic-install.md)     | Full coding-agent setup prompt              |
+| [docs/storefront-host.env.example](docs/storefront-host.env.example) | Hosted storefront environment template |
 | [docs/architecture.md](docs/architecture.md)           | System and per-feature diagrams             |
 | [docs/catalog-format.md](docs/catalog-format.md)       | Catalogue JSON format                       |
 | [docs/fresh-store-setup.md](docs/fresh-store-setup.md) | Empty-volume setup for every feature        |

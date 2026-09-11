@@ -3,6 +3,13 @@
     "monsoon-market": {
       "type": "http",
       "url": "http://[::1]:3000/ucp/pk_monsoon_market/mcp"
+    },
+    "excalidraw": {
+      "type": "http",
+      "url": "https://api.excalidraw.com/api/v1/mcp",
+      "headers": {
+        "Authorization": "Bearer ${EXCALIDRAW_API_KEY}"
+      }
     }
   }
 }

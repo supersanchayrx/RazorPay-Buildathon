@@ -375,8 +375,9 @@ Paste this into a coding agent working at the repository root:
 
 ```text
 Install and verify Chapman with Docker. Read README.md, INSTALL.md,
-docs/configuration.md, .env.docker.example, docker-compose.yml, and applicable
-AGENTS.md first. Preserve my .env, worktree, and Docker volume. Do not enable
+docs/configuration.md, .env.docker.example, docs/storefront-host.env.example,
+docker-compose.yml, and applicable AGENTS.md first. Preserve my .env, worktree,
+and Docker volume. Do not enable
 CHAPMAN_AUTO_INIT or CHAPMAN_SEED, load a demo fixture, invent or expose keys,
 or run docker compose down -v without approval.
 
@@ -386,7 +387,11 @@ first-store form. Then follow the Assistant and Agent front instructions. Ask
 only for keys needed by selected features. Do not place a real call without an
 E.164 number, an expecting recipient, and my explicit request. Run doctor and
 tests. Report registration, installation, provider readiness, fallback, and
-manual steps separately without printing secrets.
+manual steps separately without printing secrets. For a hosted storefront,
+ensure its server-side environment contains RAZORPAY_KEY_ID,
+RAZORPAY_KEY_SECRET, and the same generated SITE_SECRET_<STORE> name and value
+as Chapman; on Vercel set them for each used deployment environment and
+redeploy.
 ```
 
 The full version is in

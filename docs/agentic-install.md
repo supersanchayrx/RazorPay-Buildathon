@@ -15,9 +15,10 @@ demo / my existing storefront]. Work autonomously through safe, reversible
 steps, and ask me only when a real credential or merchant decision is required.
 
 Before changing anything, read README.md, INSTALL.md,
-docs/configuration.md, .env.docker.example, docker-compose.yml, and any
-AGENTS.md that applies to files you touch. Inspect the existing worktree and
-preserve unrelated changes.
+docs/configuration.md, .env.docker.example,
+docs/storefront-host.env.example, docker-compose.yml, and any AGENTS.md that
+applies to files you touch. Inspect the existing worktree and preserve
+unrelated changes.
 
 Use the Docker path unless this repository cannot run Docker. The truthful
 initial state is important:
@@ -65,11 +66,31 @@ public origin and catalogue URL only if they cannot be determined safely. Do
 not add order access unless I explicitly ask
 for it and a signed server-side feed exists.
 
-Credentials belong only in the repository-root .env or the deployment secret
-manager. Explain and request only the group needed for the feature I choose:
+For a hosted storefront backend, configure its server-side environment as
+shown in docs/storefront-host.env.example. In particular, Razorpay checkout
+needs RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET. Signed shopper sessions and a
+signed order feed also need the exact Chapman site-signing variable and value:
+derive the name from the public site key (for example, pk_my_store becomes
+SITE_SECRET_MY_STORE) and copy the same generated value from Chapman's secret
+store into the storefront host's secret manager. On Vercel, add all three to
+the Project Environment Variables for every deployment environment being used,
+then redeploy the storefront. On another host, use its equivalent server-side
+environment/secret settings and restart or redeploy. Never use a public/client
+prefix for the signing secret, expose it to browser JavaScript, put it in the
+embed tag or UCP document, commit it, print it, or replace it with a newly
+generated value on only one side. Confirm configuration by variable name and
+presence only, never by reporting its value.
+
+Provider credentials belong only in the repository-root .env or the deployment
+secret manager; Docker-generated site secrets remain in Chapman's persistent
+secret store and are shared only with the storefront server that signs or
+verifies requests. Explain and request only the group needed for the feature I
+choose:
 - OpenRouter: OPENROUTER_API_KEY; model override variables are optional.
 - Razorpay checkout: RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET; webhook secret
   and PUBLIC_ORIGIN are recommended for reliable settlement.
+- Hosted signed storefront: the generated SITE_SECRET_<STORE> name and value
+  must match in Chapman and the storefront hosting environment.
 - Recovery calls: SARVAM_API_KEY, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
   TWILIO_FROM, and PUBLIC_ORIGIN are all required together.
 - Recovery SMS may reuse TWILIO_FROM. TWILIO_MESSAGING_FROM or
@@ -99,9 +120,28 @@ Verify with evidence, not assumptions:
 
 At the end, report: services and URLs, what is registered, what is actually
 installed, which integrations are configured versus using a fallback/off,
-tests run, and the exact remaining manual steps. Never include secret values in
-the report.
+whether the required hosting variables exist by name, tests run, and the exact
+remaining manual steps. Never include secret values in the report.
 ```
+
+## Hosted storefront `.env` example
+
+Use [storefront-host.env.example](storefront-host.env.example) as the minimal
+server-side environment template for a custom storefront. It intentionally
+contains blank values. The agent should fill them through the host's secret
+manager, not commit a populated copy:
+
+```dotenv
+RAZORPAY_KEY_ID=
+RAZORPAY_KEY_SECRET=
+SITE_SECRET_MY_STORE=
+```
+
+`SITE_SECRET_MY_STORE` is an example name, not a second secret to generate.
+For public site key `pk_my_store`, use that exact variable name and the exact
+value Chapman generated during registration. Both Chapman and the storefront
+backend must resolve the same value. Vercel users should configure it alongside
+the two Razorpay variables in Project Environment Variables and redeploy.
 
 ## Why the prompt pauses at the dashboard
 
