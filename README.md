@@ -16,7 +16,7 @@ and payments.
 **[▶ Watch the 5-minute Chapman pitch](brag-output/chapman-pitch/renders/chapman-final-v2.mp4)**
 
 [15-minute setup walkthrough](https://drive.google.com/file/d/1Uvb2gMqPKDCaVwc28e_lvMf4zaGmcAYM/view?usp=drive_link) ·
-[Video Vault](https://drive.google.com/drive/folders/17hVm17-Eo4X1wZzHwMSm7ZlFp-W99Hz9?usp=sharing) ·
+[Submission Video Vault](https://drive.google.com/drive/folders/17hVm17-Eo4X1wZzHwMSm7ZlFp-W99Hz9?usp=sharing) ·
 [Quickstart](#run-the-docker-demo) · [Fresh setup](docs/fresh-store-setup.md) ·
 [Architecture](#architecture) · [Features](#main-features) ·
 [Install](INSTALL.md) · [What broke @2am](#what-broke-2am)
